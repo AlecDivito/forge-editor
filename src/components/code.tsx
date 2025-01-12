@@ -4,12 +4,29 @@ import FileViewerController from "@/components/filesystem";
 
 // import dynamic from "next/dynamic";
 import ResizableComponent from "./interaction/resizable";
+import { useWebSocket } from "next-ws/client";
+import { useEffect } from "react";
+import { Message } from "@/interfaces/socket";
+import { useFileStore } from "@/store";
 
 // const DynamicTerminal = dynamic(() => import("@/components/terminal"), {
 //   ssr: false,
 // });
 
 const VSCodeLayout = () => {
+  const ws = useWebSocket();
+  const handleMessage = useFileStore((state) => state.handleMessage);
+
+  useEffect(() => {
+    async function onMessage(event: MessageEvent) {
+      const message = JSON.parse(event.data) as Message;
+      handleMessage(message);
+    }
+
+    ws?.addEventListener("message", onMessage);
+    return () => ws?.removeEventListener("message", onMessage);
+  }, [ws, handleMessage]);
+
   // const [fileViewerWidth, setFileViewerWidth] = useState(300);
   // const [editorHeight, setEditorHeight] = useState(300);
   // const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);

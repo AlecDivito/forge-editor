@@ -12,6 +12,20 @@ brew install redis
 redis-server
 ```
 
+## Setup
+
+Install the packages
+
+```bash
+npm i
+```
+
+Patch for web socket support
+
+```bash
+npx next-ws-cli@latest patch
+```
+
 ## Getting Started
 
 First, run the development server:

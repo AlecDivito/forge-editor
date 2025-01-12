@@ -3,7 +3,8 @@
 import { useFileStore } from "@/store";
 import { useEffect } from "react";
 import VSCodeLayout from "./code";
-import { WebSocketProvider } from "./websocketContext";
+// import { WebSocketProvider } from "./websocketContext";
+import { WebSocketProvider } from "next-ws/client";
 
 export default function WebPageInitializer({ tree }: { tree: string[] }) {
   const setTree = useFileStore((state) => state.initializeTree);
@@ -13,7 +14,7 @@ export default function WebPageInitializer({ tree }: { tree: string[] }) {
   }, [tree, setTree]);
 
   return (
-    <WebSocketProvider>
+    <WebSocketProvider url="ws://localhost:3000/api/socket">
       <VSCodeLayout />
     </WebSocketProvider>
   );

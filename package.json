@@ -19,6 +19,7 @@
     "flat-color-icons": "^1.1.0",
     "ioredis": "^5.4.2",
     "next": "15.1.4",
+    "next-ws": "^1.1.1",
     "react": "^19.0.0",
     "react-arborist": "^3.4.0",
     "react-dom": "^19.0.0",
