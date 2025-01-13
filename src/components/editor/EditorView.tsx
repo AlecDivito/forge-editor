@@ -8,6 +8,7 @@ import { Extension } from "@uiw/react-codemirror/cjs/index.js";
 import dynamic from "next/dynamic";
 import { debounce } from "@/utils/debounce";
 import { autocompletion } from "@codemirror/autocomplete";
+import { languageServer } from "codemirror-languageserver";
 // import { Diagnostic, linter } from "@codemirror/lint";
 // import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 
@@ -27,7 +28,7 @@ const languageExtensions: Record<string, () => Promise<Extension>> = {
   py: () => import("@codemirror/lang-python").then((mod) => mod.python()),
   yaml: () => import("@codemirror/lang-yaml").then((mod) => mod.yaml()),
   json: () => import("@codemirror/lang-json").then((mod) => mod.json()),
-  rust: () => import("@codemirror/lang-rust").then((mod) => mod.rust()),
+  rs: () => import("@codemirror/lang-rust").then((mod) => mod.rust()),
   markdown: () =>
     import("@codemirror/lang-markdown").then((mod) => mod.markdown()),
   wast: () => import("@codemirror/lang-wast").then((mod) => mod.wast()),
@@ -91,13 +92,32 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
     const loadExtensions = async () => {
       const ext = getFileExtension(file);
       const languageExtension = languageExtensions[ext];
-
       const loadedExtensions = [
         languageExtension ? await languageExtension() : [],
         autocompletion(),
-        // linter(customLinter),
       ];
 
+      if (ext === "go") {
+        loadedExtensions.push(
+          languageServer({
+            serverUri: `ws://localhost:3000/api/lsp/go`,
+            rootUri: "file:///",
+            workspaceFolders: [],
+            documentUri: `file://${file}`,
+            languageId: "go",
+          })
+        );
+      } else if (ext === "rs") {
+        loadedExtensions.push(
+          languageServer({
+            serverUri: `ws://localhost:3000/api/lsp/rs`,
+            rootUri: "file:///workspace/",
+            workspaceFolders: [],
+            documentUri: `file:///workspace${file}`,
+            languageId: "rust",
+          })
+        );
+      }
       setExtensions(loadedExtensions);
     };
 

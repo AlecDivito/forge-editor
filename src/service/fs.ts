@@ -2,9 +2,18 @@
 
 import redis from "@/lib/redis";
 
+export interface Changes {
+  op: "insert" | "delete";
+  pos: number;
+  text: string;
+  timestamp: number;
+  // user: user_id
+}
+
 export interface File {
   path: string;
   content: string;
+  changes: Changes[];
 }
 
 /**
@@ -14,7 +23,7 @@ export interface File {
  */
 export async function saveFile(path: string, content: string): Promise<void> {
   try {
-    await redis.set(path, content);
+    await redis.set(`fs:file:${path}`, content);
   } catch (error) {
     console.error("Error saving file:", error);
     throw new Error("Failed to save file.");
@@ -27,7 +36,7 @@ export async function saveFile(path: string, content: string): Promise<void> {
  */
 export async function deleteFile(path: string): Promise<void> {
   try {
-    const result = await redis.del(path);
+    const result = await redis.del(`fs:file:${path}`, `fs:ops:${path}`);
     if (!result) {
       throw new Error(`File '${path}' not found.`);
     }
@@ -44,7 +53,7 @@ export async function deleteFile(path: string): Promise<void> {
  */
 export async function getFilePaths(path: string): Promise<string[]> {
   try {
-    const keys = await redis.keys(`${path}*`); // Only return files that match the path pattern
+    const keys = await redis.keys(`fs:file:${path}*`); // Only return files that match the path pattern
     return keys;
   } catch (error) {
     console.error("Error fetching files:", error);
@@ -59,11 +68,16 @@ export async function getFilePaths(path: string): Promise<string[]> {
  */
 export async function getFile(path: string): Promise<File> {
   try {
-    const content = await redis.get(path);
+    const content = await redis.get(`fs:file:${path}`);
+    const rawChanges = await redis.get(`fs:ops:${path}`);
+    let changes = [];
+    if (rawChanges) {
+      changes = JSON.parse(rawChanges);
+    }
     if (content === null) {
       throw new Error(`File '${path}' not found.`);
     }
-    return { path, content };
+    return { path, content, changes };
   } catch (error) {
     console.error("Error fetching file:", error);
     throw new Error("Failed to fetch file.");

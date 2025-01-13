@@ -12,6 +12,16 @@ brew install redis
 redis-server
 ```
 
+### Installing language servers
+
+You'll also need to install language servers so that you can effectively.
+
+```bash
+# Install gopls... lol idk how to do this.
+rustup component install rust-analyzer
+npm i -g typescript-language-server typescript
+```
+
 ## Setup
 
 Install the packages

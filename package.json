@@ -28,6 +28,7 @@
     "@uiw/react-codemirror": "^4.23.7",
     "@xterm/xterm": "^5.5.0",
     "codemirror": "^6.0.1",
+    "codemirror-languageserver": "^1.11.0",
     "dockview": "^3.0.2",
     "flat-color-icons": "^1.1.0",
     "ioredis": "^5.4.2",
