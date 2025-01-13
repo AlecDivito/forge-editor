@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import VSCodeLayout from "./code";
 // import { WebSocketProvider } from "./websocketContext";
 import { WebSocketProvider } from "next-ws/client";
+import "dockview/dist/styles/dockview.css";
 
 export default function WebPageInitializer({ tree }: { tree: string[] }) {
   const setTree = useFileStore((state) => state.initializeTree);

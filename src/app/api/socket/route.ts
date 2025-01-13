@@ -68,7 +68,13 @@ export async function SOCKET(
       const { event, body } = JSON.parse(message.toString()) as Message;
       console.log(`Processing ${event}`);
 
-      if (event === "file:created") {
+      if (event === "file:read") {
+        const { path } = body;
+        const file = await getFile(path);
+        // Send a file updated event when the file is requested to be read.
+        // NOTE: the update event is only sent to the client that sent it.
+        client.send(JSON.stringify({ event: "file:updated", body: file }));
+      } else if (event === "file:created") {
         const { path } = body;
         console.log("Saving file ", path);
         await saveFile(path, "");

@@ -1,123 +1,116 @@
 "use client";
 
-import { Extension, StateField } from "@uiw/react-codemirror/cjs/index.js";
 import { FC, useEffect, useState } from "react";
-import { javascript } from "@codemirror/lang-javascript";
-import dynamic from "next/dynamic";
-import { EditorView } from "codemirror";
-import { OpenFile } from "@/interfaces/fs";
+import { useFileStore } from "@/store";
+import { DockviewApi, DockviewDidDropEvent, DockviewReact } from "dockview";
+import EditorView from "./editor/EditorView";
+import FileTab from "./editor/FileTab";
+import DefaultView from "./editor/DefaultView";
 
 interface Props {
-  file: OpenFile;
   theme?: "material" | "gruvbox";
   onThemeLoadError?: (error: Error) => void;
 }
 
-const extensions = [
-  javascript({ jsx: true }),
-  EditorView.theme({
-    "&.cm-theme": { height: "100%" },
-    // "&.cm-editor": { height: "100%" },
-    // ".cm-scroller": { overflow: "auto" },
-  }),
-];
-
-const stateFields = {}; // Define any custom state fields here if needed
-
-const Editor: FC<Props> = ({ onThemeLoadError, theme = "gruvbox" }) => {
-  const [loadedTheme, setLoadedTheme] = useState<Extension | undefined>();
-  const [initialState, setInitialState] = useState<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Record<string, StateField<any>> | undefined
-  >(undefined);
+const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
+  const activeGroup = useFileStore((state) => state.activeGroup);
+  const panels = useFileStore((state) => state.openFiles);
+  const files = useFileStore((state) => state.files);
+  const { closeFile, addGroup } = useFileStore((state) => state);
+  const [view, setView] = useState<DockviewApi | null>(null);
 
   useEffect(() => {
-    const isDarkMode = window.matchMedia(
-      "(prefers-color-scheme: dark)"
-    ).matches;
+    if (view) {
+      const removePanel = view.onDidRemovePanel((e) => {
+        closeFile(e.id, e.params?.file);
+      });
+      const addGroup = view.onDidAddGroup((e) => {
+        console.log(e);
+        // addGroup();
+      });
+      const disposable = view.onUnhandledDragOverEvent((event) => {
+        event.accept();
+      });
 
-    const loadTheme = async () => {
-      try {
-        if (theme === "material") {
-          const { materialDark, materialLight } = await import(
-            "@uiw/codemirror-theme-material"
-          );
-          setLoadedTheme(isDarkMode ? materialDark : materialLight);
-        } else if (theme === "gruvbox") {
-          const { gruvboxDark, gruvboxLight } = await import(
-            "@uiw/codemirror-theme-gruvbox-dark"
-          );
-          setLoadedTheme(isDarkMode ? gruvboxDark : gruvboxLight);
-        } else {
-          throw new Error(`Unsupported theme: ${theme}`);
+      return () => {
+        removePanel.dispose();
+        addGroup.dispose();
+        disposable.dispose();
+      };
+    }
+  }, [view, addGroup, closeFile]);
+
+  useEffect(() => {
+    if (view && panels && files) {
+      const ids: string[] = [];
+      Object.entries(panels).forEach(([groupName, files]) => {
+        // This acts as a group
+        let lastPanel = null;
+        for (const file of files) {
+          const childPanelKey = `${groupName}-${file}`;
+          let childPanel = view.getPanel(childPanelKey);
+
+          if (!childPanel) {
+            childPanel = view.addPanel({
+              id: childPanelKey,
+              tabComponent: "fileTab",
+              component: "editor",
+              position: lastPanel ? { referencePanel: lastPanel } : undefined,
+              params: { file, group: groupName, theme },
+            });
+          }
+          ids.push(childPanelKey);
+          lastPanel = childPanel;
         }
-      } catch (error) {
-        console.error("Failed to load theme:", error);
-        onThemeLoadError?.(error as Error);
-        setLoadedTheme(undefined);
+      });
+
+      // Remove any of the panels that don't exist anymore
+      const toRemovePanels = view.panels.filter(
+        (panel) => !ids.includes(panel.id)
+      );
+      for (const panel of toRemovePanels) {
+        view.removePanel(panel);
       }
-    };
+    }
+  }, [view, panels, files, theme]);
 
-    const loadInitialState = () => {
-      if (typeof window !== "undefined") {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const serializedState: any =
-          window.localStorage.getItem("myEditorState");
-        const value = window.localStorage.getItem("myValue") || "";
-        setInitialState(
-          serializedState
-            ? {
-                json: JSON.parse(serializedState),
-                fields: stateFields,
-              }
-            : { value }
-        );
-      }
-    };
+  const components = {
+    default: DefaultView,
+    editor: EditorView,
+  };
 
-    loadTheme();
-    loadInitialState();
-  }, [theme, onThemeLoadError]);
+  const tabComponents = {
+    fileTab: FileTab,
+  };
 
-  const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
-    ssr: false,
-  });
+  const onDidDrop = (event: DockviewDidDropEvent) => {
+    console.log(event);
+    // const path = event.
+    // if (!files[path]) {
+    //       const message = ReadFile(path);
+    //       sender(message, () => openFile(path));
+    //     } else {
+    //       openFile(path);
+    //     }
+  };
 
   return (
-    <ReactCodeMirror
-      height="100%"
-      initialState={initialState}
-      onChange={(value, viewUpdate) => {
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem("myValue", value);
-          const state = viewUpdate.state.toJSON(stateFields);
-          window.localStorage.setItem("myEditorState", JSON.stringify(state));
-        }
-      }}
-      theme={loadedTheme}
-      extensions={extensions}
-      basicSetup={{
-        lineNumbers: true,
-        highlightActiveLineGutter: true,
-        foldGutter: true,
-        dropCursor: true,
-        allowMultipleSelections: true,
-        indentOnInput: true,
-        bracketMatching: true,
-        closeBrackets: true,
-        autocompletion: true,
-        rectangularSelection: true,
-        crosshairCursor: true,
-        highlightActiveLine: true,
-        highlightSelectionMatches: true,
-        closeBracketsKeymap: true,
-        searchKeymap: true,
-        foldKeymap: true,
-        completionKeymap: true,
-        lintKeymap: true,
-        tabSize: 2,
-      }}
-    />
+    <>
+      <div className="flex-grow border border-red-500">
+        <DockviewReact
+          onReady={(view) => setView(view.api)}
+          components={components}
+          tabComponents={tabComponents}
+          onDidDrop={onDidDrop}
+          className={"dockview-theme-abyss"}
+        />
+      </div>
+      <div>
+        <pre>Active: {activeGroup}</pre>
+        <pre>panels: {JSON.stringify(panels, null, 2)}</pre>
+        <pre>Files: {JSON.stringify(files, null, 2)}</pre>
+      </div>
+    </>
   );
 };
 

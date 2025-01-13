@@ -1,19 +1,8 @@
 import useResizeObserver from "@/hooks/use-resize-observer";
 import { TreeNode } from "@/service/tree";
 import { FC } from "react";
-import { NodeRendererProps, Tree } from "react-arborist";
-import { FaFile, FaFolder, FaFolderOpen } from "react-icons/fa";
-
-const Node = ({ node, style, dragHandle }: NodeRendererProps<TreeNode>) => (
-  <div
-    className="flex items-center space-x-2 cursor-pointer"
-    style={style}
-    ref={dragHandle}
-  >
-    {node.isLeaf ? <FaFile /> : node.isOpen ? <FaFolderOpen /> : <FaFolder />}
-    <span>{node.data.name}</span>
-  </div>
-);
+import { Tree } from "react-arborist";
+import TreeItem from "./TreeItem";
 
 interface Props {
   files?: TreeNode[];
@@ -47,7 +36,7 @@ const FsTree: FC<Props> = ({ files, onSelect }) => {
           }
         }}
       >
-        {Node}
+        {TreeItem}
       </Tree>
     </div>
   );
