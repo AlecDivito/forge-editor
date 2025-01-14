@@ -29,6 +29,7 @@
     "@xterm/xterm": "^5.5.0",
     "codemirror": "^6.0.1",
     "codemirror-languageserver": "^1.11.0",
+    "diff-match-patch": "^1.0.5",
     "dockview": "^3.0.2",
     "flat-color-icons": "^1.1.0",
     "ioredis": "^5.4.2",
@@ -47,6 +48,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@types/diff-match-patch": "^1.0.36",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

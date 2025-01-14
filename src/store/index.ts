@@ -1,6 +1,7 @@
 "use client";
 
-import { Message } from "@/interfaces/socket";
+import { applyChanges, Message } from "@/interfaces/socket";
+import { Change } from "@/service/fs";
 import { buildFileTree, TreeNode } from "@/service/tree";
 import { nanoid } from "nanoid";
 import { create } from "zustand";
@@ -12,6 +13,8 @@ interface FileTreeState {
   openFiles: { [group: string]: string[] };
   // Files keeps a flat list of files and it's content (if it has been loaded in.)
   files: { [key: string]: string };
+  // Incremental updates for a given file
+  edits: { [key: string]: Change[] };
   // Tree keeps a render object tree of all of the files in a list structure
   tree: TreeNode[]; // Cached tree structure
   // Initialize Tree setups the editor, prepares it for use
@@ -26,12 +29,15 @@ interface FileTreeState {
   closeFile: (group: string, path: string) => void;
   // Update a file
   updateFile: (path: string, content: string) => void;
+  // Apply edits immediately if created locally.
+  applyEdit: (path: string, edit: Change[]) => void;
 }
 
 export const useFileStore = create<FileTreeState>((set, get) => ({
   activeGroup: null,
   openFiles: {},
   files: {},
+  edits: {},
   tree: [],
 
   // Initialize the flat file store with paths and empty contents
@@ -47,7 +53,7 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
     console.log(message);
 
     const { event, body } = message;
-    const { files } = get();
+    const { files, edits } = get();
 
     if (event === "file:created") {
       set({
@@ -59,6 +65,22 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
     if (event === "file:updated") {
       set({
         files: { ...files, [body.path]: body.content },
+        edits: { ...edits, [body.path]: [] }, // Clear edits after sync
+      });
+    }
+
+    if (event === "file:edit") {
+      const { path, changes } = body;
+      // Avoid applying duplicate edits
+      const uniqueChanges = changes.filter(
+        (change) => !edits[path]?.some((e) => e.id === change.id)
+      );
+
+      const updatedContent = applyChanges(files[path], uniqueChanges);
+
+      set({
+        files: { ...files, [path]: updatedContent },
+        edits: { ...edits, [path]: [...(edits[path] || []), ...uniqueChanges] },
       });
     }
 
@@ -122,4 +144,20 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
         [path]: content,
       },
     })),
+
+  applyEdit: (path: string, edits: Change[]) => {
+    set((state) => {
+      const newContent = applyChanges(state.files[path], edits);
+      return {
+        files: {
+          ...state.files,
+          [path]: newContent,
+        },
+        edits: {
+          ...state.edits,
+          [path]: [...(state.edits[path] || []), ...edits],
+        },
+      };
+    });
+  },
 }));

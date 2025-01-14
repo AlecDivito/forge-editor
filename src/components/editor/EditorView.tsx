@@ -1,5 +1,5 @@
 import { useSendMessage } from "@/hooks/send-message";
-import { FileUpdated } from "@/interfaces/socket";
+import { FileEdit } from "@/interfaces/socket";
 import { useFileStore } from "@/store";
 import { IDockviewPanelProps } from "dockview";
 import { FC, useEffect, useState } from "react";
@@ -77,16 +77,19 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   // const containerApi: DockviewApi = props.containerApi;
   const { file, theme } = params;
   const content = useFileStore((state) => state.files[file]);
-  const updateFile = useFileStore((state) => state.updateFile);
+  const applyEdit = useFileStore((state) => state.applyEdit);
   const send = useSendMessage();
 
   const [extensions, setExtensions] = useState<Extension[]>([]);
   const [loadedTheme, setLoadedTheme] = useState<Extension | undefined>();
 
   const debouncedSave = debounce((value: string) => {
-    updateFile(file, value);
-    send(FileUpdated(file, value));
-  }, 500);
+    const edits = FileEdit(file, content, value);
+    if (edits.event === "file:edit") {
+      applyEdit(file, edits.body.changes);
+    }
+    send(edits);
+  }, 100);
 
   useEffect(() => {
     const loadExtensions = async () => {

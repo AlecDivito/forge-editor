@@ -8,12 +8,21 @@ const supportedLSPs: Record<string, { cmd: string; args: string[] }> = {
   rs: { cmd: "rust-analyzer", args: [] },
   ts: { cmd: "typescript-language-server", args: ["--stdio"] },
   js: { cmd: "typescript-language-server", args: ["--stdio"] },
-  py: { cmd: "pyls", args: [] },
-  yaml: { cmd: "yaml-language-server", args: ["--stdio"] },
+  // py: { cmd: "pyls", args: [] },
+  // yaml: { cmd: "yaml-language-server", args: ["--stdio"] },
   json: { cmd: "vscode-json-languageserver", args: ["--stdio"] },
-  markdown: { cmd: "markdown-language-server", args: ["--stdio"] },
+  md: { cmd: "markdown-language-server", args: ["--stdio"] },
   html: { cmd: "vscode-html-languageserver", args: ["--stdio"] },
   css: { cmd: "vscode-css-languageserver", args: ["--stdio"] },
+};
+
+const vfs = new Map();
+
+export const readFileFromVFS = (path: string) => vfs.get(path) || "";
+
+export const writeFileToVFS = (path: string, content: string) => {
+  vfs.set(path, content);
+  console.log(`Updated VFS: ${path}`);
 };
 
 export async function SOCKET(
@@ -45,52 +54,47 @@ export async function SOCKET(
       const str = message.toString();
       const parsed = JSON.parse(str);
 
-      if (parsed.method === "workspace/workspaceFolders") {
-        const workspaceFolders = [
-          {
-            uri: "file:///workspace/",
-            name: "RedisWorkspace",
-          },
-        ];
-        client.send(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: parsed.id,
-            result: workspaceFolders,
-          })
-        );
-        return;
-      }
-
       if (
         parsed.method === "textDocument/didOpen" ||
         parsed.method === "textDocument/didChange"
       ) {
         const uri = parsed.params.textDocument.uri;
-        if (uri.startsWith("file:///workspace/")) {
-          const path = uri.replace("file:///workspace/", "");
-          let fileContent = await redis.get(path);
+        const path = uri.replace("file:///workspace/", "");
 
-          if (!fileContent) {
-            if (path === "Cargo.toml") {
-              // Dynamically generate a minimal Cargo.toml
-              fileContent = `[package]
-name = "example"
-version = "0.1.0"
-edition = "2021"
+        if (parsed.method === "textDocument/didOpen") {
+          // Fetch file content from VFS
+          parsed.params.textDocument.text = readFileFromVFS(path);
+        }
 
-[dependencies]
-`;
+        if (parsed.method === "textDocument/didChange") {
+          // Update VFS with the latest changes
+          const changes = parsed.params.contentChanges;
+          let currentContent = readFileFromVFS(path);
+
+          changes.forEach((change) => {
+            const { range, text } = change;
+            if (!range) {
+              // Full document update
+              currentContent = text;
             } else {
-              console.error(`File ${path} not found in Redis.`);
-              fileContent = ""; // Serve empty file if not found
-            }
-          }
+              // Incremental update
+              const { start, end } = range;
+              const startPos =
+                start.line * currentContent.length + start.character;
+              const endPos = end.line * currentContent.length + end.character;
 
-          parsed.params.textDocument.text = fileContent;
+              currentContent =
+                currentContent.slice(0, startPos) +
+                text +
+                currentContent.slice(endPos);
+            }
+          });
+
+          writeFileToVFS(path, currentContent);
         }
       }
 
+      // Forward message to LSP
       const updatedMessage = JSON.stringify(parsed);
       lspProcess.stdin.write(
         `Content-Length: ${updatedMessage.length}\r\n\r\n${updatedMessage}`

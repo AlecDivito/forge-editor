@@ -19,7 +19,7 @@ You'll also need to install language servers so that you can effectively.
 ```bash
 # Install gopls... lol idk how to do this.
 rustup component install rust-analyzer
-npm i -g typescript-language-server typescript
+npm i -g typescript-language-server vscode-json-languageserver npm install vscode-markdown-languageservice vscode-html-languageserver-bin vscode-css-languageservice typescript
 ```
 
 ## Setup

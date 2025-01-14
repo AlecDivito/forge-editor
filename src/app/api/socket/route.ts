@@ -1,12 +1,44 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { IncomingMessage } from "http";
 import redis from "@/lib/redis";
-import { deleteFile, getFile, saveFile } from "@/service/fs";
+import {
+  deleteFile,
+  getFile,
+  saveFile,
+  saveFileEdit,
+  consolidateFileEdits,
+} from "@/service/fs";
 import { Message } from "@/interfaces/socket";
 
 const pubClient = redis.duplicate(); // Redis publisher
 const subClient = redis.duplicate(); // Redis subscriber
 const clients: Set<WebSocket> = new Set();
+const debounceTimers = new Map();
+
+function debounceConsolidation(path: string, delay = 2000) {
+  if (debounceTimers.has(path)) {
+    clearTimeout(debounceTimers.get(path));
+  }
+
+  debounceTimers.set(
+    path,
+    setTimeout(async () => {
+      try {
+        const { content, metadata } = await consolidateFileEdits(path);
+
+        const payload = {
+          event: "file:updated",
+          body: { path, content, metadata },
+        };
+        await pubClient.publish("file:events", JSON.stringify(payload));
+
+        console.log(`Consolidated changes for ${path}`);
+      } catch (error) {
+        console.error(`Error consolidating changes for ${path}:`, error);
+      }
+    }, delay)
+  );
+}
 
 subClient.on("connecting", () => {
   console.log(`Subscription client is connecting`);
@@ -68,7 +100,22 @@ export async function SOCKET(
       const { event, body } = JSON.parse(message.toString()) as Message;
       console.log(`Processing ${event}`);
 
-      if (event === "file:read") {
+      if (event === "file:edit") {
+        const { path, changes } = body;
+
+        // Save the edits without updating the file content
+        await saveFileEdit(path, changes);
+
+        // Broadcast the edit event to other clients
+        const payload = {
+          event: "file:edit",
+          body: { path, changes },
+        };
+        await pubClient.publish("file:events", JSON.stringify(payload));
+
+        // After 2 seconds, consolidate the changes
+        debounceConsolidation(path);
+      } else if (event === "file:read") {
         const { path } = body;
         const file = await getFile(path);
         // Send a file updated event when the file is requested to be read.
