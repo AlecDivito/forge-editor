@@ -9,7 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.731.0",
     "@codemirror/autocomplete": "^6.18.4",
+    "@codemirror/collab": "^6.1.1",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-go": "^6.0.1",
     "@codemirror/lang-html": "^6.4.9",
@@ -22,11 +24,13 @@
     "@codemirror/lang-wast": "^6.0.2",
     "@codemirror/lang-yaml": "^6.1.2",
     "@codemirror/lint": "^6.8.4",
+    "@open-rpc/client-js": "^1.8.1",
     "@uiw/codemirror-theme-gruvbox-dark": "^4.23.7",
     "@uiw/codemirror-theme-material": "^4.23.7",
     "@uiw/codemirror-themes": "^4.23.7",
     "@uiw/react-codemirror": "^4.23.7",
     "@xterm/xterm": "^5.5.0",
+    "aws-sdk": "^2.1692.0",
     "codemirror": "^6.0.1",
     "codemirror-languageserver": "^1.11.0",
     "diff-match-patch": "^1.0.5",
@@ -41,9 +45,14 @@
     "react-dom": "^19.0.0",
     "react-grid-layout": "^1.5.0",
     "react-icons": "^5.4.0",
+    "react-markdown": "^9.0.3",
     "react-resizable": "^3.0.5",
+    "react-tiny-popover": "^8.1.4",
     "react-xtermjs": "^1.0.9",
+    "vscode-languageserver-protocol": "^3.17.5",
     "ws": "^8.18.0",
+    "y-codemirror.next": "^0.3.5",
+    "yjs": "^13.6.23",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
@@ -59,6 +68,7 @@
     "eslint-config-next": "15.1.4",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vscode-markdown-languageservice": "^0.5.0-alpha.8"
   }
 }

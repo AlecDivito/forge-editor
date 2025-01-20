@@ -1,7 +1,11 @@
 "use server";
 
-import { applyChanges } from "@/interfaces/socket";
 import redis from "@/lib/redis";
+import { s3 } from "@/lib/s3";
+import { NoSuchKey } from "@aws-sdk/client-s3";
+import { existsSync } from "fs";
+import { writeFile, mkdir } from "fs/promises";
+import { dirname, join } from "path";
 
 export interface Change {
   id: string;
@@ -66,52 +70,32 @@ export async function saveFileEdit(path: string, changes: Change[]) {
   }
 }
 
-export async function consolidateFileEdits(path: string): Promise<{
-  content: string;
-  metadata: Metadata;
-}> {
-  // Get the current file and its edits
-  const file = await getFile(path);
-  const changes = JSON.parse((await redis.get(`fs:ops:${path}`)) || "[]");
+// export async function consolidateFileEdits(path: string): Promise<{
+//   content: string;
+//   metadata: Metadata;
+// }> {
+//   // Get the current file and its edits
+//   const file = await getFile(path);
+//   const changes = JSON.parse((await redis.get(`fs:ops:${path}`)) || "[]");
 
-  // Apply all changes to consolidate the content
-  const consolidatedContent = applyChanges(file.content, changes);
+//   // Apply all changes to consolidate the content
+//   const consolidatedContent = applyChanges(file.content, changes);
 
-  // Save the consolidated content and clear the change log
-  await saveFile(path, consolidatedContent);
-  await redis.del(`fs:ops:${path}`);
+//   // Save the consolidated content and clear the change log
+//   await saveFile(path, consolidatedContent);
+//   await redis.del(`fs:ops:${path}`);
 
-  // Update metadata
-  const metadata = {
-    version: (file.metadata?.version || 0) + 1,
-    lastModified: Date.now(),
-    size: consolidatedContent.length,
-  };
-  await redis.set(`fs:meta:${path}`, JSON.stringify(metadata));
+//   // Update metadata
+//   const metadata = {
+//     version: (file.metadata?.version || 0) + 1,
+//     lastModified: Date.now(),
+//     size: consolidatedContent.length,
+//   };
+//   await redis.set(`fs:meta:${path}`, JSON.stringify(metadata));
 
-  // Broadcast the updated file content
-  return { content: consolidatedContent, metadata };
-}
-
-/**
- * Delete a file in Redis.
- * @param path - The path of the file.
- */
-export async function deleteFile(path: string): Promise<void> {
-  try {
-    const result = await redis.del(
-      `fs:file:${path}`,
-      `fs:ops:${path}`,
-      `fs:meta:${path}`
-    );
-    if (!result) {
-      throw new Error(`File '${path}' not found.`);
-    }
-  } catch (error) {
-    console.error("Error deleting file:", error);
-    throw new Error("Failed to delete file.");
-  }
-}
+//   // Broadcast the updated file content
+//   return { content: consolidatedContent, metadata };
+// }
 
 /**
  * Get a list of files that match the given path pattern.
@@ -154,4 +138,124 @@ export async function getFile(path: string): Promise<File> {
     console.error("Error fetching file:", error);
     throw new Error("Failed to fetch file.");
   }
+}
+
+export interface Folder {
+  files: string[];
+  directories: string[];
+}
+
+export async function listDirectoryFiles(
+  bucketName: string,
+  projectName: string
+): Promise<Folder> {
+  // List objects in the project folder
+  const data = await s3.listObjectsV2({
+    Bucket: bucketName,
+    Prefix: `${projectName}/`,
+    Delimiter: "/",
+  });
+
+  // Extract files and directories
+  const files =
+    data.Contents?.map((item) =>
+      item.Key!.replace(`${projectName}/`, "")
+    ).filter((key) => key && !key.endsWith("/")) || [];
+  const directories =
+    data.CommonPrefixes?.map((prefix) =>
+      prefix.Prefix!.replace(`${projectName}/`, "").replace("/", "")
+    ) || [];
+
+  // Return tree structure
+  return {
+    files,
+    directories,
+  };
+}
+
+export async function downloadProject(
+  bucketName: string,
+  projectName: string,
+  to: string
+): Promise<void> {
+  const objects = await s3.listObjectsV2({
+    Bucket: bucketName,
+    Prefix: `${projectName}/`,
+    Delimiter: "/",
+  });
+
+  if (!objects.Contents) {
+    console.warn("No files found in the specified S3 bucket and prefix.");
+    return;
+  }
+
+  for (const object of objects.Contents) {
+    if (!object.Key) continue;
+
+    const getObjectParams = {
+      Bucket: bucketName,
+      Key: object.Key,
+    };
+
+    const fileData = await s3.getObject(getObjectParams);
+
+    const relativePath = object.Key.replace(`${projectName}/`, "");
+    const filePath = join(to, relativePath);
+
+    // Ensure the directory exists
+    const dirPath = dirname(filePath);
+    if (!existsSync(dirPath)) {
+      await mkdir(dirPath, { recursive: true });
+    }
+
+    // Write the file to the local filesystem
+    if (fileData.Body) {
+      await writeFile(filePath, await fileData.Body.transformToString());
+    }
+  }
+}
+
+export async function readFile(
+  bucketName: string,
+  path: string
+): Promise<string | undefined> {
+  try {
+    const response = await s3.getObject({
+      Bucket: bucketName,
+      Key: path,
+    });
+    if (!response.Body) {
+      return undefined;
+    }
+
+    const content = await response.Body.transformToString("utf-8");
+    return content;
+  } catch (error) {
+    if (error instanceof NoSuchKey) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export async function createFile(
+  bucketName: string,
+  path: string,
+  Body: string = ""
+): Promise<void> {
+  await s3.putObject({
+    Bucket: bucketName,
+    Key: path,
+    Body,
+  });
+}
+
+export async function deleteFile(
+  bucketName: string,
+  path: string
+): Promise<void> {
+  await s3.deleteObject({
+    Bucket: bucketName,
+    Key: path,
+  });
 }

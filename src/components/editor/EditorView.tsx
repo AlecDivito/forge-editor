@@ -1,22 +1,18 @@
-import { useSendMessage } from "@/hooks/send-message";
-import { FileEdit } from "@/interfaces/socket";
-import { useFileStore } from "@/store";
 import { IDockviewPanelProps } from "dockview";
 import { FC, useEffect, useState } from "react";
 import { EditorParams } from "./EditorParams";
 import { Extension } from "@uiw/react-codemirror/cjs/index.js";
 import dynamic from "next/dynamic";
-import { debounce } from "@/utils/debounce";
-import { autocompletion } from "@codemirror/autocomplete";
-import { languageServer } from "codemirror-languageserver";
-// import { Diagnostic, linter } from "@codemirror/lint";
-// import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
+import { useSendLspMessage } from "@/hooks/use-send-message";
+import { lspExtensions } from "./lsp";
+import { useFileStore } from "@/store/filetree";
+import { FileExtension } from "@/service/lsp/proxy";
 
 const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
 });
 
-const languageExtensions: Record<string, () => Promise<Extension>> = {
+const languageExtensions: Record<FileExtension, () => Promise<Extension>> = {
   js: () =>
     import("@codemirror/lang-javascript").then((mod) => mod.javascript()),
   ts: () =>
@@ -25,100 +21,53 @@ const languageExtensions: Record<string, () => Promise<Extension>> = {
     ),
   css: () => import("@codemirror/lang-css").then((mod) => mod.css()),
   html: () => import("@codemirror/lang-html").then((mod) => mod.html()),
-  py: () => import("@codemirror/lang-python").then((mod) => mod.python()),
-  yaml: () => import("@codemirror/lang-yaml").then((mod) => mod.yaml()),
+  // py: () => import("@codemirror/lang-python").then((mod) => mod.python()),
+  // yaml: () => import("@codemirror/lang-yaml").then((mod) => mod.yaml()),
   json: () => import("@codemirror/lang-json").then((mod) => mod.json()),
   rs: () => import("@codemirror/lang-rust").then((mod) => mod.rust()),
-  markdown: () =>
-    import("@codemirror/lang-markdown").then((mod) => mod.markdown()),
-  wast: () => import("@codemirror/lang-wast").then((mod) => mod.wast()),
-  sql: () => import("@codemirror/lang-sql").then((mod) => mod.sql()),
+  md: () => import("@codemirror/lang-markdown").then((mod) => mod.markdown()),
+  // wast: () => import("@codemirror/lang-wast").then((mod) => mod.wast()),
+  // sql: () => import("@codemirror/lang-sql").then((mod) => mod.sql()),
   go: () => import("@codemirror/lang-go").then((mod) => mod.go()),
 };
 
-// const languageLinter: Record<
-//   string,
-//   () => Promise<(view: CodeMirrorEditorView) => Diagnostic[]>
-// > = {
-// js: () => import("@codemirror/lang-javascript").then((mod) => mod.esLint()),
-// ts: () => import("@codemirror/lang-javascript").then((mod) => mod.esLint()),
-// css: () => import("@codemirror/lang-css").then((mod) => mod.()),
-// html: () => import("@codemirror/lang-html").then((mod) => mod.html()),
-// py: () => import("@codemirror/lang-python").then((mod) => mod.python()),
-// yaml: () => import("@codemirror/lang-yaml").then((mod) => mod.yaml()),
-// json: () => import("@codemirror/lang-json").then((mod) => mod.json()),
-// rust: () => import("@codemirror/lang-rust").then((mod) => mod.rust()),
-// markdown: () =>
-//   import("@codemirror/lang-markdown").then((mod) => mod.markdown()),
-// wast: () => import("@codemirror/lang-wast").then((mod) => mod.wast()),
-// sql: () => import("@codemirror/lang-sql").then((mod) => mod.sql()),
-// go: () => import("@codemirror/lang-go").then((mod) => mod.go()),
-// };
-
-// const customLinter = (): Diagnostic[] => {
-//   return [
-//     {
-//       from: 0,
-//       to: 5,
-//       message: "Example lint warning: Text should be properly formatted.",
-//       severity: "warning",
-//     },
-//   ];
-// };
-
-const getFileExtension = (filename: string): string => {
+const getFileExtension = (filename: string): FileExtension | undefined => {
   const parts = filename.split(".");
-  return parts.length > 1 ? parts.pop()! : "";
+  const exts: FileExtension[] = ["go", "rs", "json", "js", "ts", "md"];
+  const extension = parts.length > 1 ? parts.pop() : undefined;
+  if (!extension || !(exts as string[]).includes(extension)) {
+    return undefined;
+  }
+  return extension as FileExtension;
 };
 
 const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
-  // const api: DockviewPanelApi = props.api;
-  // const groupApi: DockviewGroupPanelApi = props?.group?.api;
-  // const containerApi: DockviewApi = props.containerApi;
   const { file, theme } = params;
-  const content = useFileStore((state) => state.files[file]);
-  const applyEdit = useFileStore((state) => state.applyEdit);
-  const send = useSendMessage();
+  const language = getFileExtension(file);
+  const client = useSendLspMessage(language);
+  const { capabilities, activeFiles } = useFileStore();
 
   const [extensions, setExtensions] = useState<Extension[]>([]);
   const [loadedTheme, setLoadedTheme] = useState<Extension | undefined>();
 
-  const debouncedSave = debounce((value: string) => {
-    const edits = FileEdit(file, content, value);
-    if (edits.event === "file:edit") {
-      applyEdit(file, edits.body.changes);
-    }
-    send(edits);
-  }, 100);
-
   useEffect(() => {
     const loadExtensions = async () => {
-      const ext = getFileExtension(file);
-      const languageExtension = languageExtensions[ext];
-      const loadedExtensions = [
-        languageExtension ? await languageExtension() : [],
-        autocompletion(),
-      ];
+      if (!language || !activeFiles?.[file]) {
+        return;
+      }
 
-      if (ext === "go") {
+      const loadedExtensions = [];
+      if (capabilities[language]) {
+        loadedExtensions.push(await languageExtensions[language]());
+        // loadedExtensions.push(collabExtension(version, client));
         loadedExtensions.push(
-          languageServer({
-            serverUri: `ws://localhost:3000/api/lsp/go`,
-            rootUri: "file:///",
-            workspaceFolders: [],
-            documentUri: `file://${file}`,
-            languageId: "go",
-          })
-        );
-      } else if (ext === "rs") {
-        loadedExtensions.push(
-          languageServer({
-            serverUri: `ws://localhost:3000/api/lsp/rs`,
-            rootUri: "file:///workspace/",
-            workspaceFolders: [],
-            documentUri: `file:///workspace${file}`,
-            languageId: "rust",
-          })
+          lspExtensions(
+            client,
+            `file:///${file}`,
+            language,
+            activeFiles[file].version,
+            capabilities[language]
+          )
         );
       }
       setExtensions(loadedExtensions);
@@ -153,17 +102,23 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
       }
     };
 
-    loadExtensions();
-    loadTheme();
-  }, [file, theme]);
+    if (activeFiles?.[file] && file && capabilities) {
+      loadExtensions();
+      loadTheme();
+    }
+  }, [client, language, activeFiles, file, capabilities, theme]);
+
+  // !(!!activeFiles?.[file] makes sure that it's a type) and this is the boolean operation on it
+  if (!!!activeFiles?.[file] || extensions.length === 0) {
+    return <div>Loading {file}...</div>;
+  }
 
   return (
     <ReactCodeMirror
-      value={content || ""}
+      value={activeFiles[file].text || ""}
       extensions={extensions}
       theme={loadedTheme}
       height="100%"
-      onChange={(value) => debouncedSave(value)}
     />
   );
 };

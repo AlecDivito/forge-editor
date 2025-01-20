@@ -1,7 +1,6 @@
 import { IDockviewPanelHeaderProps } from "dockview";
 import { FC } from "react";
 import { EditorParams } from "./EditorParams";
-import { useFileStore } from "@/store";
 import { FaXbox } from "react-icons/fa";
 
 const extractTabName = (file: string, fileList: string[] = []): string => {
@@ -12,15 +11,22 @@ const extractTabName = (file: string, fileList: string[] = []): string => {
 };
 
 const FileTab: FC<IDockviewPanelHeaderProps<EditorParams>> = (props) => {
-  const panels = useFileStore((state) => state.openFiles);
-  const closePanel = useFileStore((state) => state.closeFile);
   const api = props.api;
-  const { file, group } = props.params;
+  const { file } = props.params;
 
-  const fileName = extractTabName(file, panels[api.group.id]);
+  const fileName = extractTabName(file, []);
 
   const close = () => {
-    closePanel(group, file);
+    // TODO: Alec. All the state is kept in the editor. IF the user moves
+    // to fast, they could close the editor before the changes sync. We
+    // need some way of being notified of a close event and to sync the
+    // changes before the document is closed.
+    //
+    // Theres actually a lot of things that this component should know about
+    // the update process. We technically use the store to make all the edits,
+    // so we should consider updating the store with this information about
+    // being able to close things.
+    api.close();
   };
 
   return (

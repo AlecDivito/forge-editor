@@ -3,30 +3,34 @@
 import { FC, useState } from "react";
 import ToolBar from "./fileTree/ToolBar";
 import CreateFileForm, { FileName } from "./fileTree/TreeForm";
-import { useFileStore } from "@/store";
+import { useFileStore } from "@/store/filetree";
 import FsTree from "./fileTree/Tree";
-import { FileCreated, ReadFile } from "@/interfaces/socket";
-import { useSendMessage } from "@/hooks/send-message";
+import { useSendLspMessage } from "@/hooks/use-send-message";
 
 const FileViewerController: FC = ({}) => {
-  const tree = useFileStore((state) => state.tree); // Subscribe to changes in files
-  const files = useFileStore((state) => state.files);
-  const openFile = useFileStore((state) => state.openFile);
-  const sender = useSendMessage();
+  const { tree, base, openFile } = useFileStore(); // Subscribe to changes in files
+  const sender = useSendLspMessage();
   const [createFile, setCreateFile] = useState(false);
 
-  const handleCreateFile = (body: FileName) => {
-    const message = FileCreated(body.name);
-    sender(message);
+  const handleCreateFile = async (body: FileName) => {
+    // We need to use an LSP event here for creating a file. Even if we don't tell
+    // the actual LSP about it. How would you implement this
+    await sender({
+      method: "workspace/didChangeWatchedFiles",
+      params: {
+        changes: [
+          {
+            uri: `file:///${base}/${body.name}`,
+            type: 1, // Created
+          },
+        ],
+      },
+    });
+    setCreateFile(false);
   };
 
   const loadAndOpenFile = (path: string) => {
-    if (!files[path]) {
-      const message = ReadFile(path);
-      sender(message, () => openFile(path));
-    } else {
-      openFile(path);
-    }
+    openFile(`${base}/${path}`);
   };
 
   return (

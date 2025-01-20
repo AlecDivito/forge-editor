@@ -1,11 +1,18 @@
 "use client";
 
 import { FC, useEffect, useState } from "react";
-import { useFileStore } from "@/store";
-import { DockviewApi, DockviewDidDropEvent, DockviewReact } from "dockview";
+import { useFileStore } from "@/store/filetree";
+import {
+  DockviewApi,
+  DockviewDidDropEvent,
+  DockviewReact,
+  // IDockviewGroupPanel,
+  IDockviewPanel,
+} from "dockview";
 import EditorView from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
+import { useSendLspMessage } from "@/hooks/use-send-message";
 
 interface Props {
   theme?: "material" | "gruvbox";
@@ -13,66 +20,89 @@ interface Props {
 }
 
 const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
-  const activeGroup = useFileStore((state) => state.activeGroup);
-  const panels = useFileStore((state) => state.openFiles);
-  const files = useFileStore((state) => state.files);
-  const { closeFile, addGroup } = useFileStore((state) => state);
+  const { base, activeFiles, capabilities } = useFileStore();
+  const sender = useSendLspMessage();
   const [view, setView] = useState<DockviewApi | null>(null);
+  // const [activeGroup, setActiveGroup] = useState<IDockviewGroupPanel[]>([]);
+  const [panels, setPanels] = useState<IDockviewPanel[]>([]);
 
   useEffect(() => {
     if (view) {
+      const addPanel = view.onDidAddPanel((e) => {
+        if (e.params?.file && e.params?.extension) {
+          // languageId, version and text will be inserted by the server
+          sender(
+            {
+              method: "textDocument/didOpen",
+              params: {
+                textDocument: {
+                  uri: `file:///${e.params.file}`,
+                  languageId: "",
+                  version: 0,
+                  text: "",
+                },
+              },
+            },
+            e.params.file.split(".").pop()
+          );
+        }
+      });
       const removePanel = view.onDidRemovePanel((e) => {
-        closeFile(e.id, e.params?.file);
+        if (e.params?.file && e.params?.extension) {
+          sender(
+            {
+              method: "textDocument/didClose",
+              params: {
+                textDocument: {
+                  uri: `file:///${e.params.file}`,
+                },
+              },
+            },
+            e.params.file.split(".").pop()
+          );
+        }
       });
       const addGroup = view.onDidAddGroup((e) => {
         console.log(e);
-        // addGroup();
+      });
+      const removeGroup = view.onDidRemoveGroup((e) => {
+        console.log(e);
       });
       const disposable = view.onUnhandledDragOverEvent((event) => {
         event.accept();
       });
 
       return () => {
+        addPanel.dispose();
         removePanel.dispose();
+        removeGroup.dispose();
         addGroup.dispose();
         disposable.dispose();
       };
     }
-  }, [view, addGroup, closeFile]);
+  }, [view, base, sender]);
 
   useEffect(() => {
-    if (view && panels && files) {
-      const ids: string[] = [];
-      Object.entries(panels).forEach(([groupName, files]) => {
-        // This acts as a group
-        let lastPanel = null;
-        for (const file of files) {
-          const childPanelKey = `${groupName}-${file}`;
-          let childPanel = view.getPanel(childPanelKey);
+    if (view && activeFiles) {
+      const openFiles = panels
+        .map((panel) => panel.params?.file)
+        .filter((file) => file);
+      const toOpen = Object.keys(activeFiles);
 
-          if (!childPanel) {
-            childPanel = view.addPanel({
-              id: childPanelKey,
-              tabComponent: "fileTab",
-              component: "editor",
-              position: lastPanel ? { referencePanel: lastPanel } : undefined,
-              params: { file, group: groupName, theme },
-            });
-          }
-          ids.push(childPanelKey);
-          lastPanel = childPanel;
+      for (const file of [...openFiles, ...toOpen]) {
+        console.log(file);
+        const panel = view.getPanel(file);
+        if (!panel) {
+          view.addPanel({
+            id: file,
+            tabComponent: "fileTab",
+            component: "editor",
+            params: { file, theme, extension: file.split(".").pop() || "" },
+          });
         }
-      });
-
-      // Remove any of the panels that don't exist anymore
-      const toRemovePanels = view.panels.filter(
-        (panel) => !ids.includes(panel.id)
-      );
-      for (const panel of toRemovePanels) {
-        view.removePanel(panel);
       }
     }
-  }, [view, panels, files, theme]);
+  }, [theme, view, panels, activeFiles, setPanels]);
 
   const components = {
     default: DefaultView,
@@ -85,13 +115,6 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
 
   const onDidDrop = (event: DockviewDidDropEvent) => {
     console.log(event);
-    // const path = event.
-    // if (!files[path]) {
-    //       const message = ReadFile(path);
-    //       sender(message, () => openFile(path));
-    //     } else {
-    //       openFile(path);
-    //     }
   };
 
   return (
@@ -106,9 +129,8 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
         />
       </div>
       <div>
-        <pre>Active: {activeGroup}</pre>
-        <pre>panels: {JSON.stringify(panels, null, 2)}</pre>
-        <pre>Files: {JSON.stringify(files, null, 2)}</pre>
+        <pre>Active: {JSON.stringify(activeFiles)}</pre>
+        <pre>Capabilities: {JSON.stringify(capabilities, null, 2)}</pre>
       </div>
     </>
   );

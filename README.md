@@ -18,7 +18,11 @@ You'll also need to install language servers so that you can effectively.
 
 ```bash
 # Install gopls... lol idk how to do this.
+# Installing markdown LSP
+brew install marksman
+# Installing Rust LSP
 rustup component install rust-analyzer
+# Install language servers for the Web
 npm i -g typescript-language-server vscode-json-languageserver npm install vscode-markdown-languageservice vscode-html-languageserver-bin vscode-css-languageservice typescript
 ```
 
