@@ -1,36 +1,19 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { IncomingMessage } from "http";
-import { LspProxyMessage } from "@/hooks/use-send-message";
 import { LspProxyManager } from "@/service/lsp/manager";
 import { ProcessLspClientFactory } from "@/service/lsp/proxy/process";
-import { LspResponse } from "@/service/lsp";
 import { FileExtension } from "@/service/lsp/proxy";
 import { CacheManager } from "@/service/lsp/cache";
 import { LspEventHandler } from "@/service/lsp/events";
-
-function newError(
-  request: LspProxyMessage,
-  code: number,
-  message: string
-): LspResponse {
-  return {
-    id: request.id,
-    base: request.base,
-    language: request.language,
-    error: {
-      code,
-      message,
-      data: {},
-    },
-  };
-}
+import WebSocketClient, { ProxyErrorObject } from "@/service/lsp/websocket";
+import { LspError, LspError, ServerAcceptedMessage } from "@/service/lsp";
 
 export async function SOCKET(
   client: WebSocket,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   request: IncomingMessage,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  wss: WebSocketServer
+  wss: WebSocketServer,
 ) {
   console.log("New LSP WebSocket connection.");
   let cacheManager: CacheManager | undefined = undefined;
@@ -56,196 +39,104 @@ export async function SOCKET(
 
   client.on("message", async (body) => {
     try {
-      const wsRequest = JSON.parse(body.toString()) as LspProxyMessage;
-      const { id, base, language, message: parsed } = wsRequest;
+      const requestClient = new WebSocketClient(client);
+      const wsRequest = JSON.parse(body.toString()) as ServerAcceptedMessage;
+      console.log(JSON.stringify(wsRequest, null, 2));
+      const { type, id, ctx, message } = wsRequest;
 
-      // Initialize the LSP proxy
-      if (parsed.method === "initialize") {
-        if (!cacheManager) {
-          cacheManager = new CacheManager(process.env.S3_BUCKET!, base);
-        }
-        if (!manager) {
-          console.log(
-            "Received initialize request. Creating LSP manager for client."
-          );
-          manager = new LspProxyManager(
-            base,
-            parsed.params,
-            new ProcessLspClientFactory({ baseDirectory: ".workspace-cache" })
-          );
-          // Return the request to the user to acknowledge initialization
-          client.send(JSON.stringify(wsRequest));
-        } else {
-          console.log("Updating Proxy manager initialization config");
-          manager.initialization = parsed.params;
-        }
-        return;
+      if (!["client-to-server-notification", "client-to-server-request", "client-to-server-response"].includes(type)) {
+        throw new Error(`Message type ${type} is not supported by proxy.`);
       }
 
-      // Make sure the manager has been created.
+      requestClient.withContext(ctx);
+      requestClient.withId(id);
+
+      // Initialize the LSP proxy
+      if (type === "client-to-server-request" && message.method === "initialize") {
+        if (!cacheManager) {
+          cacheManager = new CacheManager(process.env.S3_BUCKET!, ctx.workspace);
+        }
+        if (!manager) {
+          console.log("Received initialize request. Creating LSP manager for client.");
+          const proxyClient = new WebSocketClient(client);
+          proxyClient.withContext(ctx);
+          manager = new LspProxyManager(
+            proxyClient,
+            ctx.workspace,
+            message.params,
+            new ProcessLspClientFactory({ baseDirectory: ".workspace-cache" }),
+          );
+        } else {
+          console.log("Updating Proxy manager initialization config");
+          manager.initialization = message.params;
+        }
+      }
+
       if (!manager) {
-        client.send(
-          JSON.stringify(
-            newError(
-              wsRequest,
-              0,
-              "The request wasn't processed because the lsp proxy is not initialized yet. Please wait."
-            )
-          )
-        );
+        requestClient.sendResponseError(ProxyErrorObject[0]);
         return;
       }
 
       if (!cacheManager) {
-        client.send(
-          JSON.stringify(
-            newError(
-              wsRequest,
-              1,
-              "The request wasn't processed because the file manager hasn't been initialized yet. Please wait"
-            )
-          )
-        );
-        return;
-      }
-
-      // Make sure the language is set for messages that require it
-      if (!language) {
-        if (parsed.method == "workspace/didChangeWatchedFiles") {
-          // If the language isn't set and a file change event happened, then we need to
-          // handle the event. Just create the file.
-          for (const change of parsed.params.changes) {
-            if (change.type === 1) {
-              const uri = change.uri.replace("file:///", "");
-              await cacheManager.createDocument(uri);
-              // client.send(
-              //   JSON.stringify({
-              //     message: {
-              //       method: "textDocument/didOpen",
-              //       params: { textDocument },
-              //     },
-              //   })
-              // );
-            } else if (change.type === 3) {
-              console.error(
-                "Deleting documents is currently not not supported"
-              );
-              // await cacheManager.deleteDocument(change.uri)
-            }
-          }
-
-          client.send(
-            JSON.stringify({
-              id,
-              base,
-              language,
-              message: parsed,
-            })
-          );
-          return;
-        }
-
-        client.send(
-          JSON.stringify(
-            newError(
-              wsRequest,
-              1,
-              "The request wasn't processed because the language wasn't set on the request."
-            )
-          )
-        );
+        requestClient.sendResponseError(ProxyErrorObject[1]);
         return;
       }
 
       // The manager and the client exists. Now we do a check to make sure the
       // language server is prepared to take updates.
-      const lang = language as FileExtension;
+      const lang = ctx.language as FileExtension;
       let proxy = manager.getClient(lang);
       if (!proxy) {
         proxy = await manager.spawn(lang);
-        // Send the initialization back down to the client
-        client.send(
-          JSON.stringify({
-            method: "initialize",
-            language: lang,
-            result: proxy.support,
-          } as LspResponse)
-        );
-        // Continue on with our regularly scheduled programming.
+        requestClient.sendResponse({ method: "initialize", result: proxy.support });
       }
 
-      // Some methods are forwarded to the proxy to be handled. While others
-      // are intercepted to be processed by the proxy for collaborative editing
-      // and syncing files to S3.
-      console.log(JSON.stringify(parsed, null, 2));
       const eventHandler = new LspEventHandler(proxy, cacheManager);
 
-      if (parsed.method === "textDocument/didOpen") {
-        const output = await eventHandler.textDocumentDidOpen(parsed.params);
-        const response = {
-          id,
-          base,
-          language,
-          ...output,
-        } as LspResponse;
-        // Latter we'll handle being the authority of changes and preparing that here
-        client.send(JSON.stringify(response));
-        return;
-      } else if (parsed.method === "textDocument/didChange") {
-        await eventHandler.textDocumentDidChange(parsed.params);
-        client.send(
-          JSON.stringify({
-            id,
-            base,
-            language,
-            message: parsed,
-          })
-        );
-        return;
-      } else if (parsed.method === "textDocument/didClose") {
-        await eventHandler.textDocumentDidClose(parsed.params);
-        client.send(
-          JSON.stringify({
-            id,
-            base,
-            language,
-            message: parsed,
-          })
-        );
-      } else if (parsed.method === "textDocument/completion") {
-        const result = await eventHandler.textDocumentCompletion(parsed.params);
-        client.send(
-          JSON.stringify({
-            id,
-            base,
-            language,
-            message: result,
-          })
-        );
-      } else if (parsed.method === "textDocument/hover") {
-        const result = await eventHandler.textDocumentCompletion(parsed.params);
-        client.send(
-          JSON.stringify({
-            id,
-            base,
-            language,
-            message: result,
-          })
-        );
+      if (type === "client-to-server-request") {
+        if (message.method === "textDocument/completion") {
+          const result = await eventHandler.textDocumentCompletion(id, message.params);
+          requestClient.sendResponse({ method: message.method, result });
+        } else if (message.method === "textDocument/hover") {
+          const result = await eventHandler.textDocumentHover(id, message.params);
+          requestClient.sendResponse({ method: message.method, result });
+        } else if (message.method === "workspace/workspaceFolders") {
+          await manager.sendMessageToAll(message);
+          requestClient.sendSuccessConfirmation();
+        }
+      } else if (type === "client-to-server-notification") {
+        if (message.method === "workspace/didChangeWatchedFiles") {
+          for (const change of message.params.changes) {
+            if (change.type === 1) {
+              const uri = change.uri.replace("file:///", "");
+              await cacheManager.createDocument(uri);
+            } else if (change.type === 3) {
+              throw new Error("Deleting documents is currently not not supported");
+              // await cacheManager.deleteDocument(change.uri)
+            }
+          }
+          requestClient.sendSuccessConfirmation();
+        } else if (message.method === "textDocument/didOpen") {
+          await eventHandler.textDocumentDidOpen(message.params);
+          requestClient.sendSuccessConfirmation();
+        } else if (message.method === "textDocument/didClose") {
+          await eventHandler.textDocumentDidClose(message.params);
+          requestClient.sendSuccessConfirmation();
+        } else if (message.method === "textDocument/didChange") {
+          // TODO: although we respond back with success messages...maybe did change
+          // is one we want to skip.
+          await eventHandler.textDocumentDidChange(message.params);
+          requestClient.sendSuccessConfirmation();
+        }
+      } else if (type === "client-to-server-response") {
+        throw new Error(`Client to Server Responses are currently not supported.`);
+      } else {
+        throw new Error(`Message type ${type} is not supported in LSP Proxy.`);
       }
-
-      // if (parsed.method === "workspace/workspaceFolders") {
-      //   // console.log(
-      //   //   `------ Updating workspace folders for language ${language}`
-      //   // );
-      //   // const { workspaceFolders } = parsed.params;
-      //   // if (workspaceFolders) {
-      //   //   workspaceFoldersCache[language] = workspaceFolders;
-      //   // }
-      //   // TODO: Alec, we need to load in the S3 bucket
-      // }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error processing client message:", error);
+      const requestClient = new WebSocketClient(client);
+      requestClient.sendResponseError(error as LspError);
     }
   });
 }

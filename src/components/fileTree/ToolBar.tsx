@@ -1,14 +1,22 @@
 import { FC } from "react";
 
-import { FaFile, FaFolder, FaSync } from "react-icons/fa";
+import { FaAndroid, FaBug, FaFile, FaFolder, FaSync } from "react-icons/fa";
 
 interface Props {
   onCreateFile?: () => void;
   onCreateDirectory?: () => void;
   onRefresh?: () => void;
+  onDebug?: () => void;
+  onTest?: () => void;
 }
 
-const ToolBar: FC<Props> = ({ onCreateFile, onCreateDirectory, onRefresh }) => {
+const ToolBar: FC<Props> = ({
+  onCreateFile,
+  onCreateDirectory,
+  onRefresh,
+  onDebug,
+  onTest,
+}) => {
   return (
     <>
       <div className="flex items-center space-x-4 p-2">
@@ -29,6 +37,18 @@ const ToolBar: FC<Props> = ({ onCreateFile, onCreateDirectory, onRefresh }) => {
           size={20}
           onClick={onRefresh}
           title="Refresh"
+        />
+        <FaBug
+          className="cursor-pointer"
+          size={20}
+          onClick={onDebug}
+          title="Debug"
+        />
+        <FaAndroid
+          className="cursor-pointer"
+          size={20}
+          onClick={onTest}
+          title="workspaceFolders"
         />
       </div>
     </>

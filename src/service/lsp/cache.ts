@@ -1,7 +1,7 @@
 import redis from "@/lib/redis";
 import { createFile, deleteFile, readFile } from "../fs";
 
-interface TextDocument {
+export interface TextDocument {
   uri: string;
   languageId: string;
   version: number;

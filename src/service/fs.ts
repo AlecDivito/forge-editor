@@ -6,6 +6,7 @@ import { NoSuchKey } from "@aws-sdk/client-s3";
 import { existsSync } from "fs";
 import { writeFile, mkdir } from "fs/promises";
 import { dirname, join } from "path";
+import { TextDocument } from "./lsp/cache";
 
 export interface Change {
   id: string;
@@ -197,21 +198,29 @@ export async function downloadProject(
       Key: object.Key,
     };
 
-    const fileData = await s3.getObject(getObjectParams);
-
     const relativePath = object.Key.replace(`${projectName}/`, "");
     const filePath = join(to, relativePath);
 
+    console.log(`Reading ${object.Key} from S3 into ${filePath}`);
     // Ensure the directory exists
     const dirPath = dirname(filePath);
     if (!existsSync(dirPath)) {
       await mkdir(dirPath, { recursive: true });
     }
 
-    // Write the file to the local filesystem
-    if (fileData.Body) {
-      await writeFile(filePath, await fileData.Body.transformToString());
+    let content = "";
+    const redisKey = `fs:file:${projectName}:${object.Key}`;
+    const document = await redis.get(redisKey);
+    if (document) {
+      const parsed = JSON.parse(document) as TextDocument;
+      content = parsed.text;
+    } else {
+      const fileData = await s3.getObject(getObjectParams);
+      if (fileData?.Body) {
+        content = await fileData.Body.transformToString();
+      }
     }
+    await writeFile(filePath, content || "");
   }
 }
 

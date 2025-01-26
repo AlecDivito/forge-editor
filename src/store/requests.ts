@@ -1,26 +1,40 @@
-import { LspResponse } from "@/service/lsp";
+import { ID, ServerLspResponse } from "@/service/lsp";
 import { create } from "zustand";
 
+type RequestPromise<T> = {
+  resolve: (message: T) => void;
+  reject: (error: Error) => void;
+};
+
 type RequestStore = {
-  requests: Record<
-    string,
-    {
-      resolve: (message: LspResponse) => void;
-      reject: (error: Error) => void;
-    }
-  >;
-  addRequest: (
-    id: string,
-    resolve: (message: LspResponse) => void,
-    reject: (error: Error) => void
+  requests: Record<string, RequestPromise<ServerLspResponse>>;
+  notifications: Record<string, RequestPromise<void>>;
+
+  addNotification: (
+    id: ID,
+    resolve: Pick<RequestPromise<void>, "resolve">["resolve"],
+    reject: Pick<RequestPromise<void>, "reject">["reject"],
   ) => void;
-  resolveRequest: (id: string, message: LspResponse) => void;
-  rejectRequest: (id: string, error: Error) => void;
-  removeRequest: (id: string) => void;
+  resolveNotification: (id: ID, message: void) => void;
+  rejectNotification: (id: ID, error: Error) => void;
+  removeNotification: (id: ID) => void;
+
+  addRequest: (
+    id: ID,
+    resolve: Pick<RequestPromise<ServerLspResponse>, "resolve">["resolve"],
+    reject: Pick<RequestPromise<ServerLspResponse>, "reject">["reject"],
+  ) => void;
+  resolveRequest: (id: ID, message: ServerLspResponse) => void;
+  rejectRequest: (id: ID, error: Error) => void;
+  removeRequest: (id: ID) => void;
+
+  clearRequests: (error: Error) => void;
 };
 
 export const useRequestStore = create<RequestStore>((set) => ({
   requests: {},
+  notifications: {},
+
   addRequest: (id, resolve, reject) =>
     set((state) => ({
       requests: {
@@ -34,7 +48,6 @@ export const useRequestStore = create<RequestStore>((set) => ({
       if (request) {
         request.resolve(message);
       }
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [id]: _, ...remainingRequests } = state.requests;
       return { requests: remainingRequests };
     }),
@@ -53,5 +66,47 @@ export const useRequestStore = create<RequestStore>((set) => ({
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [id]: _, ...remainingRequests } = state.requests;
       return { requests: remainingRequests };
+    }),
+  clearRequests: (error) => {
+    set((state) => {
+      Object.keys(state.requests).forEach((id) => {
+        state.requests[id]?.reject(error);
+      });
+      return { requests: {} };
+    });
+  },
+
+  addNotification: (id, resolve, reject) =>
+    set((state) => ({
+      notifications: {
+        ...state.notifications,
+        [id]: { resolve, reject },
+      },
+    })),
+  resolveNotification: (id) =>
+    set((state) => {
+      const notification = state.notifications[id];
+      if (notification) {
+        notification.resolve();
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [id]: _, ...remainingNotifications } = state.notifications;
+      return { notifications: remainingNotifications };
+    }),
+  rejectNotification: (id, error) =>
+    set((state) => {
+      const notification = state.notifications[id];
+      if (notification) {
+        notification.reject(error);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [id]: _, ...remainingNotifications } = state.notifications;
+      return { notifications: remainingNotifications };
+    }),
+  removeNotification: (id) =>
+    set((state) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [id]: _, ...remainingNotifications } = state.notifications;
+      return { notifications: remainingNotifications };
     }),
 }));

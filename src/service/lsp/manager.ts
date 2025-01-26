@@ -1,22 +1,21 @@
 import { InitializeParams } from "vscode-languageserver-protocol";
 import { FileExtension, LspProxyClientFactory } from "./proxy";
-import { LspMessage } from ".";
+import { ClientLspRequest } from ".";
 import { Proxy } from "./proxy";
+import WebSocketClient from "./websocket";
 
 export class LspProxyManager {
-  private projectName: string;
+  private ws: WebSocketClient;
+  private workspace: string;
   private initialize: InitializeParams;
   private factory: LspProxyClientFactory;
 
   private clients: Partial<Record<FileExtension, Proxy>>;
   private spawnPromises: Partial<Record<FileExtension, Promise<Proxy>>> = {};
 
-  constructor(
-    projectName: string,
-    initialize: InitializeParams,
-    factory: LspProxyClientFactory
-  ) {
-    this.projectName = projectName;
+  constructor(ws: WebSocketClient, workspace: string, initialize: InitializeParams, factory: LspProxyClientFactory) {
+    this.ws = ws;
+    this.workspace = workspace;
     this.initialize = initialize;
     this.factory = factory;
     this.clients = {};
@@ -47,9 +46,9 @@ export class LspProxyManager {
         if (this.clients[language]) {
           await this.clients[language]?.client.destroy();
         }
-        this.clients[language] = await this.factory.spawn({
+        this.clients[language] = await this.factory.spawn(this.ws, {
           ext: language,
-          projectName: this.projectName,
+          projectName: this.workspace,
           initialize: this.initialize,
         });
 
@@ -64,10 +63,10 @@ export class LspProxyManager {
     return spawnPromise;
   }
 
-  async sendMessageToAll(message: LspMessage): Promise<void> {
+  async sendMessageToAll(message: ClientLspRequest): Promise<void> {
     const promises = [];
     for (const proxy of Object.values(this.clients)) {
-      promises.push(proxy.client.sendMessage(message));
+      promises.push(proxy.client.sendRequest(message));
     }
     await Promise.allSettled(promises);
   }

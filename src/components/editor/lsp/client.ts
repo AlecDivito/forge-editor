@@ -1,5 +1,5 @@
 import { SendLspMessage } from "@/hooks/use-send-message";
-import { LspMessage, LspResponse } from "@/service/lsp";
+import { ClientLspRequest, ServerLspResponse } from "@/service/lsp";
 import {
   CompletionParams,
   DidChangeTextDocumentParams,
@@ -44,7 +44,7 @@ export class LanguageServerClient {
     return response;
   }
 
-  private async notify(message: LspMessage): Promise<LspResponse> {
+  private async notify(message: ClientLspRequest): Promise<ServerLspResponse> {
     console.log("notify");
     const response = await this.sender(message);
     return response;

@@ -1,26 +1,22 @@
 "use client";
 
+import Editor from "./editor";
 import FileViewerController from "@/components/filesystem";
-
-// import dynamic from "next/dynamic";
 import ResizableComponent, { ResizableSides } from "./interaction/resizable";
 import { useWebSocket } from "next-ws/client";
 import { useEffect, useState } from "react";
 import { useFileStore } from "@/store/filetree";
-import Editor from "./editor";
-import { LspProxyResponse, useSendLspMessage } from "@/hooks/use-send-message";
+import { useSendLspMessage } from "@/hooks/use-send-message";
 import { LSP_INIT_PARAMS } from "./editor/lsp";
-import { LspResponse } from "@/service/lsp";
-
-// const DynamicTerminal = dynamic(() => import("@/components/terminal"), {
-//   ssr: false,
-// });
+import { ClientAcceptedMessage } from "@/service/lsp";
+import { useRequestStore } from "@/store/requests";
 
 const VSCodeLayout = () => {
   const ws = useWebSocket();
   const sender = useSendLspMessage();
-  const projectName = useFileStore((state) => state.base);
-  const handleUpdate = useFileStore((state) => state.handleUpdate);
+  const { base: projectName, handleNotification } = useFileStore();
+  const { resolveRequest, rejectRequest } = useRequestStore();
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [fileViewerWidth, setFileViewerWidth] = useState(300);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -44,21 +40,34 @@ const VSCodeLayout = () => {
   }, [sender, ws, projectName]);
 
   useEffect(() => {
-    async function onMessage(event: MessageEvent) {
-      // TODO: Remove the idea of a Message and replace it with responses from
-      //       the language server.
-      const message = JSON.parse(event.data) as LspResponse;
-      if ("message" in message) {
-        console.info(`Received response for method ${message.message.method}`);
-      } else if ("error" in message) {
-        console.error(`Lsp Proxy failed with error ${message.error.message}`);
+    const handleMessage = (event: { data: string }) => {
+      const response = JSON.parse(event.data) as ClientAcceptedMessage;
+      if (response.type === "server-to-client-confirmation") {
+      } else if (response.type === "server-to-client-response") {
+      } else if (response.type === "server-to-client-notification") {
+      } else if (response.type === "server-to-client-request") {
+      } else {
       }
-      handleUpdate(message);
-    }
+    };
 
-    ws?.addEventListener("message", onMessage);
-    return () => ws?.removeEventListener("message", onMessage);
-  }, [ws, handleUpdate]);
+    const handleError = (event: unknown) => {
+      const error = new Error(`WebSocket error occurred. ${event}`);
+      console.error(error);
+      Object.keys(useRequestStore.getState().requests).forEach((id) => {
+        rejectRequest(id, error);
+      });
+    };
+
+    ws?.addEventListener("message", handleMessage);
+    ws?.addEventListener("error", handleError);
+    ws?.addEventListener("close", handleError);
+
+    return () => {
+      ws?.removeEventListener("message", handleMessage);
+      ws?.removeEventListener("error", handleError);
+      ws?.removeEventListener("close", handleError);
+    };
+  }, [ws, handleNotification, resolveRequest, rejectRequest]);
 
   const handleResize = (side: ResizableSides, size: number) => {
     if (side === "right") {
@@ -70,11 +79,7 @@ const VSCodeLayout = () => {
 
   return (
     <div className="flex h-screen">
-      <ResizableComponent
-        resizableSides={{ right: true }}
-        className="flex-shrink-0"
-        onResize={handleResize}
-      >
+      <ResizableComponent resizableSides={{ right: true }} className="flex-shrink-0" onResize={handleResize}>
         <FileViewerController />
       </ResizableComponent>
 

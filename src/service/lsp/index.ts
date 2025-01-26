@@ -1,124 +1,112 @@
 import {
+  CodeActionParams,
   CompletionParams,
+  ConfigurationParams,
+  DefinitionParams,
   DidChangeTextDocumentParams,
   DidChangeWatchedFilesParams,
   DidCloseTextDocumentParams,
   DidOpenTextDocumentParams,
+  DidSaveTextDocumentParams,
   DocumentDiagnosticParams,
+  DocumentFormattingParams,
+  DocumentSymbolParams,
+  Hover,
+  HoverParams,
   InitializeParams,
   InitializeResult,
+  LogTraceParams,
+  ReferenceParams,
+  RenameParams,
 } from "vscode-languageserver-protocol";
 import { WorkspaceFoldersInitializeParams } from "vscode-languageserver-protocol/lib/common/protocol.workspaceFolder";
-import { FileExtension } from "./proxy";
+import { CompletionResult } from "@codemirror/autocomplete";
 
-interface TextDocumentHover {
-  textDocument: {
-    uri: string;
-  };
-  position: {
-    line: number;
-    character: number;
-  };
+export type LspOutput = ServerLspNotification | ServerLspResponse | ServerLspRequest;
+
+export function isServerLspRequest(output: LspOutput): output is ServerLspRequest {
+  return "id" in output && "method" in output && "params" in output;
 }
 
-interface TextDocumentDidSave {
-  textDocument: {
-    uri: string;
-  };
+export function isServerLspResponse(output: LspOutput): output is ServerLspResponse {
+  return "id" in output && ("result" in output || "error" in output);
 }
 
-interface TextDocumentDefinition {
-  textDocument: {
-    uri: string;
-  };
-  position: {
-    line: number;
-    character: number;
-  };
+export function isServerLspNotification(output: LspOutput): output is ServerLspNotification {
+  return "method" in output && "params" in output;
 }
 
-interface TextDocumentReferences {
-  textDocument: {
-    uri: string;
-  };
-  position: {
-    line: number;
-    character: number;
-  };
-  context: {
-    includeDeclaration: boolean;
-  };
-}
+export type ServerLspRequest = {
+  jsonrpc: "2.0";
+  id: ID;
+} & {
+  method: "workspace/configuration";
+  params: ConfigurationParams;
+};
 
-interface TextDocumentRename {
-  textDocument: {
-    uri: string;
-  };
-  position: {
-    line: number;
-    character: number;
-  };
-  newName: string;
-}
+export type ServerLspResponse = {
+  jsonrpc: "2.0";
+  id: ID;
+  result?: unknown;
+  error?: LspError;
+};
 
-interface TextDocumentSymbol {
-  query: string;
-}
+export type ServerLspNotification = { jsonrpc: "2.0" } & {
+  method: "$/logTrace";
+  params: LogTraceParams;
+};
 
-interface TextDocumentFormatting {
-  textDocument: {
-    uri: string;
-  };
-  options: {
-    tabSize: number;
-    insertSpaces: boolean;
-  };
-}
+export type ID = string | number;
 
-interface TextDocumentCodeAction {
-  textDocument: {
-    uri: string;
-  };
-  range: {
-    start: { line: number; character: number };
-    end: { line: number; character: number };
-  };
-  context: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    diagnostics: any[];
-  };
-}
-
-type LspCommonResponse = {
-  id: string | number;
-  base: string;
+export type Context = {
+  workspace: string;
   language?: string;
 };
 
-export type LspResponse = LspCommonResponse &
-  (
-    | { message: LspMessage }
-    | { error: { code: number; message: string; data?: unknown } }
-    | {
-        method: "initialize";
-        language: FileExtension;
-        result: InitializeResult;
-      }
-  );
+export type ServerAcceptedMessage = { id: ID; ctx: Context } & (
+  | { type: "client-to-server-notification"; message: ClientLspNotification }
+  | { type: "client-to-server-request"; message: ClientLspRequest }
+  | { type: "client-to-server-response"; message: unknown }
+);
 
-export type LspMessage =
-  // Explain the capabilities of the LSP and the client so that they know what
-  // each are capable of.
+export type ClientAcceptedMessage = { id: ID; ctx: Context } & (
+  | { type: "server-to-client-confirmation"; message: { result: boolean } }
+  | { type: "server-to-client-response"; message: ClientLspResponse }
+  | { type: "server-to-client-notification"; message: ServerLspNotification }
+  | { type: "server-to-client-request"; message: unknown }
+);
+
+export interface LspError {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+export type SuccessfulServerLspResponse =
+  | { method: "textDocument/completion"; result: CompletionResult }
+  | { method: "initialize"; result: InitializeResult }
+  | { method: "textDocument/hover"; result: Hover }
+  | { result: string }
+  | { result: { success: boolean } };
+
+export type ClientLspResponse = { error: LspError } | SuccessfulServerLspResponse;
+
+export type ClientLspNotification =
   | {
-      method: "initialize";
-      params: InitializeParams;
-      result?: InitializeResult;
+      method: "initialized";
+      params: object;
     }
   // A text document was open. You send the entire file to the LSP so that it can
   // Load it into memory.
   | {
       method: "textDocument/didOpen";
       params: DidOpenTextDocumentParams;
+    }
+  // Triggered when files in the workspace are added, deleted, or modified.
+  // Keeps the LSP aware of workspace file changes for better navigation and analysis.
+  | {
+      method: "workspace/didChangeWatchedFiles";
+      params: DidChangeWatchedFilesParams;
     }
   // The text document was closed. Can be shared with the LSP.
   | {
@@ -131,7 +119,14 @@ export type LspMessage =
   | {
       method: "textDocument/didChange";
       params: DidChangeTextDocumentParams;
+    };
+
+export type ClientLspRequest =
+  | {
+      method: "initialize";
+      params: InitializeParams;
     }
+
   // editor sends a request asking for possible completions. Ether triggered manually
   // or by the eidtor. Suggestions for variable names, function calls, classes,
   // and snippets.
@@ -144,7 +139,7 @@ export type LspMessage =
   // definition.
   | {
       method: "textDocument/hover";
-      params: TextDocumentHover;
+      params: HoverParams;
     }
   /******* These don't seem to be sent by code mirror integration ******/
   // Triggered when the user saves a document. It lets the LSP perform
@@ -152,31 +147,31 @@ export type LspMessage =
   // Useful for running on-save validations or automatic code formatting.
   | {
       method: "textDocument/didSave";
-      params: TextDocumentDidSave;
+      params: DidSaveTextDocumentParams;
     }
   // Triggered when the user requests the definition of a symbol (e.g.,
   // pressing Ctrl+Click on a function or variable). Enables go-to-definition
   // functionality, improving developer productivity.
   | {
       method: "textDocument/definition";
-      params: TextDocumentDefinition;
+      params: DefinitionParams;
     }
   // Triggered when the user wants to find all references to a symbol in the project.
   // Enables find references functionality, which is essential for code navigation and refactoring.
   | {
       method: "textDocument/references";
-      params: TextDocumentReferences;
+      params: ReferenceParams;
     }
   // Triggered when the user searches for a symbol in the entire workspace.
   | {
       method: "textDocument/symbol";
-      params: TextDocumentSymbol;
+      params: DocumentSymbolParams;
     }
   // Triggered when the user requests to format the entire document.
   // Enables code formatting based on the LSP’s rules (e.g., Prettier, Black).
   | {
       method: "textDocument/formatting";
-      params: TextDocumentFormatting;
+      params: DocumentFormattingParams;
     }
   // Triggered when the LSP wants to send diagnostic information (e.g., errors, warnings) about the document.
   // Enables real-time linting and error checking.
@@ -188,13 +183,7 @@ export type LspMessage =
   // Enables quick fixes, like automatically importing missing modules or suggesting code optimizations.
   | {
       method: "textDocument/codeAction";
-      params: TextDocumentCodeAction;
-    }
-  // Triggered when files in the workspace are added, deleted, or modified.
-  // Keeps the LSP aware of workspace file changes for better navigation and analysis.
-  | {
-      method: "workspace/didChangeWatchedFiles";
-      params: DidChangeWatchedFilesParams;
+      params: CodeActionParams;
     }
   | {
       method: "workspace/workspaceFolders";
@@ -203,7 +192,11 @@ export type LspMessage =
   //Triggered when the user requests to rename a symbol (e.g., a variable or function).
   | {
       method: "textDocument/rename";
-      params: TextDocumentRename;
+      params: RenameParams;
+    }
+  | {
+      method: "textDocument/documentSymbol";
+      params: DocumentSymbolParams;
     };
 
 export function getLsp(language?: string): {
@@ -239,7 +232,7 @@ export function getLsp(language?: string): {
     */
 }
 
-export function writeLspMessage(message: LspMessage & { id?: number }): string {
+export function writeLspMessage(message: (ClientLspRequest & { id?: number }) | ClientLspNotification): string {
   const jsonRpcMessage = JSON.stringify({ jsonrpc: "2.0", ...message });
   const contentLength = Buffer.byteLength(jsonRpcMessage, "utf-8");
   const str = `Content-Length: ${contentLength}\r\n\r\n${jsonRpcMessage}`;

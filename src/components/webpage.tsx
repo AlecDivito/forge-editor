@@ -7,13 +7,7 @@ import { WebSocketProvider } from "next-ws/client";
 import "dockview/dist/styles/dockview.css";
 import { Folder } from "@/service/fs";
 
-export default function WebPageInitializer({
-  folder,
-  project,
-}: {
-  folder: Folder;
-  project: string;
-}) {
+export default function WebPageInitializer({ folder, project }: { folder: Folder; project: string }) {
   const setFolderStructure = useFileStore((state) => state.initialize);
 
   useEffect(() => {

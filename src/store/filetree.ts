@@ -1,7 +1,11 @@
 "use client";
 
 import { Folder } from "@/service/fs";
-import { LspResponse } from "@/service/lsp";
+import {
+  ClientLspRequest,
+  ServerLspNotification,
+  ServerLspResponse,
+} from "@/service/lsp";
 import { FileExtension } from "@/service/lsp/proxy";
 import { TreeNode } from "@/service/tree";
 import {
@@ -16,7 +20,11 @@ export interface FileTreeState {
   tree: TreeNode[]; // The file tree structure
   activeFiles: Record<string, TextDocumentItem | undefined>; // Tracks currently open files
   initialize: (base: string, folder: Folder) => void; // Initializes the file tree
-  handleUpdate: (message: LspResponse) => void;
+  handleResponse: (
+    request: ClientLspRequest,
+    message: ServerLspResponse,
+  ) => void;
+  handleNotification: (message: ServerLspNotification) => void;
   openFile: (file: string) => void;
 }
 
@@ -48,7 +56,11 @@ export const useFileStore = create<FileTreeState>((set) => ({
     set({ base, tree: buildTree(folder) });
   },
 
-  handleUpdate: (response) => {
+  handleNotification: (message: ServerLspNotification) => {
+    return;
+  },
+
+  handleResponse: (request, response) => {
     if ("error" in response) {
       console.error(response);
       return;
@@ -72,7 +84,7 @@ export const useFileStore = create<FileTreeState>((set) => ({
     if (!("message" in response)) {
       throw new Error(
         "The response from the server was not an error or successful message. " +
-          JSON.stringify(response)
+          JSON.stringify(response),
       );
     }
 
@@ -101,7 +113,7 @@ export const useFileStore = create<FileTreeState>((set) => ({
 
           for (const part of parts.slice(0, -1)) {
             let dirNode = currentLevel.find(
-              (node) => node.type === "directory" && node.name === part
+              (node) => node.type === "directory" && node.name === part,
             ) as TreeNode;
 
             if (!dirNode) {
@@ -133,7 +145,7 @@ export const useFileStore = create<FileTreeState>((set) => ({
 
           for (const part of dirs) {
             const dirNode = currentLevel.find(
-              (node) => node.type === "directory" && node.name === part
+              (node) => node.type === "directory" && node.name === part,
             ) as TreeNode;
 
             if (!dirNode || !dirNode.children) {
@@ -145,7 +157,7 @@ export const useFileStore = create<FileTreeState>((set) => ({
 
           // Remove the file from the directory
           const fileIndex = currentLevel.findIndex(
-            (node) => node.type === "file" && node.name === fileName
+            (node) => node.type === "file" && node.name === fileName,
           );
 
           if (fileIndex !== -1) {

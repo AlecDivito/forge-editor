@@ -1,7 +1,7 @@
 import { EditorView } from "@uiw/react-codemirror";
 import { DocumentUri, Capabilities, LspClient } from ".";
 
-export const requestHoverToolTip = (
+export const requestHoverToolTip = async (
   view: EditorView,
   pos: number /* side:  -1 | 1 */
 ) => {
@@ -16,8 +16,8 @@ export const requestHoverToolTip = (
   const line = view.state.doc.lineAt(pos);
 
   // TODO: (Alec) Send document changes
-
-  const result = sender.hover({
+  console.log("aaahhh");
+  const result = await sender.hover({
     textDocument: { uri },
     position: {
       line: line.number,
@@ -25,7 +25,12 @@ export const requestHoverToolTip = (
     },
   });
 
-  console.log(result);
+  console.log("bbbaaa");
+
+  if ("message" in result) {
+    if (result.message === "hover") {
+    }
+  }
 
   return null;
 };

@@ -8,7 +8,7 @@ import FsTree from "./fileTree/Tree";
 import { useSendLspMessage } from "@/hooks/use-send-message";
 
 const FileViewerController: FC = ({}) => {
-  const { tree, base, openFile } = useFileStore(); // Subscribe to changes in files
+  const { tree, base, activeFiles, openFile } = useFileStore(); // Subscribe to changes in files
   const sender = useSendLspMessage();
   const [createFile, setCreateFile] = useState(false);
 
@@ -33,9 +33,36 @@ const FileViewerController: FC = ({}) => {
     openFile(`${base}/${path}`);
   };
 
+  const onDebug = () => {
+    sender(
+      {
+        method: "textDocument/documentSymbol",
+        params: {
+          textDocument: {
+            uri: `file:///${Object.keys(activeFiles)[0]}`,
+          },
+        },
+      },
+      Object.keys(activeFiles)[0].split(".").pop()
+    );
+  };
+
+  const onTest = () => {
+    sender({
+      method: "workspace/workspaceFolders",
+      params: {
+        workspaceFolders: null,
+      },
+    });
+  };
+
   return (
     <div className="h-full flex flex-col">
-      <ToolBar onCreateFile={() => setCreateFile((prev) => !prev)} />
+      <ToolBar
+        onCreateFile={() => setCreateFile((prev) => !prev)}
+        onDebug={onDebug}
+        onTest={onTest}
+      />
       {createFile && <CreateFileForm onCreate={handleCreateFile} />}
       <FsTree files={tree} onSelect={loadAndOpenFile} />
     </div>

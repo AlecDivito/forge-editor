@@ -7,20 +7,36 @@ import {
   LspProxyClientOptions,
   LspProxyCommonOptions,
 } from ".";
-import { LspMessage, LspResponse, writeLspMessage } from "..";
+import {
+  ClientLspNotification,
+  ClientLspRequest,
+  ID,
+  isServerLspNotification,
+  isServerLspRequest,
+  isServerLspResponse,
+  ServerLspNotification,
+  ServerLspRequest,
+  ServerLspResponse,
+  writeLspMessage,
+} from "..";
 import { spawn, ChildProcessByStdio } from "child_process";
 import { existsSync, mkdirSync } from "fs";
 import { downloadProject } from "@/service/fs";
 import { Readable, Writable } from "stream";
+import WebSocketClient from "../websocket";
+import { InitializeResult } from "vscode-languageserver-protocol";
 
-const FileExtensionToLsp: Record<
-  FileExtension,
-  { cmd: string; args: string[] }
-> = {
+const FileExtensionToLsp: Record<FileExtension, { cmd: string; args: string[] }> = {
   go: { cmd: "gopls", args: ["serve"] },
   rs: { cmd: "rust-analyzer", args: [] },
-  ts: { cmd: "typescript-language-server", args: ["--stdio"] },
-  js: { cmd: "typescript-language-server", args: ["--stdio"] },
+  ts: {
+    cmd: "typescript-language-server",
+    args: ["--stdio", "--log-level", "4"],
+  },
+  js: {
+    cmd: "typescript-language-server",
+    args: ["--stdio", "--log-level", "4"],
+  },
   json: { cmd: "vscode-json-languageserver", args: ["--stdio"] },
   md: { cmd: "marksman", args: ["server"] },
   html: { cmd: "vscode-html-languageserver", args: ["--stdio"] },
@@ -38,9 +54,7 @@ export class ProcessLspClientFactory implements LspProxyClientFactory {
     this.opts = opts;
   }
 
-  async spawn(
-    options: LspProxyClientOptions & LspProxyCommonOptions
-  ): Promise<Proxy> {
+  async spawn(wsClient: WebSocketClient, options: LspProxyClientOptions & LspProxyCommonOptions): Promise<Proxy> {
     const { baseDirectory } = this.opts;
     const { ext, projectName, initialize } = options;
 
@@ -63,15 +77,11 @@ export class ProcessLspClientFactory implements LspProxyClientFactory {
     }
 
     // Finally go to s3 and download the entire directory to this path
-    downloadProject(process.env.S3_BUCKET!, options.projectName, cwd);
+    await downloadProject(process.env.S3_BUCKET!, options.projectName, cwd);
 
-    const client = new ProcessLspClient(
-      projectRoot,
-      projectName,
-      cmd,
-      args,
-      cwd
-    );
+    console.log("Project synced to Server");
+
+    const processClient = new ProcessLspClient(wsClient, projectRoot, projectName, cmd, args, cwd);
 
     const params = {
       ...initialize,
@@ -85,17 +95,25 @@ export class ProcessLspClientFactory implements LspProxyClientFactory {
     };
 
     // for now, we aren't going to return back the initialize request
-    const result = await client.sendMessage({ method: "initialize", params });
+    const result = await processClient.sendRequest({
+      id: 0,
+      method: "initialize",
+      params,
+    });
     if (!result) {
       throw new Error("Failed to successfully start LSP server");
     }
     if (!("result" in result)) {
-      throw new Error(
-        "Started LSP Server but didn't get back the expected initialization message"
-      );
+      throw new Error("Started LSP Server but didn't get back the expected initialization message");
     }
 
-    return { client, support: result.result };
+    // Because this is a notification, i don't need to await on it.
+    processClient.sendNotification({ method: "initialized", params: {} });
+
+    return {
+      client: processClient,
+      support: result.result as InitializeResult,
+    };
   }
 }
 
@@ -103,20 +121,22 @@ export class ProcessLspClient implements LspProxyClient {
   private isActive = true;
   private currentId = 0;
 
+  private client: WebSocketClient;
   private cwd: string;
   private projectName: string;
   private process: ChildProcessByStdio<Writable, Readable, Readable>;
   private messageBuffer: string = "";
-  private pendingRequests: Map<number, (response: LspResponse) => void> =
-    new Map();
+  private pendingRequests: Map<ID, (response: ServerLspResponse) => void> = new Map();
 
   constructor(
+    client: WebSocketClient,
     projectRoot: string,
     projectName: string,
     cmd: string,
     args: string[],
-    cwd: string
+    cwd: string,
   ) {
+    this.client = client;
     this.cwd = projectRoot;
     this.projectName = projectName;
     this.process = spawn(cmd, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
@@ -137,27 +157,33 @@ export class ProcessLspClient implements LspProxyClient {
     return this.isActive && this.process.exitCode === null;
   }
 
-  async sendMessage(message: LspMessage): Promise<LspResponse | undefined> {
+  sendNotification(notification: ClientLspNotification) {
+    if ("textDocument" in notification.params) {
+      notification.params.textDocument.uri = notification.params.textDocument.uri.replace(
+        `file:///${this.projectName}`,
+        this.cwd,
+      );
+    }
+
+    this.process.stdin.write(writeLspMessage({ ...notification }), (err) => {
+      throw err;
+    });
+  }
+
+  async sendRequest(message: ClientLspRequest): Promise<ServerLspResponse | undefined> {
     const id = ++this.currentId;
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, resolve);
 
       // Update the message if it is referencing a textDocument
       if ("textDocument" in message.params) {
-        message.params.textDocument.uri =
-          message.params.textDocument.uri.replace(
-            `file:///${this.projectName}`,
-            this.cwd
-          );
+        message.params.textDocument.uri = message.params.textDocument.uri.replace(
+          `file:///${this.projectName}`,
+          this.cwd,
+        );
       }
 
-      let m: LspMessage & { id?: number } = message;
-      // If the method is an notification, don't attach an id
-      if (m.method !== "textDocument/didChange") {
-        m = { ...m, id };
-      }
-
-      this.process.stdin.write(writeLspMessage(m), (err) => {
+      this.process.stdin.write(writeLspMessage({ ...message, id }), (err) => {
         if (err) {
           this.pendingRequests.delete(id);
           reject(err);
@@ -179,9 +205,7 @@ export class ProcessLspClient implements LspProxyClient {
           this.pendingRequests.clear();
           resolve();
         } else {
-          reject(
-            new Error(`Process exited with code ${code}, signal ${signal}`)
-          );
+          reject(new Error(`Process exited with code ${code}, signal ${signal}`));
         }
       });
       this.process.kill();
@@ -189,12 +213,11 @@ export class ProcessLspClient implements LspProxyClient {
   }
 
   private onData(data: Buffer): void {
+    // console.log("+++Received stdio update " + data.toString());
     this.messageBuffer += data.toString();
 
     while (true) {
-      const contentLengthMatch = this.messageBuffer.match(
-        /Content-Length: (\d+)/
-      );
+      const contentLengthMatch = this.messageBuffer.match(/Content-Length: (\d+)/);
       if (!contentLengthMatch) break;
 
       const contentLength = parseInt(contentLengthMatch[1], 10);
@@ -204,18 +227,42 @@ export class ProcessLspClient implements LspProxyClient {
       const start = headerEnd + 4;
       const end = start + contentLength;
 
-      if (this.messageBuffer.length < end) break;
+      if (this.messageBuffer.length < end) {
+        console.log(`${this.messageBuffer.length} is smaller then ${end}. Break;`);
+        break;
+      }
+      console.log(`${this.messageBuffer.length} is equal to ${end}. continue;`);
 
-      const response = JSON.parse(this.messageBuffer.slice(start, end));
+      let response: ServerLspNotification | ServerLspResponse | ServerLspRequest;
+
+      const stringResponse = this.messageBuffer.slice(start, end);
+      try {
+        response = JSON.parse(stringResponse);
+      } catch {
+        console.log("Failed to convert message buffer to json. ");
+        console.log(stringResponse);
+        break;
+      }
+
       this.messageBuffer = this.messageBuffer.slice(end);
 
-      if (response.id && this.pendingRequests.has(response.id)) {
-        const resolve = this.pendingRequests.get(response.id)!;
-        this.pendingRequests.delete(response.id);
-        console.log(
-          `---\nResolving Message\n${JSON.stringify(response)}\n----`
+      if (isServerLspRequest(response)) {
+        this.client.sendRequest(response);
+      } else if (isServerLspResponse(response)) {
+        if (this.pendingRequests.has(response.id)) {
+          const resolve = this.pendingRequests.get(response.id)!;
+          this.pendingRequests.delete(response.id);
+          resolve(response);
+        } else {
+          throw new Error("Handling pending requests that aren't recorded is not handled yet.");
+        }
+      } else if (isServerLspNotification(response)) {
+        this.client.sendNotification(response);
+      } else {
+        console.error(
+          `Failed to handle the following response ${JSON.stringify(response, null, 2)}. Not handled by any function`,
         );
-        resolve(response as LspResponse);
+        throw new Error(`The JSON response ${JSON.stringify(response, null, 2)} is not handled`);
       }
     }
   }
