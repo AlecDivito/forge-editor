@@ -1,24 +1,21 @@
+import { useSendRequest } from "@/hooks/use-send-message";
+import { useSendNotification } from "@/hooks/use-send-notification";
+import { FileExtension } from "@/service/lsp/proxy";
+import { useFileStore } from "@/store/filetree";
+import { Extension } from "@uiw/react-codemirror/cjs/index.js";
 import { IDockviewPanelProps } from "dockview";
+import dynamic from "next/dynamic";
 import { FC, useEffect, useState } from "react";
 import { EditorParams } from "./EditorParams";
-import { Extension } from "@uiw/react-codemirror/cjs/index.js";
-import dynamic from "next/dynamic";
-import { useSendLspMessage } from "@/hooks/use-send-message";
 import { lspExtensions } from "./lsp";
-import { useFileStore } from "@/store/filetree";
-import { FileExtension } from "@/service/lsp/proxy";
 
 const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
 });
 
 const languageExtensions: Record<FileExtension, () => Promise<Extension>> = {
-  js: () =>
-    import("@codemirror/lang-javascript").then((mod) => mod.javascript()),
-  ts: () =>
-    import("@codemirror/lang-javascript").then((mod) =>
-      mod.javascript({ typescript: true })
-    ),
+  js: () => import("@codemirror/lang-javascript").then((mod) => mod.javascript()),
+  ts: () => import("@codemirror/lang-javascript").then((mod) => mod.javascript({ typescript: true })),
   css: () => import("@codemirror/lang-css").then((mod) => mod.css()),
   html: () => import("@codemirror/lang-html").then((mod) => mod.html()),
   // py: () => import("@codemirror/lang-python").then((mod) => mod.python()),
@@ -44,7 +41,8 @@ const getFileExtension = (filename: string): FileExtension | undefined => {
 const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   const { file, theme } = params;
   const language = getFileExtension(file);
-  const client = useSendLspMessage(language);
+  const sendRequest = useSendRequest(language);
+  const sendNotification = useSendNotification(language);
   const { capabilities, activeFiles } = useFileStore();
 
   const [extensions, setExtensions] = useState<Extension[]>([]);
@@ -52,22 +50,22 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
 
   useEffect(() => {
     const loadExtensions = async () => {
-      if (!language || !activeFiles?.[file]) {
+      if (!language || !!!activeFiles?.[file]) {
         return;
       }
-
       const loadedExtensions = [];
       if (capabilities[language]) {
         loadedExtensions.push(await languageExtensions[language]());
         // loadedExtensions.push(collabExtension(version, client));
         loadedExtensions.push(
           lspExtensions(
-            client,
+            sendRequest,
+            sendNotification,
             `file:///${file}`,
             language,
             activeFiles[file].version,
-            capabilities[language]
-          )
+            capabilities[language],
+          ),
         );
       }
       setExtensions(loadedExtensions);
@@ -76,23 +74,11 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
     const loadTheme = async () => {
       try {
         if (theme === "material") {
-          const { materialDark, materialLight } = await import(
-            "@uiw/codemirror-theme-material"
-          );
-          setLoadedTheme(
-            window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? materialDark
-              : materialLight
-          );
+          const { materialDark, materialLight } = await import("@uiw/codemirror-theme-material");
+          setLoadedTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? materialDark : materialLight);
         } else if (theme === "gruvbox") {
-          const { gruvboxDark, gruvboxLight } = await import(
-            "@uiw/codemirror-theme-gruvbox-dark"
-          );
-          setLoadedTheme(
-            window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? gruvboxDark
-              : gruvboxLight
-          );
+          const { gruvboxDark, gruvboxLight } = await import("@uiw/codemirror-theme-gruvbox-dark");
+          setLoadedTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? gruvboxDark : gruvboxLight);
         } else {
           throw new Error(`Unsupported theme: ${theme}`);
         }
@@ -106,7 +92,7 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
       loadExtensions();
       loadTheme();
     }
-  }, [client, language, activeFiles, file, capabilities, theme]);
+  }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme]);
 
   // !(!!activeFiles?.[file] makes sure that it's a type) and this is the boolean operation on it
   if (!!!activeFiles?.[file] || extensions.length === 0) {
@@ -114,12 +100,7 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   }
 
   return (
-    <ReactCodeMirror
-      value={activeFiles[file].text || ""}
-      extensions={extensions}
-      theme={loadedTheme}
-      height="100%"
-    />
+    <ReactCodeMirror value={activeFiles[file].text || ""} extensions={extensions} theme={loadedTheme} height="100%" />
   );
 };
 

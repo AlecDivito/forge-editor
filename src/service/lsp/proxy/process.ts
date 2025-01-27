@@ -183,6 +183,7 @@ export class ProcessLspClient implements LspProxyClient {
         );
       }
 
+      console.log(`Creating request with ID ${id} for ${message.method}`);
       this.process.stdin.write(writeLspMessage({ ...message, id }), (err) => {
         if (err) {
           this.pendingRequests.delete(id);
@@ -247,16 +248,20 @@ export class ProcessLspClient implements LspProxyClient {
       this.messageBuffer = this.messageBuffer.slice(end);
 
       if (isServerLspRequest(response)) {
+        console.log(`Sending Request ${response.method} to client`);
         this.client.sendRequest(response);
       } else if (isServerLspResponse(response)) {
+        console.log(`Responding to request ${response.id}`);
         if (this.pendingRequests.has(response.id)) {
           const resolve = this.pendingRequests.get(response.id)!;
           this.pendingRequests.delete(response.id);
+          console.log(`Resolving request ${response.id}`);
           resolve(response);
         } else {
           throw new Error("Handling pending requests that aren't recorded is not handled yet.");
         }
       } else if (isServerLspNotification(response)) {
+        console.log(`Sending Notification ${response.method}`);
         this.client.sendNotification(response);
       } else {
         console.error(

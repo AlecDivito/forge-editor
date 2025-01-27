@@ -1,21 +1,23 @@
 "use client";
 
+import { useSendRequest } from "@/hooks/use-send-message";
+import { useSendNotification } from "@/hooks/use-send-notification";
+import { useFileStore } from "@/store/filetree";
 import { FC, useState } from "react";
 import ToolBar from "./fileTree/ToolBar";
-import CreateFileForm, { FileName } from "./fileTree/TreeForm";
-import { useFileStore } from "@/store/filetree";
 import FsTree from "./fileTree/Tree";
-import { useSendLspMessage } from "@/hooks/use-send-message";
+import CreateFileForm, { FileName } from "./fileTree/TreeForm";
 
 const FileViewerController: FC = ({}) => {
   const { tree, base, activeFiles, openFile } = useFileStore(); // Subscribe to changes in files
-  const sender = useSendLspMessage();
+  const notificationSender = useSendNotification();
+  const requestSender = useSendRequest();
   const [createFile, setCreateFile] = useState(false);
 
   const handleCreateFile = async (body: FileName) => {
     // We need to use an LSP event here for creating a file. Even if we don't tell
     // the actual LSP about it. How would you implement this
-    await sender({
+    await notificationSender({
       method: "workspace/didChangeWatchedFiles",
       params: {
         changes: [
@@ -34,7 +36,7 @@ const FileViewerController: FC = ({}) => {
   };
 
   const onDebug = () => {
-    sender(
+    requestSender(
       {
         method: "textDocument/documentSymbol",
         params: {
@@ -43,12 +45,12 @@ const FileViewerController: FC = ({}) => {
           },
         },
       },
-      Object.keys(activeFiles)[0].split(".").pop()
+      Object.keys(activeFiles)[0].split(".").pop(),
     );
   };
 
   const onTest = () => {
-    sender({
+    requestSender({
       method: "workspace/workspaceFolders",
       params: {
         workspaceFolders: null,
@@ -58,11 +60,7 @@ const FileViewerController: FC = ({}) => {
 
   return (
     <div className="h-full flex flex-col">
-      <ToolBar
-        onCreateFile={() => setCreateFile((prev) => !prev)}
-        onDebug={onDebug}
-        onTest={onTest}
-      />
+      <ToolBar onCreateFile={() => setCreateFile((prev) => !prev)} onDebug={onDebug} onTest={onTest} />
       {createFile && <CreateFileForm onCreate={handleCreateFile} />}
       <FsTree files={tree} onSelect={loadAndOpenFile} />
     </div>

@@ -1,5 +1,7 @@
 import {
   CodeActionParams,
+  CompletionItem,
+  CompletionList,
   CompletionParams,
   ConfigurationParams,
   DefinitionParams,
@@ -47,14 +49,20 @@ export type ServerLspRequest = {
 export type ServerLspResponse = {
   jsonrpc: "2.0";
   id: ID;
-  result?: unknown;
+  result?: SuccessfulServerLspResponse;
   error?: LspError;
 };
 
-export type ServerLspNotification = { jsonrpc: "2.0" } & {
-  method: "$/logTrace";
-  params: LogTraceParams;
-};
+export type ServerLspNotification =
+  | { method: "$/logTrace"; params: LogTraceParams }
+  | { method: "$/typescriptVersion"; params: { version: string; source: string } }
+  | { method: "window/logMessage"; params: { type: number; message: string } }
+  // The following are custom messages that a client editor should implement if
+  // they want to be able to use the proxy as the source of truth
+  | { method: "proxy/initialize"; language: string; params: InitializeResult }
+  | { method: "proxy/textDocument/open"; params: DidOpenTextDocumentParams }
+  | { method: "proxy/textDocument/close"; params: DidCloseTextDocumentParams }
+  | { method: "proxy/textDocument/changed"; params: DidChangeWatchedFilesParams };
 
 export type ID = string | number;
 
@@ -76,18 +84,16 @@ export type ClientAcceptedMessage = { id: ID; ctx: Context } & (
   | { type: "server-to-client-request"; message: unknown }
 );
 
-export interface LspError {
+export interface LspError extends Error {
   code: number;
   message: string;
   data?: unknown;
 }
 
 export type SuccessfulServerLspResponse =
-  | { method: "textDocument/completion"; result: CompletionResult }
+  | { method: "textDocument/completion"; result: CompletionItem[] | CompletionList | null }
   | { method: "initialize"; result: InitializeResult }
-  | { method: "textDocument/hover"; result: Hover }
-  | { result: string }
-  | { result: { success: boolean } };
+  | { method: "textDocument/hover"; result: Hover };
 
 export type ClientLspResponse = { error: LspError } | SuccessfulServerLspResponse;
 

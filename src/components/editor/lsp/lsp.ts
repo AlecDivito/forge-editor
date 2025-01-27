@@ -1,32 +1,7 @@
-import { SendLspMessage } from "@/hooks/use-send-message";
-import {
-  EditorView,
-  Extension,
-  Facet,
-  hoverTooltip,
-  PluginValue,
-  Text,
-  ViewPlugin,
-  ViewUpdate,
-} from "@uiw/react-codemirror";
-import {
-  CompletionTriggerKind,
-  DidOpenTextDocumentParams,
-  Hover,
-  HoverParams,
-  InitializeParams,
-  InitializeResult,
-  MarkedString,
-  MarkupContent,
-} from "vscode-languageserver-protocol";
-import {
-  autocompletion,
-  CompletionContext,
-  CompletionResult,
-} from "@codemirror/autocomplete";
-import { Diagnostic, linter } from "@codemirror/lint";
-import { debounce } from "@/utils/debounce";
-import DiffMatchPatch from "diff-match-patch";
+import { EditorView, Text } from "@uiw/react-codemirror";
+import { CompletionTriggerKind, Hover, HoverParams, MarkedString, MarkupContent } from "vscode-languageserver-protocol";
+import { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import { Diagnostic } from "@codemirror/lint";
 
 function offsetToPos(doc: Text, offset: number) {
   const line = doc.lineAt(offset);
@@ -43,9 +18,7 @@ function posToOffset(doc: Text, pos: { line: number; character: number }) {
   return offset;
 }
 
-function formatContents(
-  contents: MarkupContent | MarkedString | MarkedString[]
-): string {
+function formatContents(contents: MarkupContent | MarkedString | MarkedString[]): string {
   if (Array.isArray(contents)) {
     return contents.map((c) => formatContents(c) + "\n\n").join("");
   } else if (typeof contents === "string") {
@@ -55,11 +28,7 @@ function formatContents(
   }
 }
 
-const requestHoverToolTip = async (
-  view: EditorView,
-  position: number,
-  side: -1 | 1
-) => {
+const requestHoverToolTip = async (view: EditorView, position: number, side: -1 | 1) => {
   const { line, character } = offsetToPos(view.state.doc, position);
   // if (!this.client.ready || !this.client.capabilities!.hoverProvider)
   //     return null;
@@ -111,9 +80,7 @@ const requestHoverToolTip = async (
   }
 };
 
-const autoCompletionOverride = async (
-  context: CompletionContext
-): Promise<CompletionResult | null> => {
+const autoCompletionOverride = async (context: CompletionContext): Promise<CompletionResult | null> => {
   // if (!this.client.ready || !this.client.capabilities!.hoverProvider)
   //     return null;
   const uri = context.view?.state.facet(DocumentUri);
@@ -131,10 +98,7 @@ const autoCompletionOverride = async (
   ) {
     triggerKind = CompletionTriggerKind.TriggerCharacter;
     triggerCharacter = line.text[pos - line.from - 1];
-  } else if (
-    triggerKind === CompletionTriggerKind.Invoked &&
-    !context.matchBefore(/\w+$/)
-  ) {
+  } else if (triggerKind === CompletionTriggerKind.Invoked && !context.matchBefore(/\w+$/)) {
     return null;
   }
 

@@ -6,7 +6,7 @@ import { FileExtension } from "@/service/lsp/proxy";
 import { CacheManager } from "@/service/lsp/cache";
 import { LspEventHandler } from "@/service/lsp/events";
 import WebSocketClient, { ProxyErrorObject } from "@/service/lsp/websocket";
-import { LspError, LspError, ServerAcceptedMessage } from "@/service/lsp";
+import { LspError, ServerAcceptedMessage } from "@/service/lsp";
 
 export async function SOCKET(
   client: WebSocket,
@@ -70,6 +70,7 @@ export async function SOCKET(
           console.log("Updating Proxy manager initialization config");
           manager.initialization = message.params;
         }
+        return;
       }
 
       if (!manager) {
@@ -88,17 +89,17 @@ export async function SOCKET(
       let proxy = manager.getClient(lang);
       if (!proxy) {
         proxy = await manager.spawn(lang);
-        requestClient.sendResponse({ method: "initialize", result: proxy.support });
+        requestClient.sendNotification({ method: "proxy/initialize", language: lang, params: proxy.support });
       }
 
       const eventHandler = new LspEventHandler(proxy, cacheManager);
 
       if (type === "client-to-server-request") {
         if (message.method === "textDocument/completion") {
-          const result = await eventHandler.textDocumentCompletion(id, message.params);
-          requestClient.sendResponse({ method: message.method, result });
+          const result = await eventHandler.textDocumentCompletion(message.params);
+          requestClient.sendResponse({ method: message.method, ...result });
         } else if (message.method === "textDocument/hover") {
-          const result = await eventHandler.textDocumentHover(id, message.params);
+          const result = await eventHandler.textDocumentHover(message.params);
           requestClient.sendResponse({ method: message.method, result });
         } else if (message.method === "workspace/workspaceFolders") {
           await manager.sendMessageToAll(message);
@@ -117,8 +118,9 @@ export async function SOCKET(
           }
           requestClient.sendSuccessConfirmation();
         } else if (message.method === "textDocument/didOpen") {
-          await eventHandler.textDocumentDidOpen(message.params);
+          const params = await eventHandler.textDocumentDidOpen(message.params);
           requestClient.sendSuccessConfirmation();
+          requestClient.sendNotification({ method: "proxy/textDocument/open", params });
         } else if (message.method === "textDocument/didClose") {
           await eventHandler.textDocumentDidClose(message.params);
           requestClient.sendSuccessConfirmation();

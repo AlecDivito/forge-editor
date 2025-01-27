@@ -1,20 +1,12 @@
-import { SendLspMessage } from "@/hooks/use-send-message";
-import {
-  Extension,
-  Facet,
-  hoverTooltip,
-  StateEffect,
-  ViewPlugin,
-} from "@uiw/react-codemirror";
-import {
-  InitializeParams,
-  InitializeResult,
-} from "vscode-languageserver-protocol";
+import { SendRequest } from "@/hooks/use-send-message";
+import { Extension, Facet, hoverTooltip, StateEffect, ViewPlugin } from "@uiw/react-codemirror";
+import { InitializeParams, InitializeResult } from "vscode-languageserver-protocol";
 import { LanguageServerClient } from "./client";
 import { LSPInitializer } from "./view";
 import { autocompletion } from "@codemirror/autocomplete";
 import { autoCompletionOverride } from "./autocomplete";
 import { requestHoverToolTip } from "./hover";
+import { SendLspNotification } from "@/hooks/use-send-notification";
 
 export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   processId: null,
@@ -79,10 +71,7 @@ export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   ],
 });
 
-export const LspClient = Facet.define<
-  LanguageServerClient,
-  LanguageServerClient
->({
+export const LspClient = Facet.define<LanguageServerClient, LanguageServerClient>({
   combine: (c) => c[0] || null,
 });
 
@@ -101,18 +90,19 @@ export const Language = Facet.define<string, string>({
 export const ChangesEffect = StateEffect.define<never[]>();
 
 export function lspExtensions(
-  sender: SendLspMessage,
+  sendRequest: SendRequest,
+  sendNotification: SendLspNotification,
   documentUri: string,
   language: string,
   version: number,
-  capabilities: InitializeResult
+  capabilities: InitializeResult,
 ): Extension[] {
   return [
     Capabilities.of(capabilities),
     DocumentUri.of(documentUri),
     Language.of(language),
     DocumentVersion.of(version),
-    LspClient.of(new LanguageServerClient(sender)),
+    LspClient.of(new LanguageServerClient(sendRequest, sendNotification)),
     ViewPlugin.define((view) => new LSPInitializer(view)),
     hoverTooltip(requestHoverToolTip),
     autocompletion({

@@ -1,23 +1,23 @@
 import { useWebSocket } from "next-ws/client";
 import { useCallback } from "react";
-import { ClientLspRequest, ServerAcceptedMessage, ServerLspResponse } from "@/service/lsp";
+import { ClientLspRequest, ClientLspResponse, ServerAcceptedMessage } from "@/service/lsp";
 import { nanoid } from "nanoid";
 import { useRequestStore } from "@/store/requests";
 import { useFileStore } from "@/store/filetree";
 import { useWaitForWebSocketReady } from "./use-wait-for-web-socket-ready";
 
-export type SendLspMessage = (message: ClientLspRequest, overrideLanguage?: string) => Promise<ServerLspResponse>;
+export type SendRequest = (message: ClientLspRequest, overrideLanguage?: string) => Promise<ClientLspResponse>;
 
-export const useSendLspMessage = (language?: string) => {
+export const useSendRequest = (language?: string) => {
   const ws = useWebSocket();
   const waitForWebSocketReady = useWaitForWebSocketReady(ws);
   const workspace = useFileStore((state) => state.base);
   const { addRequest } = useRequestStore();
 
   // Send an LSP message and return a Promise
-  const sendMessage: SendLspMessage = useCallback(
+  const sendMessage: SendRequest = useCallback(
     async (message: ClientLspRequest, overrideLanguage?: string) => {
-      return new Promise<ServerLspResponse>(async (resolve, reject) => {
+      return new Promise<ClientLspResponse>(async (resolve, reject) => {
         try {
           if (!message) {
             throw new Error("Message is required to send a message.");

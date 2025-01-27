@@ -38,7 +38,7 @@ export default class WebSocketClient {
   }
 
   sendNotification(result: ServerLspNotification) {
-    this.send({ type: "server-to-client-notification", message: { result } });
+    this.send({ type: "server-to-client-notification", message: result });
   }
 
   sendSuccessConfirmation() {
@@ -46,7 +46,7 @@ export default class WebSocketClient {
   }
 
   sendResponse(result: SuccessfulServerLspResponse) {
-    this.send({ type: "server-to-client-response", message: { result } });
+    this.send({ type: "server-to-client-response", message: result });
   }
 
   sendResponseError(error: LspError) {

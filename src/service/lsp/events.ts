@@ -1,4 +1,6 @@
 import {
+  CompletionItem,
+  CompletionList,
   CompletionParams,
   DidChangeTextDocumentParams,
   DidCloseTextDocumentParams,
@@ -10,9 +12,8 @@ import {
   InitializeResult,
 } from "vscode-languageserver-protocol";
 import { CacheManager } from "./cache";
-import { ClientLspNotification, SuccessfulServerLspResponse } from ".";
+import { ClientLspNotification } from ".";
 import { LspProxyClient, Proxy } from "./proxy";
-import { CompletionResult } from "@codemirror/autocomplete";
 
 export class LspEventHandler {
   private proxy: LspProxyClient;
@@ -25,21 +26,26 @@ export class LspEventHandler {
     this.cache = cache;
   }
 
-  async textDocumentDidOpen(params: DidOpenTextDocumentParams): Promise<void> {
+  async textDocumentDidOpen(params: DidOpenTextDocumentParams): Promise<DidOpenTextDocumentParams> {
     const cacheFilePath = this.convertFileUriToS3Uri(params.textDocument);
     const textDocument = await this.cache.getDocument(cacheFilePath);
 
-    const message: ClientLspNotification = {
-      method: "textDocument/didOpen",
-      params: {
-        textDocument: {
-          ...textDocument,
-          uri: params.textDocument.uri,
-        },
+    const overrideParams: DidOpenTextDocumentParams = {
+      textDocument: {
+        ...textDocument,
+        uri: params.textDocument.uri,
       },
     };
 
+    const message: ClientLspNotification = {
+      method: "textDocument/didOpen",
+      params: overrideParams,
+    };
+
     this.proxy.sendNotification(message);
+
+    overrideParams.textDocument.uri = params.textDocument.uri;
+    return overrideParams;
   }
 
   async textDocumentDidChange(params: DidChangeTextDocumentParams): Promise<void> {
@@ -100,10 +106,11 @@ export class LspEventHandler {
     }
   }
 
-  async textDocumentCompletion(id: string | number, params: CompletionParams): Promise<CompletionResult> {
+  async textDocumentCompletion(
+    params: CompletionParams,
+  ): Promise<{ result: CompletionItem[] | CompletionList | null }> {
     try {
       const result = await this.proxy.sendRequest({
-        id,
         method: "textDocument/completion",
         params,
       });
@@ -112,17 +119,16 @@ export class LspEventHandler {
         throw new Error("Failed to create a response for completion request.");
       }
 
-      return result as CompletionResult;
+      return result as { result: CompletionItem[] | CompletionList | null };
     } catch (error) {
       console.error(`Failed to complete completion event ${params}:`, error);
       throw error;
     }
   }
 
-  async textDocumentHover(id: string | number, params: HoverParams): Promise<Hover> {
+  async textDocumentHover(params: HoverParams): Promise<Hover> {
     try {
       const result = await this.proxy.sendRequest({
-        id,
         method: "textDocument/hover",
         params,
       });
@@ -138,10 +144,9 @@ export class LspEventHandler {
     }
   }
 
-  async textDocumentDocumentSymbol(id: string | number, params: DocumentSymbolParams): Promise<DocumentSymbol> {
+  async textDocumentDocumentSymbol(params: DocumentSymbolParams): Promise<DocumentSymbol> {
     try {
       const result = await this.proxy.sendRequest({
-        id,
         method: "textDocument/documentSymbol",
         params,
       });

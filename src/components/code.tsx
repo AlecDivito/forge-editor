@@ -6,16 +6,18 @@ import ResizableComponent, { ResizableSides } from "./interaction/resizable";
 import { useWebSocket } from "next-ws/client";
 import { useEffect, useState } from "react";
 import { useFileStore } from "@/store/filetree";
-import { useSendLspMessage } from "@/hooks/use-send-message";
 import { LSP_INIT_PARAMS } from "./editor/lsp";
 import { ClientAcceptedMessage } from "@/service/lsp";
 import { useRequestStore } from "@/store/requests";
+import { useNotification } from "@/store/notification";
+import { useSendRequest } from "@/hooks/use-send-message";
 
 const VSCodeLayout = () => {
   const ws = useWebSocket();
-  const sender = useSendLspMessage();
+  const sender = useSendRequest();
   const { base: projectName, handleNotification } = useFileStore();
-  const { resolveRequest, rejectRequest } = useRequestStore();
+  const { resolveRequest, rejectRequest, resolveNotification, rejectNotification } = useRequestStore();
+  const { pushNotification } = useNotification();
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [fileViewerWidth, setFileViewerWidth] = useState(300);
@@ -42,17 +44,32 @@ const VSCodeLayout = () => {
   useEffect(() => {
     const handleMessage = (event: { data: string }) => {
       const response = JSON.parse(event.data) as ClientAcceptedMessage;
+      console.log(response);
       if (response.type === "server-to-client-confirmation") {
+        if (response.message.result) {
+          resolveNotification(response.id);
+        } else {
+          rejectNotification(response.id, new Error(`Notifcation failed ${JSON.stringify(response, null, 2)}`));
+        }
       } else if (response.type === "server-to-client-response") {
+        if ("error" in response.message) {
+          rejectRequest(response.id, response.message.error);
+        } else if ("method" in response.message && "result" in response.message) {
+          resolveRequest(response.id, response.message);
+        }
       } else if (response.type === "server-to-client-notification") {
+        handleNotification(response.message);
+        pushNotification(response.message);
       } else if (response.type === "server-to-client-request") {
+        throw new Error("server-to-client-request on the client side editor hasn't been implemented yet.");
       } else {
+        throw new Error(`Response type of ${event.data} is currently not handled by the client.`);
       }
     };
 
     const handleError = (event: unknown) => {
-      const error = new Error(`WebSocket error occurred. ${event}`);
-      console.error(error);
+      const error = new Error(`WebSocket error occurred. ${JSON.stringify(event)}`);
+      console.log(error);
       Object.keys(useRequestStore.getState().requests).forEach((id) => {
         rejectRequest(id, error);
       });
@@ -67,7 +84,15 @@ const VSCodeLayout = () => {
       ws?.removeEventListener("error", handleError);
       ws?.removeEventListener("close", handleError);
     };
-  }, [ws, handleNotification, resolveRequest, rejectRequest]);
+  }, [
+    ws,
+    handleNotification,
+    resolveRequest,
+    rejectRequest,
+    resolveNotification,
+    rejectNotification,
+    pushNotification,
+  ]);
 
   const handleResize = (side: ResizableSides, size: number) => {
     if (side === "right") {

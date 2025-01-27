@@ -12,7 +12,8 @@ import {
 import EditorView from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
-import { useSendLspMessage } from "@/hooks/use-send-message";
+import { useNotification } from "@/store/notification";
+import { useSendNotification } from "@/hooks/use-send-notification";
 
 interface Props {
   theme?: "material" | "gruvbox";
@@ -20,8 +21,9 @@ interface Props {
 }
 
 const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
-  const { base, activeFiles, capabilities } = useFileStore();
-  const sender = useSendLspMessage();
+  const { base, activeFiles, capabilities } = useFileStore((state) => state);
+  const { notifications } = useNotification();
+  const sendNotification = useSendNotification();
   const [view, setView] = useState<DockviewApi | null>(null);
   // const [activeGroup, setActiveGroup] = useState<IDockviewGroupPanel[]>([]);
   const [panels, setPanels] = useState<IDockviewPanel[]>([]);
@@ -31,7 +33,7 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
       const addPanel = view.onDidAddPanel((e) => {
         if (e.params?.file && e.params?.extension) {
           // languageId, version and text will be inserted by the server
-          sender(
+          sendNotification(
             {
               method: "textDocument/didOpen",
               params: {
@@ -43,13 +45,13 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
                 },
               },
             },
-            e.params.file.split(".").pop()
+            e.params.file.split(".").pop(),
           );
         }
       });
       const removePanel = view.onDidRemovePanel((e) => {
         if (e.params?.file && e.params?.extension) {
-          sender(
+          sendNotification(
             {
               method: "textDocument/didClose",
               params: {
@@ -58,7 +60,7 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
                 },
               },
             },
-            e.params.file.split(".").pop()
+            e.params.file.split(".").pop(),
           );
         }
       });
@@ -80,13 +82,11 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
         disposable.dispose();
       };
     }
-  }, [view, base, sender]);
+  }, [view, base, sendNotification]);
 
   useEffect(() => {
     if (view && activeFiles) {
-      const openFiles = panels
-        .map((panel) => panel.params?.file)
-        .filter((file) => file);
+      const openFiles = panels.map((panel) => panel.params?.file).filter((file) => file);
       const toOpen = Object.keys(activeFiles);
 
       for (const file of [...openFiles, ...toOpen]) {
@@ -129,8 +129,9 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
         />
       </div>
       <div>
-        <pre>Active: {JSON.stringify(activeFiles)}</pre>
+        <pre>Active: {JSON.stringify(activeFiles, null, 2)}</pre>
         <pre>Capabilities: {JSON.stringify(capabilities, null, 2)}</pre>
+        <pre>Notifications: {JSON.stringify(notifications, null, 2)}</pre>
       </div>
     </>
   );

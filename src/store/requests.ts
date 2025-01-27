@@ -1,4 +1,4 @@
-import { ID, ServerLspResponse } from "@/service/lsp";
+import { ID, SuccessfulServerLspResponse } from "@/service/lsp";
 import { create } from "zustand";
 
 type RequestPromise<T> = {
@@ -7,7 +7,7 @@ type RequestPromise<T> = {
 };
 
 type RequestStore = {
-  requests: Record<string, RequestPromise<ServerLspResponse>>;
+  requests: Record<string, RequestPromise<SuccessfulServerLspResponse>>;
   notifications: Record<string, RequestPromise<void>>;
 
   addNotification: (
@@ -21,10 +21,10 @@ type RequestStore = {
 
   addRequest: (
     id: ID,
-    resolve: Pick<RequestPromise<ServerLspResponse>, "resolve">["resolve"],
-    reject: Pick<RequestPromise<ServerLspResponse>, "reject">["reject"],
+    resolve: Pick<RequestPromise<SuccessfulServerLspResponse>, "resolve">["resolve"],
+    reject: Pick<RequestPromise<SuccessfulServerLspResponse>, "reject">["reject"],
   ) => void;
-  resolveRequest: (id: ID, message: ServerLspResponse) => void;
+  resolveRequest: (id: ID, message: SuccessfulServerLspResponse) => void;
   rejectRequest: (id: ID, error: Error) => void;
   removeRequest: (id: ID) => void;
 
@@ -48,6 +48,7 @@ export const useRequestStore = create<RequestStore>((set) => ({
       if (request) {
         request.resolve(message);
       }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [id]: _, ...remainingRequests } = state.requests;
       return { requests: remainingRequests };
     }),
