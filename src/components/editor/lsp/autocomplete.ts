@@ -8,12 +8,9 @@ const CompletionItemKindMap = Object.fromEntries(
 
 function formatContents(contents: MarkupContent | MarkedString | MarkedString[]): string {
   if (Array.isArray(contents)) {
-    return contents.map((c) => formatContents(c) + "\n\n").join("");
-  } else if (typeof contents === "string") {
-    return contents;
-  } else {
-    return contents.value;
+    return contents.map(formatContents).join("\n\n");
   }
+  return typeof contents === "string" ? contents : contents.value;
 }
 
 function toSet(chars: Set<string>) {
@@ -48,6 +45,8 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
   const capabilities = context.state.facet(Capabilities);
   const sender = context.state.facet(LspClient);
 
+  console.log("triggered");
+
   const { state, pos, explicit } = context;
   const line = state.doc.lineAt(pos);
   let triggerKind: CompletionTriggerKind = CompletionTriggerKind.Invoked;
@@ -77,14 +76,14 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
     },
   });
 
-  if (response.method !== "textDocument/completion") {
-    return null;
-  }
-  if (response.result === null) {
+  if (!response || response.method !== "textDocument/completion" || response.result === null) {
     return null;
   }
 
-  const items = "items" in response.result ? response.result.items : response.result;
+  const items = "items" in response.result ? response.result.items : (response.result ?? []);
+  if (!Array.isArray(items)) {
+    return null; // Ensure `items` is an array
+  }
 
   let options = items.map(({ detail, label, kind, textEdit, documentation, sortText, filterText }) => {
     const completion: Completion & {

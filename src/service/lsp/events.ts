@@ -126,7 +126,7 @@ export class LspEventHandler {
     }
   }
 
-  async textDocumentHover(params: HoverParams): Promise<Hover> {
+  async textDocumentHover(params: HoverParams): Promise<{ result: Hover | null }> {
     try {
       const result = await this.proxy.sendRequest({
         method: "textDocument/hover",
@@ -137,7 +137,7 @@ export class LspEventHandler {
         throw new Error("Failed to complete hover request");
       }
 
-      return result as Hover;
+      return result as { result: Hover | null };
     } catch (error) {
       console.error(`Failed to complete hover event ${params}:`, error);
       throw error;

@@ -93,7 +93,7 @@ export interface LspError extends Error {
 export type SuccessfulServerLspResponse =
   | { method: "textDocument/completion"; result: CompletionItem[] | CompletionList | null }
   | { method: "initialize"; result: InitializeResult }
-  | { method: "textDocument/hover"; result: Hover };
+  | { method: "textDocument/hover"; result: Hover | null };
 
 export type ClientLspResponse = { error: LspError } | SuccessfulServerLspResponse;
 

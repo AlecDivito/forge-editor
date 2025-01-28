@@ -125,7 +125,7 @@ export class ProcessLspClient implements LspProxyClient {
   private cwd: string;
   private projectName: string;
   private process: ChildProcessByStdio<Writable, Readable, Readable>;
-  private messageBuffer: string = "";
+  private messageBuffer: Buffer = Buffer.from([]);
   private pendingRequests: Map<ID, (response: ServerLspResponse) => void> = new Map();
 
   constructor(
@@ -215,17 +215,23 @@ export class ProcessLspClient implements LspProxyClient {
 
   private onData(data: Buffer): void {
     // console.log("+++Received stdio update " + data.toString());
-    this.messageBuffer += data.toString();
+    this.messageBuffer = Buffer.concat([this.messageBuffer, data]);
 
     while (true) {
-      const contentLengthMatch = this.messageBuffer.match(/Content-Length: (\d+)/);
-      if (!contentLengthMatch) break;
+      // Look for the "Content-Length" header in the buffer
+      const headerEnd = this.messageBuffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) break; // Wait until the full header is received
+
+      const header = this.messageBuffer.slice(0, headerEnd).toString("utf8");
+      const contentLengthMatch = header.match(/Content-Length: (\d+)/);
+      if (!contentLengthMatch) {
+        console.error("Content-Length header not found in message. Discarding invalid buffer.");
+        this.messageBuffer = this.messageBuffer.slice(headerEnd + 4); // Skip invalid data
+        continue;
+      }
 
       const contentLength = parseInt(contentLengthMatch[1], 10);
-      const headerEnd = this.messageBuffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) break;
-
-      const start = headerEnd + 4;
+      const start = headerEnd + 4; // Start of the JSON body
       const end = start + contentLength;
 
       if (this.messageBuffer.length < end) {
@@ -234,14 +240,22 @@ export class ProcessLspClient implements LspProxyClient {
       }
       console.log(`${this.messageBuffer.length} is equal to ${end}. continue;`);
 
+      const stringResponse = this.messageBuffer.slice(start, end).toString("utf8");
       let response: ServerLspNotification | ServerLspResponse | ServerLspRequest;
 
-      const stringResponse = this.messageBuffer.slice(start, end);
       try {
         response = JSON.parse(stringResponse);
-      } catch {
+      } catch (error) {
         console.log("Failed to convert message buffer to json. ");
-        console.log(stringResponse);
+        console.log(error);
+        console.log(`Buffer length ${this.messageBuffer.length} -> Total ${contentLength}`);
+        // console.log(`Start "${this.messageBuffer.slice(0, start)}"`);
+        console.log(`End: ${end}, Start: ${start}, Header End: ${headerEnd}`);
+        console.log(`Buffer Start "${this.messageBuffer.slice(0, 25)}"`);
+        console.log(`Index Start "${this.messageBuffer.slice(start, start + 25)}"`);
+        console.log(`Index End ${this.messageBuffer.slice(contentLength - 25, contentLength)}`);
+        console.log(`Index of "${this.messageBuffer.indexOf("\r\n\r\n")}"`);
+        console.log(`End "${this.messageBuffer.slice(end - 10, end)}"`);
         break;
       }
 

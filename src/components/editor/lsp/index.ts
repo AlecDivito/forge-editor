@@ -104,8 +104,30 @@ export function lspExtensions(
     DocumentVersion.of(version),
     LspClient.of(new LanguageServerClient(sendRequest, sendNotification)),
     ViewPlugin.define((view) => new LSPInitializer(view)),
-    hoverTooltip(requestHoverToolTip),
+    hoverTooltip(requestHoverToolTip, { hoverTime: 200 }),
     autocompletion({
+      activateOnTyping: true,
+      activateOnTypingDelay: 100,
+      selectOnOpen: true,
+      closeOnBlur: false,
+      maxRenderedOptions: 500,
+      // add to the completion dialog element.
+      // This is the popup that appears on the page. It's the entire box
+      tooltipClass: (state) => {
+        console.log(state);
+        return "tooltipClass";
+      },
+      // Add CSS classes to completion options
+      optionClass: (completion) => {
+        console.log(completion);
+        return "completion";
+      },
+      filterStrict: true,
+      icons: true,
+      activateOnCompletion: (test) => {
+        console.log(test);
+        return true;
+      },
       override: [autoCompletionOverride],
     }),
     // linter(languageLinter),
