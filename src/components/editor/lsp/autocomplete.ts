@@ -1,5 +1,6 @@
 import { CompletionItemKind, CompletionTriggerKind, MarkedString, MarkupContent } from "vscode-languageserver-protocol";
 import { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import { syntaxTree } from "@codemirror/language";
 import { Capabilities, DocumentUri, LspClient } from ".";
 
 const CompletionItemKindMap = Object.fromEntries(
@@ -13,44 +14,26 @@ function formatContents(contents: MarkupContent | MarkedString | MarkedString[])
   return typeof contents === "string" ? contents : contents.value;
 }
 
-function toSet(chars: Set<string>) {
-  let preamble = "";
-  let flat = Array.from(chars).join("");
-  const words = /\w/.test(flat);
-  if (words) {
-    preamble += "\\w";
-    flat = flat.replace(/\w/g, "");
-  }
-  return `[${preamble}${flat.replace(/[^\w\s]/g, "\\$&")}]`;
-}
-
-function prefixMatch(options: Completion[]) {
-  const first = new Set<string>();
-  const rest = new Set<string>();
-
-  for (const { apply } of options) {
-    const [initial, ...restStr] = apply as string;
-    first.add(initial);
-    for (const char of restStr) {
-      rest.add(char);
-    }
-  }
-
-  const source = toSet(first) + toSet(rest) + "*$";
-  return [new RegExp("^" + source), new RegExp(source)];
-}
-
 export const autoCompletionOverride = async (context: CompletionContext): Promise<CompletionResult | null> => {
   const uri = context.state.facet(DocumentUri);
   const capabilities = context.state.facet(Capabilities);
   const sender = context.state.facet(LspClient);
 
-  console.log("triggered");
-
   const { state, pos, explicit } = context;
   const line = state.doc.lineAt(pos);
+
+  const tree = syntaxTree(state);
+  let node = tree.resolveInner(pos, -1); // Get the nearest relevant node
+
+  while (node && node.name === "PropertyName" && node.parent) {
+    node = node.parent;
+  }
+
+  console.log("AST Node:", node, node.parent?.name); // Debugging
+
   let triggerKind: CompletionTriggerKind = CompletionTriggerKind.Invoked;
   let triggerCharacter: string | undefined;
+
   if (
     !explicit &&
     capabilities.capabilities?.completionProvider?.triggerCharacters?.includes(line.text[pos - line.from - 1])
@@ -61,6 +44,10 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
   if (triggerKind === CompletionTriggerKind.Invoked && !context.matchBefore(/\w+$/)) {
     return null;
   }
+
+  const parent = node.parent?.name ?? node.name;
+
+  console.log("Parent Node:", parent); // Debugging
 
   // TODO: (Alec) Send document changes
 
@@ -85,48 +72,52 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
     return null; // Ensure `items` is an array
   }
 
-  let options = items.map(({ detail, label, kind, textEdit, documentation, sortText, filterText }) => {
-    const completion: Completion & {
-      filterText: string;
-      sortText?: string;
-      apply: string;
-    } = {
-      label,
-      detail,
-      apply: textEdit?.newText ?? label,
-      type: kind && CompletionItemKindMap[kind].toLowerCase(),
-      sortText: sortText ?? label,
-      filterText: filterText ?? label,
-    };
-    if (documentation) {
-      completion.info = formatContents(documentation);
-    }
-    return completion;
-  });
+  let options = items
+    .map(({ detail, label, kind, textEdit, documentation, sortText, filterText }) => {
+      const completion: Completion & {
+        filterText: string;
+        sortText?: string;
+        apply: string;
+      } = {
+        label,
+        detail,
+        apply: textEdit?.newText ?? label,
+        type: kind && CompletionItemKindMap[kind].toLowerCase(),
+        sortText: sortText ?? label,
+        filterText: filterText ?? label,
+      };
+      if (documentation) {
+        completion.info = formatContents(documentation);
+      }
+      return completion;
+    })
+    .filter(({ label }) => {
+      // Filter only relevant completions for the parent node
+      if (parent === "console") {
+        return (
+          label.startsWith("log") || label.startsWith("time") || label.startsWith("warn") || label.startsWith("error")
+        );
+      }
+      return true; // Default to keeping all if no specific parent is found
+    });
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [span, match] = prefixMatch(options);
-  const token = context.matchBefore(match);
-
+  const token = context.matchBefore(/\w*$/); // Match word characters before cursor
   if (token) {
-    const word = token.text.toLowerCase();
-    if (/^\w+$/.test(word)) {
+    const prefix = token.text.toLowerCase();
+    if (prefix) {
       options = options
-        .filter(({ filterText }) => filterText.toLowerCase().startsWith(word))
+        .filter(({ filterText }) => filterText.toLowerCase().startsWith(prefix)) // Only keep relevant completions
         .sort(({ apply: a }, { apply: b }) => {
-          switch (true) {
-            case a.startsWith(token.text) && !b.startsWith(token.text):
-              return -1;
-            case !a.startsWith(token.text) && b.startsWith(token.text):
-              return 1;
-          }
+          if (a.startsWith(prefix) && !b.startsWith(prefix)) return -1;
+          if (!a.startsWith(prefix) && b.startsWith(prefix)) return 1;
           return 0;
         });
     }
   }
 
   return {
-    from: context.pos,
+    filter: false,
+    from: token ? token.from : context.pos,
     options,
   };
 };

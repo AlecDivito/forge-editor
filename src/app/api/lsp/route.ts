@@ -101,6 +101,9 @@ export async function SOCKET(
         } else if (message.method === "textDocument/hover") {
           const result = await eventHandler.textDocumentHover(message.params);
           requestClient.sendResponse({ method: message.method, ...result });
+        } else if (message.method === "textDocument/signatureHelp") {
+          const result = await eventHandler.textDcoumentSignatureHelp(message.params);
+          requestClient.sendResponse({ method: message.method, ...result });
         } else if (message.method === "workspace/workspaceFolders") {
           await manager.sendMessageToAll(message);
           requestClient.sendSuccessConfirmation();

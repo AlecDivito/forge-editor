@@ -24,6 +24,46 @@ body {
   height: 100%;
 }
 
+.cm-theme .cm-tooltip {
+  max-width: 700px;
+  max-height: 500px;
+  border-radius: 12px;
+  padding: 8px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.cm-theme .cm-tooltip p {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.cm-theme .cm-syntax {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.cm-syntax {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+.cm-tooltip pre {
+  padding: 0;
+}
+.cm-tooltip em {
+  color: lightblue;
+}
+.cm-tooltip code:not(.cm-syntax) {
+  background-color: gray;
+  text-decoration: underline;
+}
+.cm-tooltip br {
+  padding-bottom: 8px;
+}
+
 /** Dockview **/
 .dv-svg {
   display: inline-block;
@@ -187,10 +227,18 @@ body {
   --dv-paneview-header-border-color: #bd93f9;
   --dv-paneview-active-outline-color: #6272a4;
 }
-.dockview-theme-dracula .dv-groupview.dv-active-group > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab.dv-active-tab {
+.dockview-theme-dracula
+  .dv-groupview.dv-active-group
+  > .dv-tabs-and-actions-container
+  > .dv-tabs-container
+  > .dv-tab.dv-active-tab {
   position: relative;
 }
-.dockview-theme-dracula .dv-groupview.dv-active-group > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab.dv-active-tab::after {
+.dockview-theme-dracula
+  .dv-groupview.dv-active-group
+  > .dv-tabs-and-actions-container
+  > .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
   position: absolute;
   left: 0px;
   top: 0px;
@@ -200,10 +248,18 @@ body {
   background-color: #94527e;
   z-index: 999;
 }
-.dockview-theme-dracula .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab.dv-active-tab {
+.dockview-theme-dracula
+  .dv-groupview.dv-inactive-group
+  > .dv-tabs-and-actions-container
+  > .dv-tabs-container
+  > .dv-tab.dv-active-tab {
   position: relative;
 }
-.dockview-theme-dracula .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container > .dv-tabs-container > .dv-tab.dv-active-tab::after {
+.dockview-theme-dracula
+  .dv-groupview.dv-inactive-group
+  > .dv-tabs-and-actions-container
+  > .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
   position: absolute;
   left: 0px;
   bottom: 0px;
@@ -316,20 +372,33 @@ body {
   height: 100%;
   width: 100%;
   background-color: var(--dv-drag-over-background-color);
-  transition: top 70ms ease-out, left 70ms ease-out, width 70ms ease-out, height 70ms ease-out, opacity 0.15s ease-out;
+  transition:
+    top 70ms ease-out,
+    left 70ms ease-out,
+    width 70ms ease-out,
+    height 70ms ease-out,
+    opacity 0.15s ease-out;
   will-change: transform;
   pointer-events: none;
 }
-.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-top.dv-drop-target-small-vertical {
+.dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-top.dv-drop-target-small-vertical {
   border-top: 1px solid var(--dv-drag-over-border-color);
 }
-.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-bottom.dv-drop-target-small-vertical {
+.dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-bottom.dv-drop-target-small-vertical {
   border-bottom: 1px solid var(--dv-drag-over-border-color);
 }
-.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-left.dv-drop-target-small-horizontal {
+.dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-left.dv-drop-target-small-horizontal {
   border-left: 1px solid var(--dv-drag-over-border-color);
 }
-.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-right.dv-drop-target-small-horizontal {
+.dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection.dv-drop-target-right.dv-drop-target-small-horizontal {
   border-right: 1px solid var(--dv-drag-over-border-color);
 }
 .dv-dockview {
@@ -569,7 +638,8 @@ body {
 .dv-pane-container .dv-pane .dv-pane-header.dv-pane-draggable {
   cursor: pointer;
 }
-.dv-pane-container .dv-pane .dv-pane-header:focus:before, .dv-pane-container .dv-pane .dv-pane-header:focus-within:before {
+.dv-pane-container .dv-pane .dv-pane-header:focus:before,
+.dv-pane-container .dv-pane .dv-pane-header:focus-within:before {
   position: absolute;
   top: 0;
   left: 0;
@@ -591,7 +661,8 @@ body {
   position: relative;
   outline: none;
 }
-.dv-pane-container .dv-pane .dv-pane-body:focus:before, .dv-pane-container .dv-pane .dv-pane-body:focus-within:before {
+.dv-pane-container .dv-pane .dv-pane-body:focus:before,
+.dv-pane-container .dv-pane .dv-pane-body:focus-within:before {
   position: absolute;
   top: 0;
   left: 0;
@@ -727,16 +798,22 @@ body {
   background-color: var(--dv-separator-border);
 }
 .dv-dragged {
-  transform: translate3d(0px, 0px, 0px); /* forces tab to be drawn on a separate layer (see https://github.com/microsoft/vscode/issues/18733) */
+  transform: translate3d(
+    0px,
+    0px,
+    0px
+  ); /* forces tab to be drawn on a separate layer (see https://github.com/microsoft/vscode/issues/18733) */
 }
 
 .dv-tab {
   flex-shrink: 0;
 }
-.dv-tab:focus-within, .dv-tab:focus {
+.dv-tab:focus-within,
+.dv-tab:focus {
   position: relative;
 }
-.dv-tab:focus-within::after, .dv-tab:focus::after {
+.dv-tab:focus-within::after,
+.dv-tab:focus::after {
   position: absolute;
   content: "";
   height: 100%;

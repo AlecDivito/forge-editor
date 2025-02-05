@@ -214,7 +214,6 @@ export class ProcessLspClient implements LspProxyClient {
   }
 
   private onData(data: Buffer): void {
-    // console.log("+++Received stdio update " + data.toString());
     this.messageBuffer = Buffer.concat([this.messageBuffer, data]);
 
     while (true) {

@@ -6,6 +6,7 @@ import {
   DidChangeTextDocumentParams,
   HoverParams,
   ServerCapabilities,
+  SignatureHelpParams,
 } from "vscode-languageserver-protocol";
 
 // LanguageServerClient: Manages communication with a language server
@@ -22,8 +23,12 @@ export class LanguageServerClient {
     this.sendNotification = sendNotification;
   }
 
+  async signatureHelp(params: SignatureHelpParams) {
+    const response = await this.request({ method: "textDocument/signatureHelp", params });
+    return response;
+  }
+
   async didChange(params: DidChangeTextDocumentParams) {
-    console.log("Sending");
     const response = await this.notify({ method: "textDocument/didChange", params });
     return response;
   }

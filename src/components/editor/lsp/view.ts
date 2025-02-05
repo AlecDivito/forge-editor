@@ -1,18 +1,8 @@
 import DiffMatchPatch from "diff-match-patch";
-import {
-  Capabilities,
-  DocumentUri,
-  DocumentVersion,
-  Language,
-  LspClient,
-} from ".";
+import { Capabilities, DocumentUri, DocumentVersion, Language, LspClient } from ".";
 import { EditorView, PluginValue, ViewUpdate } from "@uiw/react-codemirror";
 import { LanguageServerClient } from "./client";
-import {
-  InitializeResult,
-  TextDocumentContentChangeEvent,
-  TextDocumentSyncKind,
-} from "vscode-languageserver-protocol";
+import { InitializeResult, TextDocumentContentChangeEvent, TextDocumentSyncKind } from "vscode-languageserver-protocol";
 
 export class LSPInitializer implements PluginValue {
   capabilities: InitializeResult;
@@ -54,7 +44,7 @@ export class LSPInitializer implements PluginValue {
         this.textSyncKind = sync.change || TextDocumentSyncKind.None;
       }
     }
-    this.textSyncKind = TextDocumentSyncKind.Full;
+    // this.textSyncKind = TextDocumentSyncKind.Full;
 
     // Finally, set some sensible defaults
     this.timer = undefined;
@@ -62,8 +52,7 @@ export class LSPInitializer implements PluginValue {
   }
 
   update(update: ViewUpdate): void {
-    if (!update.docChanged || this.textSyncKind === TextDocumentSyncKind.None)
-      return;
+    if (!update.docChanged || this.textSyncKind === TextDocumentSyncKind.None) return;
 
     if (this.textSyncKind === TextDocumentSyncKind.Incremental) {
       const changes = this.convertChangeDescToContentChangeEvent(update);
@@ -79,9 +68,7 @@ export class LSPInitializer implements PluginValue {
     // Cleanup logic if needed
   }
 
-  private convertChangeDescToContentChangeEvent(
-    update: ViewUpdate
-  ): TextDocumentContentChangeEvent[] {
+  private convertChangeDescToContentChangeEvent(update: ViewUpdate): TextDocumentContentChangeEvent[] {
     const lspChanges: TextDocumentContentChangeEvent[] = [];
 
     update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
@@ -119,7 +106,9 @@ export class LSPInitializer implements PluginValue {
 
     this.timer = setTimeout(() => {
       let contentChanges = this.changes;
-      if (this.textSyncKind === TextDocumentSyncKind.Full) {
+      if (this.textSyncKind === TextDocumentSyncKind.Incremental) {
+        contentChanges = this.convertChangeDescToContentChangeEvent(update);
+      } else {
         contentChanges = [
           {
             text: update.state.doc.toString(),

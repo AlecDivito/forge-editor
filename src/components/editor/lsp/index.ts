@@ -1,5 +1,6 @@
 import { SendRequest } from "@/hooks/use-send-message";
-import { Extension, Facet, hoverTooltip, StateEffect, ViewPlugin } from "@uiw/react-codemirror";
+import { hoverTooltip } from "@codemirror/view";
+import { Extension, Facet, StateEffect, ViewPlugin } from "@uiw/react-codemirror";
 import { InitializeParams, InitializeResult } from "vscode-languageserver-protocol";
 import { LanguageServerClient } from "./client";
 import { LSPInitializer } from "./view";
@@ -7,6 +8,7 @@ import { autocompletion } from "@codemirror/autocomplete";
 import { autoCompletionOverride } from "./autocomplete";
 import { requestHoverToolTip } from "./hover";
 import { SendLspNotification } from "@/hooks/use-send-notification";
+import { signatureHelpExtension } from "./test";
 
 export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   processId: null,
@@ -39,7 +41,12 @@ export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
         dynamicRegistration: true,
         signatureInformation: {
           documentationFormat: ["plaintext", "markdown"],
+          parameterInformation: {
+            labelOffsetSupport: true,
+          },
+          activeParameterSupport: true,
         },
+        contextSupport: true,
       },
       declaration: {
         dynamicRegistration: true,
@@ -97,35 +104,44 @@ export function lspExtensions(
   version: number,
   capabilities: InitializeResult,
 ): Extension[] {
+  const tooltipExtension = hoverTooltip(requestHoverToolTip, {
+    hideOn: (tr, tooltip) => {
+      return false;
+    },
+    hideOnChange: false,
+    hoverTime: 200,
+  });
+
   return [
     Capabilities.of(capabilities),
     DocumentUri.of(documentUri),
     Language.of(language),
     DocumentVersion.of(version),
     LspClient.of(new LanguageServerClient(sendRequest, sendNotification)),
+    tooltipExtension,
     ViewPlugin.define((view) => new LSPInitializer(view)),
-    hoverTooltip(requestHoverToolTip, { hoverTime: 200 }),
+    signatureHelpExtension(capabilities),
     autocompletion({
       activateOnTyping: true,
       activateOnTypingDelay: 100,
       selectOnOpen: true,
       closeOnBlur: false,
-      maxRenderedOptions: 500,
+      maxRenderedOptions: 200,
       // add to the completion dialog element.
       // This is the popup that appears on the page. It's the entire box
       tooltipClass: (state) => {
-        console.log(state);
+        // console.log(state);
         return "tooltipClass";
       },
       // Add CSS classes to completion options
       optionClass: (completion) => {
-        console.log(completion);
+        // console.log(completion);
         return "completion";
       },
       filterStrict: true,
       icons: true,
       activateOnCompletion: (test) => {
-        console.log(test);
+        // console.log(test);
         return true;
       },
       override: [autoCompletionOverride],

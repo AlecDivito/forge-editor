@@ -1,13 +1,7 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { IncomingMessage } from "http";
 import redis from "@/lib/redis";
-import {
-  deleteFile,
-  getFile,
-  saveFile,
-  saveFileEdit,
-  consolidateFileEdits,
-} from "@/service/fs";
+import { deleteFile, getFile, saveFile, saveFileEdit, consolidateFileEdits } from "@/service/fs";
 import { Message } from "@/interfaces/socket";
 
 const pubClient = redis.duplicate(); // Redis publisher
@@ -36,7 +30,7 @@ function debounceConsolidation(path: string, delay = 2000) {
       } catch (error) {
         console.error(`Error consolidating changes for ${path}:`, error);
       }
-    }, delay)
+    }, delay),
   );
 }
 
@@ -49,9 +43,7 @@ subClient.on("connect", () => {
 });
 
 subClient.on("subscribe", (channel, count) => {
-  console.log(
-    `Subscribed to channel: ${channel}, active subscriptions: ${count}`
-  );
+  console.log(`Subscribed to channel: ${channel}, active subscriptions: ${count}`);
 });
 
 // Subscribe to Redis events once
@@ -62,9 +54,7 @@ subClient.subscribe("file:events", (err, count) => {
     console.error("Failed to subscribe: %s", err.message);
   } else {
     // `count` represents the number of channels this client are currently subscribed to.
-    console.log(
-      `Subscribed successfully! This client is currently subscribed to ${count} channels.`
-    );
+    console.log(`Subscribed successfully! This client is currently subscribed to ${count} channels.`);
   }
 });
 
@@ -73,7 +63,7 @@ subClient.on("message", (channel, message) => {
   if (channel === "file:events") {
     if (message) {
       const payload = JSON.parse(message);
-      console.log("Broadcasting message:", payload);
+      // console.log("Broadcasting message:", payload);
       clients.forEach((client) => client.send(JSON.stringify(payload)));
     }
   }
@@ -85,20 +75,16 @@ process.on("SIGINT", async () => {
   process.exit(0);
 });
 
-export async function SOCKET(
-  client: WebSocket,
-  request: IncomingMessage,
-  wss: WebSocketServer
-) {
+export async function SOCKET(client: WebSocket, request: IncomingMessage, wss: WebSocketServer) {
   console.log("New WebSocket connection.");
   clients.add(client);
 
   client.on("message", async (message) => {
     try {
-      const str = message.toString();
-      console.log(str);
+      // const str = message.toString();
+      // console.log(str);
       const { event, body } = JSON.parse(message.toString()) as Message;
-      console.log(`Processing ${event}`);
+      // console.log(`Processing ${event}`);
 
       if (event === "file:edit") {
         const { path, changes } = body;

@@ -10,6 +10,8 @@ import {
   Hover,
   HoverParams,
   InitializeResult,
+  SignatureHelp,
+  SignatureHelpParams,
 } from "vscode-languageserver-protocol";
 import { CacheManager } from "./cache";
 import { ClientLspNotification } from ".";
@@ -68,7 +70,7 @@ export class LspEventHandler {
       if (proxyApply.status === "rejected") {
         console.error(`Updating the proxy was rejected and failed because ${proxyApply.reason}`);
       } else {
-        console.log(JSON.stringify(proxyApply.value, null, 2));
+        // console.log(JSON.stringify(proxyApply.value, null, 2));
       }
       console.log(`Successfully applied changes to document: ${cacheFilePath}`);
     } catch (error) {
@@ -98,7 +100,7 @@ export class LspEventHandler {
       if (proxyApply.status === "rejected") {
         console.error(`Updating the proxy was rejected and failed because ${proxyApply.reason}`);
       } else {
-        console.log(JSON.stringify(proxyApply.value, null, 2));
+        // console.log(JSON.stringify(proxyApply.value, null, 2));
       }
       console.log(`Successfully applied changes to document: ${cacheFilePath}`);
     } catch (error) {
@@ -155,8 +157,27 @@ export class LspEventHandler {
         throw new Error("Failed to create document symbol request");
       }
 
-      console.log(JSON.stringify(result, null, 2));
+      // console.log(JSON.stringify(result, null, 2));
       return result as DocumentSymbol;
+    } catch (error) {
+      console.error(`Failed to complete hover event ${params}:`, error);
+      throw error;
+    }
+  }
+
+  async textDcoumentSignatureHelp(params: SignatureHelpParams): Promise<{ result: SignatureHelp | null }> {
+    try {
+      const result = await this.proxy.sendRequest({
+        method: "textDocument/signatureHelp",
+        params,
+      });
+
+      if (!result) {
+        throw new Error("Failed to create document symbol request");
+      }
+
+      // console.log(JSON.stringify(result, null, 2));
+      return { ...result } as { result: SignatureHelp | null };
     } catch (error) {
       console.error(`Failed to complete hover event ${params}:`, error);
       throw error;

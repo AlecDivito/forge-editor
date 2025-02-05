@@ -155,7 +155,7 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
 
   openFile: (path) =>
     set((state) => {
-      console.log(state.activeFiles);
+      // console.log(state.activeFiles);
       return {
         activeFiles: { ...state.activeFiles, [path]: null },
       };

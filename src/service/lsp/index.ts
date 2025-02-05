@@ -20,9 +20,10 @@ import {
   LogTraceParams,
   ReferenceParams,
   RenameParams,
+  SignatureHelp,
+  SignatureHelpParams,
 } from "vscode-languageserver-protocol";
 import { WorkspaceFoldersInitializeParams } from "vscode-languageserver-protocol/lib/common/protocol.workspaceFolder";
-import { CompletionResult } from "@codemirror/autocomplete";
 
 export type LspOutput = ServerLspNotification | ServerLspResponse | ServerLspRequest;
 
@@ -93,7 +94,8 @@ export interface LspError extends Error {
 export type SuccessfulServerLspResponse =
   | { method: "textDocument/completion"; result: CompletionItem[] | CompletionList | null }
   | { method: "initialize"; result: InitializeResult }
-  | { method: "textDocument/hover"; result: Hover | null };
+  | { method: "textDocument/hover"; result: Hover | null }
+  | { method: "textDocument/signatureHelp"; result: SignatureHelp | null };
 
 export type ClientLspResponse = { error: LspError } | SuccessfulServerLspResponse;
 
@@ -203,6 +205,10 @@ export type ClientLspRequest =
   | {
       method: "textDocument/documentSymbol";
       params: DocumentSymbolParams;
+    }
+  | {
+      method: "textDocument/signatureHelp";
+      params: SignatureHelpParams;
     };
 
 export function getLsp(language?: string): {
@@ -242,6 +248,6 @@ export function writeLspMessage(message: (ClientLspRequest & { id?: number }) | 
   const jsonRpcMessage = JSON.stringify({ jsonrpc: "2.0", ...message });
   const contentLength = Buffer.byteLength(jsonRpcMessage, "utf-8");
   const str = `Content-Length: ${contentLength}\r\n\r\n${jsonRpcMessage}`;
-  console.log(`----\n${str}\n----`);
+  // console.log(`----\n${str}\n----`);
   return str;
 }
