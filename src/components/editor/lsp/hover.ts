@@ -13,7 +13,7 @@ export const requestHoverToolTip = async (view: EditorView, pos: number /* side:
 
   const line = view.state.doc.lineAt(pos);
 
-  console.log(pos);
+  // console.log(pos);
 
   // TODO: (Alec) Send document changes
   const result = await sender.hover({
@@ -24,7 +24,7 @@ export const requestHoverToolTip = async (view: EditorView, pos: number /* side:
     },
   });
 
-  console.log("here", result);
+  // console.log("here", result);
 
   if (result.method !== "textDocument/hover") {
     return null;

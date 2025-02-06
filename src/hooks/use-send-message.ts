@@ -38,7 +38,7 @@ export const useSendRequest = (language?: string) => {
             message,
           };
           // Send the message over WebSocket
-          console.log(`Sending ${request.type} ${message.method}`, JSON.stringify(request, null, 2));
+          // console.log(`Sending ${request.type} ${message.method}`, JSON.stringify(request, null, 2));
           ws!.send(JSON.stringify(request));
         } catch (error) {
           reject(error);

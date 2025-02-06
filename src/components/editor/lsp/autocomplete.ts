@@ -29,7 +29,7 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
     node = node.parent;
   }
 
-  console.log("AST Node:", node, node.parent?.name); // Debugging
+  // console.log("AST Node:", node, node.parent?.name); // Debugging
 
   let triggerKind: CompletionTriggerKind = CompletionTriggerKind.Invoked;
   let triggerCharacter: string | undefined;
@@ -47,7 +47,7 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
 
   const parent = node.parent?.name ?? node.name;
 
-  console.log("Parent Node:", parent); // Debugging
+  // console.log("Parent Node:", parent); // Debugging
 
   // TODO: (Alec) Send document changes
 
@@ -63,6 +63,7 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
     },
   });
 
+  console.log(response);
   if (!response || response.method !== "textDocument/completion" || response.result === null) {
     return null;
   }

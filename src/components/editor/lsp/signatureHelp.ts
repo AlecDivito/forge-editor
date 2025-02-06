@@ -7,7 +7,7 @@ import { LanguageServerClient } from "./client";
 
 const updateFollowedCursor = StateEffect.define<Cursor | null>({
   map: (value, changes) => {
-    console.log(value);
+    // console.log(value);
     return value.map(changes);
   },
 });
@@ -100,7 +100,7 @@ class SignatureHelpTooltip implements PluginValue {
           return;
         }
 
-        console.log(signatures);
+        // console.log(signatures);
         const signatureText = signatures[activeSignature ?? 0].label;
         const signaturedocumentation = signatures[activeSignature ?? 0]?.documentation;
         // const parameters = signatures[activeSignature ?? 0]?.pa

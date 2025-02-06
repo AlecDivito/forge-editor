@@ -41,7 +41,7 @@ export async function SOCKET(
     try {
       const requestClient = new WebSocketClient(client);
       const wsRequest = JSON.parse(body.toString()) as ServerAcceptedMessage;
-      console.log(JSON.stringify(wsRequest, null, 2));
+      // console.log(JSON.stringify(wsRequest, null, 2));
       const { type, id, ctx, message } = wsRequest;
 
       if (!["client-to-server-notification", "client-to-server-request", "client-to-server-response"].includes(type)) {

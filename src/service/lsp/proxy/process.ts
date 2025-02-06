@@ -96,7 +96,6 @@ export class ProcessLspClientFactory implements LspProxyClientFactory {
 
     // for now, we aren't going to return back the initialize request
     const result = await processClient.sendRequest({
-      id: 0,
       method: "initialize",
       params,
     });
@@ -112,7 +111,7 @@ export class ProcessLspClientFactory implements LspProxyClientFactory {
 
     return {
       client: processClient,
-      support: result.result as InitializeResult,
+      support: result.result as unknown as InitializeResult<unknown>,
     };
   }
 }
@@ -202,7 +201,7 @@ export class ProcessLspClient implements LspProxyClient {
         if (code === 0 || signal === "SIGTERM") {
           console.info(`LSP process terminated successfully.`);
           this.isActive = false;
-          this.messageBuffer = "";
+          this.messageBuffer = Buffer.from("");
           this.pendingRequests.clear();
           resolve();
         } else {

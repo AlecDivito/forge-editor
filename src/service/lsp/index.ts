@@ -18,6 +18,7 @@ import {
   InitializeParams,
   InitializeResult,
   LogTraceParams,
+  PublishDiagnosticsParams,
   ReferenceParams,
   RenameParams,
   SignatureHelp,
@@ -58,6 +59,7 @@ export type ServerLspNotification =
   | { method: "$/logTrace"; params: LogTraceParams }
   | { method: "$/typescriptVersion"; params: { version: string; source: string } }
   | { method: "window/logMessage"; params: { type: number; message: string } }
+  | { method: "textDocument/publishDiagnostics"; params: PublishDiagnosticsParams }
   // The following are custom messages that a client editor should implement if
   // they want to be able to use the proxy as the source of truth
   | { method: "proxy/initialize"; language: string; params: InitializeResult }

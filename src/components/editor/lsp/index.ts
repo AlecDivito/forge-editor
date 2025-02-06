@@ -3,18 +3,23 @@ import { hoverTooltip } from "@codemirror/view";
 import { Extension, Facet, StateEffect, ViewPlugin } from "@uiw/react-codemirror";
 import { InitializeParams, InitializeResult } from "vscode-languageserver-protocol";
 import { LanguageServerClient } from "./client";
-import { LSPInitializer } from "./view";
 import { autocompletion } from "@codemirror/autocomplete";
 import { autoCompletionOverride } from "./autocomplete";
 import { requestHoverToolTip } from "./hover";
 import { SendLspNotification } from "@/hooks/use-send-notification";
-import { signatureHelpExtension } from "./test";
+import { ForgeLspExtension } from "./view";
 
 export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   processId: null,
   rootUri: `file:///${base}`,
   capabilities: {
     textDocument: {
+      publishDiagnostics: {
+        relatedInformation: true,
+        versionSupport: true,
+        codeDescriptionSupport: true,
+        dataSupport: true,
+      },
       hover: {
         dynamicRegistration: true,
         contentFormat: ["plaintext", "markdown"],
@@ -118,9 +123,8 @@ export function lspExtensions(
     Language.of(language),
     DocumentVersion.of(version),
     LspClient.of(new LanguageServerClient(sendRequest, sendNotification)),
+    ForgeLspExtension(),
     tooltipExtension,
-    ViewPlugin.define((view) => new LSPInitializer(view)),
-    signatureHelpExtension(capabilities),
     autocompletion({
       activateOnTyping: true,
       activateOnTypingDelay: 100,

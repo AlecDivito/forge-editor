@@ -93,7 +93,7 @@ const markedWithLezer = new Marked(
         emit(result),
         emitBreak(result),
       );
-      console.log(result.innerHTML);
+      // console.log(result.innerHTML);
       return result.innerHTML;
       // return highlightCodeWithLezer(code, lang); // Use Lezer for highlighting
       // return highlightCodeWithCodeMirror(code, lang);
@@ -156,6 +156,27 @@ export async function formatContentSections(
 export async function formatContents(
   contents: string | MarkupContent | MarkedString | MarkedString[],
 ): Promise<string> {
+  let content = "";
+  if (Array.isArray(contents)) {
+    const items = [];
+    for (const item of contents) {
+      items.push((await formatContents(item)) + "\n\n");
+    }
+    content = items.join("  ");
+  } else if (typeof contents === "string") {
+    content = contents;
+  } else {
+    content = contents.value;
+  }
+
+  // TODO: Sanitize the output of the markdown
+  const htmlString = markedWithLezer.parse(content);
+
+  // console.log(htmlString);
+  return htmlString;
+}
+
+export async function format(contents: string | MarkupContent | MarkedString | MarkedString[]): Promise<string> {
   let content = "";
   if (Array.isArray(contents)) {
     const items = [];
