@@ -68,6 +68,7 @@ export class TextChangePlugin extends ForgePlugin {
       throw new Error("Text document is supposed to be disabled");
     }
 
+    console.log(changes);
     // This is meant to be a notification
     this.sender.didChange({
       textDocument: {

@@ -1,6 +1,6 @@
 import { SendRequest } from "@/hooks/use-send-message";
 import { hoverTooltip } from "@codemirror/view";
-import { Extension, Facet, StateEffect, ViewPlugin } from "@uiw/react-codemirror";
+import { Extension, Facet, StateEffect } from "@uiw/react-codemirror";
 import { InitializeParams, InitializeResult } from "vscode-languageserver-protocol";
 import { LanguageServerClient } from "./client";
 import { autocompletion } from "@codemirror/autocomplete";
@@ -8,6 +8,7 @@ import { autoCompletionOverride } from "./autocomplete";
 import { requestHoverToolTip } from "./hover";
 import { SendLspNotification } from "@/hooks/use-send-notification";
 import { ForgeLspExtension } from "./view";
+import { linterExtension } from "./linter";
 
 export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   processId: null,
@@ -150,6 +151,6 @@ export function lspExtensions(
       },
       override: [autoCompletionOverride],
     }),
-    // linter(languageLinter),
+    linterExtension(),
   ];
 }

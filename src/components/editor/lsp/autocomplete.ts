@@ -63,7 +63,6 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
     },
   });
 
-  console.log(response);
   if (!response || response.method !== "textDocument/completion" || response.result === null) {
     return null;
   }

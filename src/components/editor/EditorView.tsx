@@ -2,12 +2,15 @@ import { useSendRequest } from "@/hooks/use-send-message";
 import { useSendNotification } from "@/hooks/use-send-notification";
 import { FileExtension } from "@/service/lsp/proxy";
 import { useFileStore } from "@/store/filetree";
-import { Extension } from "@uiw/react-codemirror/cjs/index.js";
 import { IDockviewPanelProps } from "dockview";
 import dynamic from "next/dynamic";
 import { FC, useEffect, useState } from "react";
 import { EditorParams } from "./EditorParams";
 import { lspExtensions } from "./lsp";
+import { useNotification } from "@/store/notification";
+import { lintDiagnosticEffect } from "./lsp/linter";
+import { convertLspDiagnosticsToCodemirror } from "@/utils/diagnosticConverter";
+import { EditorView as CodeMirrorView, Extension } from "@uiw/react-codemirror";
 
 const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
@@ -40,10 +43,12 @@ const getFileExtension = (filename: string): FileExtension | undefined => {
 
 const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   const { file, theme } = params;
+  const [view, setView] = useState<CodeMirrorView | undefined>();
   const language = getFileExtension(file);
   const sendRequest = useSendRequest(language);
   const sendNotification = useSendNotification(language);
   const { capabilities, activeFiles } = useFileStore();
+  const diagnostics = useNotification((state) => state.diagnostics?.[file]);
 
   const [extensions, setExtensions] = useState<Extension[]>([]);
   const [loadedTheme, setLoadedTheme] = useState<Extension | undefined>();
@@ -94,13 +99,26 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
     }
   }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme]);
 
+  useEffect(() => {
+    if (view && diagnostics) {
+      const codeDiagnostics = convertLspDiagnosticsToCodemirror(diagnostics, view.state.doc);
+      view.dispatch({ effects: lintDiagnosticEffect.of(codeDiagnostics) });
+    }
+  }, [view, diagnostics]);
+
   // !(!!activeFiles?.[file] makes sure that it's a type) and this is the boolean operation on it
   if (!!!activeFiles?.[file] || extensions.length === 0) {
     return <div>Loading {file}...</div>;
   }
 
   return (
-    <ReactCodeMirror value={activeFiles[file].text || ""} extensions={extensions} theme={loadedTheme} height="100%" />
+    <ReactCodeMirror
+      onCreateEditor={(editor) => setView(editor)}
+      value={activeFiles[file].text || ""}
+      extensions={extensions}
+      theme={loadedTheme}
+      height="100%"
+    />
   );
 };
 

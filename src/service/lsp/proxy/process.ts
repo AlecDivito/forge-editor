@@ -274,6 +274,9 @@ export class ProcessLspClient implements LspProxyClient {
         }
       } else if (isServerLspNotification(response)) {
         console.log(`Sending Notification ${response.method}`);
+        if (response.method === "textDocument/publishDiagnostics") {
+          response.params.uri = response.params.uri.replace(this.cwd, `file:///${this.projectName}`);
+        }
         this.client.sendNotification(response);
       } else {
         console.error(
