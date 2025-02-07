@@ -128,11 +128,11 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
           className={"dockview-theme-abyss"}
         />
       </div>
-      <div>
+      {/* <div className="w-full">
         <pre>Active: {JSON.stringify(activeFiles, null, 2)}</pre>
         <pre>Capabilities: {JSON.stringify(capabilities, null, 2)}</pre>
         <pre>Notifications: {JSON.stringify(notifications, null, 2)}</pre>
-      </div>
+      </div> */}
     </>
   );
 };

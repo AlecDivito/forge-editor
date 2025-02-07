@@ -9,6 +9,8 @@ import { requestHoverToolTip } from "./hover";
 import { SendLspNotification } from "@/hooks/use-send-notification";
 import { ForgeLspExtension } from "./view";
 import { linterExtension } from "./linter";
+import { infoPanelExtension } from "./plugin/infoPanel";
+import { ColorScheme, Theme, themeExtension } from "./plugin/theme";
 
 export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   processId: null,
@@ -84,10 +86,15 @@ export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   ],
 });
 
+export const DefaultTheme = Facet.define<Theme, Theme>({
+  combine: (c) => c[0] || null,
+});
+export const DefaultColorScheme = Facet.define<ColorScheme, ColorScheme>({
+  combine: (c) => c[0] || null,
+});
 export const LspClient = Facet.define<LanguageServerClient, LanguageServerClient>({
   combine: (c) => c[0] || null,
 });
-
 export const Capabilities = Facet.define<InitializeResult, InitializeResult>({
   combine: (c) => c[0] || null,
 });
@@ -109,6 +116,8 @@ export function lspExtensions(
   language: string,
   version: number,
   capabilities: InitializeResult,
+  theme: Theme = "gruvbox",
+  color: ColorScheme = "dark",
 ): Extension[] {
   const tooltipExtension = hoverTooltip(requestHoverToolTip, {
     hideOn: (tr, tooltip) => {
@@ -122,8 +131,11 @@ export function lspExtensions(
     Capabilities.of(capabilities),
     DocumentUri.of(documentUri),
     Language.of(language),
+    DefaultTheme.of(theme),
+    DefaultColorScheme.of(color),
     DocumentVersion.of(version),
     LspClient.of(new LanguageServerClient(sendRequest, sendNotification)),
+    themeExtension(theme, color),
     ForgeLspExtension(),
     tooltipExtension,
     autocompletion({
@@ -152,5 +164,6 @@ export function lspExtensions(
       override: [autoCompletionOverride],
     }),
     linterExtension(),
+    infoPanelExtension(),
   ];
 }

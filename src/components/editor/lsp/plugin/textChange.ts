@@ -83,36 +83,87 @@ export class TextChangePlugin extends ForgePlugin {
 
   private convertChangeDescToContentChangeEvent(update: ViewUpdate): TextDocumentContentChangeEvent[] {
     const lspChanges: TextDocumentContentChangeEvent[] = [];
+    let currentDoc = update.startState.doc; // Track document state as a Text instance
+    // let cumulativeShift = 0; // Track overall text shifts due to prior changes
+    const shiftMap = new Map<number, number>(); // Maps positions to cumulative shifts
 
     update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
-      // Get start line information
-      const startLine = update.state.doc.lineAt(fromA);
+      // Compute adjusted positions based on previous shifts
+      const adjustedFromA = fromA + (shiftMap.get(fromA) || 0);
+      const adjustedToA = toA + (shiftMap.get(toA) || 0);
 
-      let endLine;
-      if (toA >= update.state.doc.length) {
-        // Handle edge case: toA exceeds document length (e.g., last character deletion)
-        endLine = startLine; // Use start line if deletion extends beyond the document
-      } else {
-        endLine = update.state.doc.lineAt(toA);
-      }
+      // Compute start and end positions in the current document
+      const startLine = currentDoc.lineAt(adjustedFromA);
+      const endLine = currentDoc.lineAt(adjustedToA);
 
+      // Create LSP change event
       lspChanges.push({
         range: {
           start: {
             line: startLine.number - 1,
-            character: fromA - startLine.from,
+            character: adjustedFromA - startLine.from,
           },
           end: {
             line: endLine.number - 1,
-            character: toA - endLine.from,
+            character: adjustedToA - endLine.from,
           },
         },
         text: inserted.toString(),
       });
-    }, true);
+
+      // Calculate position shift caused by this change
+      const lengthBefore = adjustedToA - adjustedFromA;
+      const lengthAfter = inserted.length;
+      const shift = lengthAfter - lengthBefore;
+
+      // Update cumulative shift
+      // cumulativeShift += shift;
+
+      // Update shiftMap for all future positions beyond this change
+      for (let i = adjustedToA; i <= currentDoc.length; i++) {
+        shiftMap.set(i, (shiftMap.get(i) || 0) + shift);
+      }
+
+      // Apply change to document state
+      currentDoc = currentDoc.replace(adjustedFromA, adjustedToA, inserted);
+    }, false); // Ensure sequential processing
 
     return lspChanges;
   }
+
+  // private convertChangeDescToContentChangeEvent(update: ViewUpdate): TextDocumentContentChangeEvent[] {
+  //   const lspChanges: TextDocumentContentChangeEvent[] = [];
+
+  //   update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+  //     console.log(fromA, toA, fromB, toB);
+  //     // Get start line information
+  //     const startLine = update.state.doc.lineAt(fromA);
+
+  //     let endLine;
+  //     if (toA >= update.state.doc.length) {
+  //       // Handle edge case: toA exceeds document length (e.g., last character deletion)
+  //       endLine = startLine; // Use start line if deletion extends beyond the document
+  //     } else {
+  //       endLine = update.state.doc.lineAt(toA);
+  //     }
+
+  //     lspChanges.push({
+  //       range: {
+  //         start: {
+  //           line: startLine.number - 1,
+  //           character: fromA - startLine.from,
+  //         },
+  //         end: {
+  //           line: endLine.number - 1,
+  //           character: toA - endLine.from,
+  //         },
+  //       },
+  //       text: inserted.toString(),
+  //     });
+  //   }, true);
+
+  //   return lspChanges;
+  // }
 
   private scheduleSend() {
     if (!this.defered) {

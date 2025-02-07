@@ -1,19 +1,11 @@
 import redis from "@/lib/redis";
 import { createFile, deleteFile, readFile } from "../fs";
+import { TextDocumentContentChangeEvent } from "vscode-languageserver-protocol";
 
 export interface TextDocument {
   uri: string;
   languageId: string;
   version: number;
-  text: string;
-}
-
-interface ChangeEvent {
-  range?: {
-    start: { line: number; character: number };
-    end: { line: number; character: number };
-  };
-  rangeLength?: number;
   text: string;
 }
 
@@ -31,9 +23,7 @@ export class CacheManager {
 
     const file = await readFile(this.bucket, uri);
     if (file) {
-      throw new Error(
-        "Failed to create new document because it already exists"
-      );
+      throw new Error("Failed to create new document because it already exists");
     }
 
     await createFile(this.bucket, uri);
@@ -92,25 +82,19 @@ export class CacheManager {
     console.log(`Successfully synced ${uri} to S3`);
   }
 
-  async applyChanges(
-    uri: string,
-    version: number,
-    changes: ChangeEvent[]
-  ): Promise<void> {
+  async applyChanges(uri: string, version: number, changes: TextDocumentContentChangeEvent[]): Promise<void> {
     const key = this.getCacheKey(uri);
     const cachedDoc = await this.getDocument(uri);
 
     if (version <= cachedDoc.version) {
-      throw new Error(
-        `Incoming version ${version} is older than cached version ${cachedDoc.version}`
-      );
+      throw new Error(`Incoming version ${version} is older than cached version ${cachedDoc.version}`);
     }
 
     for (const change of changes) {
-      if (!change.range) {
-        cachedDoc.text = change.text;
+      if ("range" in change) {
+        cachedDoc.text = CacheManager.applyIncrementalChange(cachedDoc.text, change);
       } else {
-        cachedDoc.text = this.applyIncrementalChange(cachedDoc.text, change);
+        cachedDoc.text = change.text;
       }
     }
 
@@ -118,24 +102,24 @@ export class CacheManager {
     await redis.set(key, JSON.stringify(cachedDoc)); // No TTL set
   }
 
-  private applyIncrementalChange(content: string, change: ChangeEvent): string {
-    if (!change.range) return change.text;
+  static applyAllIncrementalChanges(content: string, changes: TextDocumentContentChangeEvent[]): string {
+    let string = content;
+    for (const change of changes) {
+      string = CacheManager.applyIncrementalChange(string, change);
+    }
+    return string;
+  }
+
+  static applyIncrementalChange(content: string, change: TextDocumentContentChangeEvent): string {
+    if (!("range" in change)) return change.text;
     const { start, end } = change.range;
     const lines = content.split("\n");
-    const startIndex = this.getAbsoluteIndex(
-      lines,
-      start.line,
-      start.character
-    );
-    const endIndex = this.getAbsoluteIndex(lines, end.line, end.character);
+    const startIndex = CacheManager.getAbsoluteIndex(lines, start.line, start.character);
+    const endIndex = CacheManager.getAbsoluteIndex(lines, end.line, end.character);
     return content.slice(0, startIndex) + change.text + content.slice(endIndex);
   }
 
-  private getAbsoluteIndex(
-    lines: string[],
-    line: number,
-    character: number
-  ): number {
+  static getAbsoluteIndex(lines: string[], line: number, character: number): number {
     let index = 0;
     for (let i = 0; i < line; i++) {
       index += lines[i].length + 1;

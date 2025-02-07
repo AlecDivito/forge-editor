@@ -51,13 +51,13 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   const diagnostics = useNotification((state) => state.diagnostics?.[file]);
 
   const [extensions, setExtensions] = useState<Extension[]>([]);
-  const [loadedTheme, setLoadedTheme] = useState<Extension | undefined>();
 
   useEffect(() => {
     const loadExtensions = async () => {
       if (!language || !!!activeFiles?.[file]) {
         return;
       }
+
       const loadedExtensions = [];
       if (capabilities[language]) {
         loadedExtensions.push(await languageExtensions[language]());
@@ -70,32 +70,15 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
             language,
             activeFiles[file].version,
             capabilities[language],
+            theme,
           ),
         );
       }
       setExtensions(loadedExtensions);
     };
 
-    const loadTheme = async () => {
-      try {
-        if (theme === "material") {
-          const { materialDark, materialLight } = await import("@uiw/codemirror-theme-material");
-          setLoadedTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? materialDark : materialLight);
-        } else if (theme === "gruvbox") {
-          const { gruvboxDark, gruvboxLight } = await import("@uiw/codemirror-theme-gruvbox-dark");
-          setLoadedTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? gruvboxDark : gruvboxLight);
-        } else {
-          throw new Error(`Unsupported theme: ${theme}`);
-        }
-      } catch (error) {
-        console.error("Failed to load theme:", error);
-        setLoadedTheme(undefined);
-      }
-    };
-
     if (activeFiles?.[file] && file && capabilities) {
       loadExtensions();
-      loadTheme();
     }
   }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme]);
 
@@ -116,7 +99,7 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
       onCreateEditor={(editor) => setView(editor)}
       value={activeFiles[file].text || ""}
       extensions={extensions}
-      theme={loadedTheme}
+      theme={"dark"}
       height="100%"
     />
   );

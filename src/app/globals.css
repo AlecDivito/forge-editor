@@ -20,11 +20,13 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-.cm-theme {
+.cm-theme,
+.cm-theme-dark,
+.cm-theme-light {
   height: 100%;
 }
 
-.cm-theme .cm-tooltip {
+.cm-editor .cm-tooltip {
   max-width: 700px;
   max-height: 500px;
   border-radius: 12px;
@@ -33,12 +35,12 @@ body {
   overflow-wrap: break-word;
 }
 
-.cm-theme .cm-tooltip p {
+.cm-editor .cm-tooltip p {
   padding-top: 12px;
   padding-bottom: 12px;
 }
 
-.cm-theme .cm-syntax {
+.cm-editor .cm-syntax {
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
