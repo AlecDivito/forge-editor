@@ -2,15 +2,17 @@
 
 import Editor from "./editor";
 import FileViewerController from "@/components/filesystem";
-import ResizableComponent, { ResizableSides } from "./interaction/resizable";
 import { useWebSocket } from "next-ws/client";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useFileStore } from "@/store/filetree";
 import { LSP_INIT_PARAMS } from "./editor/lsp";
 import { ClientAcceptedMessage } from "@/service/lsp";
 import { useRequestStore } from "@/store/requests";
 import { useNotification } from "@/store/notification";
 import { useSendRequest } from "@/hooks/use-send-message";
+import { GridviewReact, GridviewReadyEvent, Orientation } from "dockview";
+import Terminal from "./Terminal";
+import Chat from "./chat";
 
 const VSCodeLayout = () => {
   const ws = useWebSocket();
@@ -19,10 +21,8 @@ const VSCodeLayout = () => {
   const { resolveRequest, rejectRequest, resolveNotification, rejectNotification } = useRequestStore();
   const { pushNotification } = useNotification();
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [fileViewerWidth, setFileViewerWidth] = useState(300);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [editorHeight, setEditorHeight] = useState(200);
+  // const [fileViewerWidth, setFileViewerWidth] = useState(300);
+  // const [editorHeight, setEditorHeight] = useState(200);
 
   useEffect(() => {
     if (!ws || !projectName) {
@@ -94,33 +94,59 @@ const VSCodeLayout = () => {
     pushNotification,
   ]);
 
-  const handleResize = (side: ResizableSides, size: number) => {
-    if (side === "right") {
-      setFileViewerWidth(size);
-    } else if (side === "bottom") {
-      setEditorHeight(size);
-    }
+  // const handleResize = (side: ResizableSides, size: number) => {
+  //   if (side === "right") {
+  //     setFileViewerWidth(size);
+  //   } else if (side === "bottom") {
+  //     setEditorHeight(size);
+  //   }
+  // };
+
+  const onReady = (event: GridviewReadyEvent) => {
+    event.api.addPanel({
+      id: "code",
+      component: "editor",
+      params: {},
+    });
+
+    event.api.addPanel({
+      id: "filesystem",
+      component: "filesystem",
+      params: {},
+      position: { referencePanel: "code", direction: "left" },
+    });
+
+    event.api.addPanel({
+      id: "terminal",
+      component: "terminal",
+      params: {},
+      position: { referencePanel: "code", direction: "below" },
+    });
+
+    event.api.addPanel({
+      id: "chat",
+      component: "chat",
+      params: {},
+      position: { referencePanel: "code", direction: "right" },
+    });
+  };
+
+  const components = {
+    filesystem: FileViewerController,
+    editor: Editor,
+    terminal: Terminal,
+    chat: Chat,
   };
 
   return (
     <div className="flex h-screen">
-      <ResizableComponent resizableSides={{ right: true }} className="flex-shrink-0" onResize={handleResize}>
+      <GridviewReact components={components} onReady={onReady} orientation={Orientation.VERTICAL} />
+
+      {/* <ResizableComponent resizableSides={{ right: true }} className="flex-shrink-0" onResize={handleResize}>
         <FileViewerController />
       </ResizableComponent>
 
-      <div className="flex flex-col flex-1">
-        {/* <div className="flex-grow border border-red-500"></div> */}
-        <Editor />
-      </div>
-      {/*
-        <ResizableComponent
-          resizableSides={{ top: true }}
-          className="flex-shrink-0"
-          onResize={(size) => handleResize("bottom", size)}
-        >
-          <DynamicTerminal />
-        </ResizableComponent>
-      </div> */}
+      <Editor /> */}
     </div>
   );
 };

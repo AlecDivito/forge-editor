@@ -17,6 +17,21 @@ export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   rootUri: `file:///${base}`,
   capabilities: {
     textDocument: {
+      // codeAction: {
+      //   dynamicRegistration: true, // lol, i propbably don't
+      //   codeActionLiteralSupport: {
+      //     codeActionKind: {
+      //       // valueSet:
+      //     },
+      //   },
+      //   isPreferredSupport: true, // Seems easy enough
+      //   disabledSupport: true, // Seems easy enough
+      //   dataSupport: false, // uhhmm, maybe not for now. We should support the older configuration first
+      //   resolveSupport: {
+      //     properties: [], // What values do i put here?
+      //   },
+      //   honorsChangeAnnotations: false, // Not sure if i want to sign up for this yet.
+      // },
       publishDiagnostics: {
         relatedInformation: true,
         versionSupport: true,
@@ -35,13 +50,14 @@ export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
         willSaveWaitUntil: false, // definitively false
       },
       completion: {
+        // This seems to just be basic support, I think there is a fancier one avaliable
         dynamicRegistration: true,
         completionItem: {
           snippetSupport: true,
           commitCharactersSupport: true,
           documentationFormat: ["plaintext", "markdown"],
           deprecatedSupport: true, // I want to support this, how can i?
-          preselectSupport: false, // What is this
+          preselectSupport: true, // What is this
         },
         contextSupport: true, // Whats the additional context?
       },

@@ -1,8 +1,14 @@
 "use client";
 
+import { IGridviewPanelProps } from "dockview";
+import { FC } from "react";
 import { useXTerm } from "react-xtermjs";
 
-const Terminal = () => {
+interface TerminalParams {
+  name: string;
+}
+
+const Terminal: FC<IGridviewPanelProps<TerminalParams>> = () => {
   const { instance, ref } = useXTerm();
   instance?.writeln("Hello from react-xtermjs!");
   instance?.onData((data) => instance?.write(data));

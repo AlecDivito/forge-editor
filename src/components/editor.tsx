@@ -2,17 +2,10 @@
 
 import { FC, useEffect, useState } from "react";
 import { useFileStore } from "@/store/filetree";
-import {
-  DockviewApi,
-  DockviewDidDropEvent,
-  DockviewReact,
-  // IDockviewGroupPanel,
-  IDockviewPanel,
-} from "dockview";
+import { DockviewApi, DockviewDidDropEvent, DockviewReact, IDockviewPanel, IGridviewPanelProps } from "dockview";
 import EditorView from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
-import { useNotification } from "@/store/notification";
 import { useSendNotification } from "@/hooks/use-send-notification";
 
 interface Props {
@@ -20,9 +13,8 @@ interface Props {
   onThemeLoadError?: (error: Error) => void;
 }
 
-const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
-  const { base, activeFiles, capabilities } = useFileStore((state) => state);
-  const { notifications } = useNotification();
+const Editor: FC<IGridviewPanelProps<Props>> = ({ theme = "gruvbox" }) => {
+  const { base, activeFiles } = useFileStore((state) => state);
   const sendNotification = useSendNotification();
   const [view, setView] = useState<DockviewApi | null>(null);
   // const [activeGroup, setActiveGroup] = useState<IDockviewGroupPanel[]>([]);
@@ -118,22 +110,15 @@ const Editor: FC<Props> = ({ theme = "gruvbox" }) => {
   };
 
   return (
-    <>
-      <div className="flex-grow border border-red-500">
-        <DockviewReact
-          onReady={(view) => setView(view.api)}
-          components={components}
-          tabComponents={tabComponents}
-          onDidDrop={onDidDrop}
-          className={"dockview-theme-abyss"}
-        />
-      </div>
-      {/* <div className="w-full">
-        <pre>Active: {JSON.stringify(activeFiles, null, 2)}</pre>
-        <pre>Capabilities: {JSON.stringify(capabilities, null, 2)}</pre>
-        <pre>Notifications: {JSON.stringify(notifications, null, 2)}</pre>
-      </div> */}
-    </>
+    <div className="flex-grow border border-red-500">
+      <DockviewReact
+        onReady={(view) => setView(view.api)}
+        components={components}
+        tabComponents={tabComponents}
+        onDidDrop={onDidDrop}
+        className={"dockview-theme-abyss"}
+      />
+    </div>
   );
 };
 

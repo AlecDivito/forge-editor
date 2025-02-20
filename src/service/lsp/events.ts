@@ -1,4 +1,7 @@
 import {
+  CodeAction,
+  CodeActionParams,
+  Command,
   CompletionItem,
   CompletionList,
   CompletionParams,
@@ -165,7 +168,7 @@ export class LspEventHandler {
     }
   }
 
-  async textDcoumentSignatureHelp(params: SignatureHelpParams): Promise<{ result: SignatureHelp | null }> {
+  async textDocumentSignatureHelp(params: SignatureHelpParams): Promise<{ result: SignatureHelp | null }> {
     try {
       const result = await this.proxy.sendRequest({
         method: "textDocument/signatureHelp",
@@ -180,6 +183,25 @@ export class LspEventHandler {
       return { ...result } as { result: SignatureHelp | null };
     } catch (error) {
       console.error(`Failed to complete hover event ${params}:`, error);
+      throw error;
+    }
+  }
+
+  async textDocumentCodeAction(params: CodeActionParams): Promise<{ result: (Command | CodeAction)[] | null }> {
+    try {
+      const result = await this.proxy.sendRequest({
+        method: "textDocument/codeAction",
+        params,
+      });
+
+      if (!result) {
+        throw new Error("Failed to create document symbol request");
+      }
+
+      // console.log(JSON.stringify(result, null, 2));
+      return { ...result } as { result: (Command | CodeAction)[] | null };
+    } catch (error) {
+      console.error(`Code Action is not supported ${params}:`, error);
       throw error;
     }
   }

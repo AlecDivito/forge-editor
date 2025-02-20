@@ -83,6 +83,35 @@ export async function SOCKET(
         return;
       }
 
+      // I think the easiest solution for now would be to handle the generic requests here
+      // and do the language specific requests later on in the program. In the future we
+      // should try and create a strategy pattern that does this.
+      if (type === "client-to-server-request" && message.method === "workspace/workspaceFolders") {
+        await manager.sendMessageToAll(message);
+        requestClient.sendSuccessConfirmation();
+        return;
+      } else if (type === "client-to-server-notification" && message.method === "workspace/didChangeWatchedFiles") {
+        for (const change of message.params.changes) {
+          if (change.type === 1) {
+            const uri = change.uri.replace("file:///", "");
+            await cacheManager.createDocument(uri);
+            requestClient.sendNotification({
+              method: "proxy/textDocument/created",
+              params: { uri: change.uri },
+            });
+          } else if (change.type === 3) {
+            throw new Error("Deleting documents is currently not not supported");
+            // await cacheManager.deleteDocument(change.uri)
+          }
+        }
+        requestClient.sendSuccessConfirmation();
+        return;
+      }
+
+      // hmm, clients is based on the language, but some calls don't
+      // care about the language right, such as workspace calls will
+      // just be sent to all of the
+
       // The manager and the client exists. Now we do a check to make sure the
       // language server is prepared to take updates.
       const lang = ctx.language as FileExtension;
@@ -102,25 +131,14 @@ export async function SOCKET(
           const result = await eventHandler.textDocumentHover(message.params);
           requestClient.sendResponse({ method: message.method, ...result });
         } else if (message.method === "textDocument/signatureHelp") {
-          const result = await eventHandler.textDcoumentSignatureHelp(message.params);
+          const result = await eventHandler.textDocumentSignatureHelp(message.params);
           requestClient.sendResponse({ method: message.method, ...result });
-        } else if (message.method === "workspace/workspaceFolders") {
-          await manager.sendMessageToAll(message);
-          requestClient.sendSuccessConfirmation();
+        } else if (message.method === "textDocument/codeAction") {
+          const result = await eventHandler.textDocumentCodeAction(message.params);
+          requestClient.sendResponse({ method: message.method, ...result });
         }
       } else if (type === "client-to-server-notification") {
-        if (message.method === "workspace/didChangeWatchedFiles") {
-          for (const change of message.params.changes) {
-            if (change.type === 1) {
-              const uri = change.uri.replace("file:///", "");
-              await cacheManager.createDocument(uri);
-            } else if (change.type === 3) {
-              throw new Error("Deleting documents is currently not not supported");
-              // await cacheManager.deleteDocument(change.uri)
-            }
-          }
-          requestClient.sendSuccessConfirmation();
-        } else if (message.method === "textDocument/didOpen") {
+        if (message.method === "textDocument/didOpen") {
           const params = await eventHandler.textDocumentDidOpen(message.params);
           requestClient.sendSuccessConfirmation();
           requestClient.sendNotification({ method: "proxy/textDocument/open", params });

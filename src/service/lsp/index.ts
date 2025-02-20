@@ -1,5 +1,7 @@
 import {
+  CodeAction,
   CodeActionParams,
+  Command,
   CompletionItem,
   CompletionList,
   CompletionParams,
@@ -63,6 +65,7 @@ export type ServerLspNotification =
   // The following are custom messages that a client editor should implement if
   // they want to be able to use the proxy as the source of truth
   | { method: "proxy/initialize"; language: string; params: InitializeResult }
+  | { method: "proxy/textDocument/created"; params: { uri: string } }
   | { method: "proxy/textDocument/open"; params: DidOpenTextDocumentParams }
   | { method: "proxy/textDocument/close"; params: DidCloseTextDocumentParams }
   | { method: "proxy/textDocument/changed"; params: DidChangeWatchedFilesParams };
@@ -77,7 +80,7 @@ export type Context = {
 export type ServerAcceptedMessage = { id: ID; ctx: Context } & (
   | { type: "client-to-server-notification"; message: ClientLspNotification }
   | { type: "client-to-server-request"; message: ClientLspRequest }
-  | { type: "client-to-server-response"; message: unknown }
+  | { type: "client-to-server-response"; message: { method: "unknown"; params: unknown } }
 );
 
 export type ClientAcceptedMessage = { id: ID; ctx: Context } & (
@@ -97,7 +100,8 @@ export type SuccessfulServerLspResponse =
   | { method: "textDocument/completion"; result: CompletionItem[] | CompletionList | null }
   | { method: "initialize"; result: InitializeResult }
   | { method: "textDocument/hover"; result: Hover | null }
-  | { method: "textDocument/signatureHelp"; result: SignatureHelp | null };
+  | { method: "textDocument/signatureHelp"; result: SignatureHelp | null }
+  | { method: "textDocument/codeAction"; result: (Command | CodeAction)[] | null };
 
 export type ClientLspResponse = { error: LspError } | SuccessfulServerLspResponse;
 

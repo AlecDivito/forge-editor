@@ -7,8 +7,11 @@ import { FC, useState } from "react";
 import ToolBar from "./fileTree/ToolBar";
 import FsTree from "./fileTree/Tree";
 import CreateFileForm, { FileName } from "./fileTree/TreeForm";
+import { IGridviewPanelProps } from "dockview";
 
-const FileViewerController: FC = ({}) => {
+type Props = Record<string, string>;
+
+const FileViewerController: FC<IGridviewPanelProps<Props>> = ({}) => {
   const { tree, base, activeFiles, openFile } = useFileStore(); // Subscribe to changes in files
   const notificationSender = useSendNotification();
   const requestSender = useSendRequest();
