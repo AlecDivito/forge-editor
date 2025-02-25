@@ -13,16 +13,17 @@ import { useSendRequest } from "@/hooks/use-send-message";
 import { GridviewReact, GridviewReadyEvent, Orientation } from "dockview";
 import Terminal from "./Terminal";
 import Chat from "./chat";
+import { useEditorStore } from "@/store/editor";
+import { useLspStore } from "@/store/lsp";
 
 const VSCodeLayout = () => {
   const ws = useWebSocket();
   const sender = useSendRequest();
-  const { base: projectName, handleNotification } = useFileStore();
+  const { handleNotification: handleFileTreeNotification, base: projectName } = useFileStore();
+  const { handleNotification: handleEditorNotification } = useEditorStore();
+  const { handleNotification: handleLspNotification } = useLspStore();
+  const { handleNotification: handlePushNotification } = useNotification();
   const { resolveRequest, rejectRequest, resolveNotification, rejectNotification } = useRequestStore();
-  const { pushNotification } = useNotification();
-
-  // const [fileViewerWidth, setFileViewerWidth] = useState(300);
-  // const [editorHeight, setEditorHeight] = useState(200);
 
   useEffect(() => {
     if (!ws || !projectName) {
@@ -58,8 +59,10 @@ const VSCodeLayout = () => {
           resolveRequest(response.id, response.message);
         }
       } else if (response.type === "server-to-client-notification") {
-        handleNotification(response.message);
-        pushNotification(response.message);
+        handleFileTreeNotification(response.message);
+        handleEditorNotification(response.message);
+        handleLspNotification(response.message);
+        handlePushNotification(response.message);
       } else if (response.type === "server-to-client-request") {
         throw new Error("server-to-client-request on the client side editor hasn't been implemented yet.");
       } else {
@@ -86,21 +89,15 @@ const VSCodeLayout = () => {
     };
   }, [
     ws,
-    handleNotification,
     resolveRequest,
     rejectRequest,
     resolveNotification,
     rejectNotification,
-    pushNotification,
+    handleFileTreeNotification,
+    handleEditorNotification,
+    handleLspNotification,
+    handlePushNotification,
   ]);
-
-  // const handleResize = (side: ResizableSides, size: number) => {
-  //   if (side === "right") {
-  //     setFileViewerWidth(size);
-  //   } else if (side === "bottom") {
-  //     setEditorHeight(size);
-  //   }
-  // };
 
   const onReady = (event: GridviewReadyEvent) => {
     event.api.addPanel({
@@ -117,17 +114,17 @@ const VSCodeLayout = () => {
     });
 
     event.api.addPanel({
-      id: "terminal",
-      component: "terminal",
-      params: {},
-      position: { referencePanel: "code", direction: "below" },
-    });
-
-    event.api.addPanel({
       id: "chat",
       component: "chat",
       params: {},
       position: { referencePanel: "code", direction: "right" },
+    });
+
+    event.api.addPanel({
+      id: "terminal",
+      component: "terminal",
+      params: {},
+      position: { referencePanel: "code", direction: "below" },
     });
   };
 
@@ -141,12 +138,6 @@ const VSCodeLayout = () => {
   return (
     <div className="flex h-screen">
       <GridviewReact components={components} onReady={onReady} orientation={Orientation.VERTICAL} />
-
-      {/* <ResizableComponent resizableSides={{ right: true }} className="flex-shrink-0" onResize={handleResize}>
-        <FileViewerController />
-      </ResizableComponent>
-
-      <Editor /> */}
     </div>
   );
 };

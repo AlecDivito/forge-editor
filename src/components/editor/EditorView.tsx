@@ -1,7 +1,6 @@
 import { useSendRequest } from "@/hooks/use-send-message";
 import { useSendNotification } from "@/hooks/use-send-notification";
 import { FileExtension } from "@/service/lsp/proxy";
-import { useFileStore } from "@/store/filetree";
 import { IDockviewPanelProps } from "dockview";
 import dynamic from "next/dynamic";
 import { FC, useEffect, useState } from "react";
@@ -11,6 +10,8 @@ import { useNotification } from "@/store/notification";
 import { lintDiagnosticEffect } from "./lsp/linter";
 import { convertLspDiagnosticsToCodemirror } from "@/utils/diagnosticConverter";
 import { EditorView as CodeMirrorView, Extension } from "@uiw/react-codemirror";
+import { useLspStore } from "@/store/lsp";
+import { useEditorStore } from "@/store/editor";
 
 const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
@@ -43,11 +44,12 @@ const getFileExtension = (filename: string): FileExtension | undefined => {
 
 const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   const { file, theme } = params;
+  const { capabilities } = useLspStore();
+  const { activeFiles } = useEditorStore();
   const [view, setView] = useState<CodeMirrorView | undefined>();
   const language = getFileExtension(file);
   const sendRequest = useSendRequest(language);
   const sendNotification = useSendNotification(language);
-  const { capabilities, activeFiles } = useFileStore();
   const diagnostics = useNotification((state) => state.diagnostics?.[file]);
 
   const [extensions, setExtensions] = useState<Extension[]>([]);

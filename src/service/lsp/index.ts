@@ -65,10 +65,10 @@ export type ServerLspNotification =
   // The following are custom messages that a client editor should implement if
   // they want to be able to use the proxy as the source of truth
   | { method: "proxy/initialize"; language: string; params: InitializeResult }
-  | { method: "proxy/textDocument/created"; params: { uri: string } }
-  | { method: "proxy/textDocument/open"; params: DidOpenTextDocumentParams }
-  | { method: "proxy/textDocument/close"; params: DidCloseTextDocumentParams }
-  | { method: "proxy/textDocument/changed"; params: DidChangeWatchedFilesParams };
+  | { method: "proxy/filesystem/created"; params: { uri: string } }
+  | { method: "proxy/filesystem/open"; params: DidOpenTextDocumentParams }
+  | { method: "proxy/filesystem/close"; params: DidCloseTextDocumentParams }
+  | { method: "proxy/filesystem/changed"; params: DidChangeWatchedFilesParams };
 
 export type ID = string | number;
 
@@ -216,6 +216,9 @@ export type ClientLspRequest =
       method: "textDocument/signatureHelp";
       params: SignatureHelpParams;
     };
+// | {
+//   method: "proxy/git/"
+// };
 
 export function getLsp(language?: string): {
   cmd: string;

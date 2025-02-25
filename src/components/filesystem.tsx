@@ -8,14 +8,23 @@ import ToolBar from "./fileTree/ToolBar";
 import FsTree from "./fileTree/Tree";
 import CreateFileForm, { FileName } from "./fileTree/TreeForm";
 import { IGridviewPanelProps } from "dockview";
+import { useKeyboard } from "react-pre-hooks";
+import { useEditorStore } from "@/store/editor";
 
 type Props = Record<string, string>;
 
-const FileViewerController: FC<IGridviewPanelProps<Props>> = ({}) => {
-  const { tree, base, activeFiles, openFile } = useFileStore(); // Subscribe to changes in files
+const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
+  const { fileTree, base } = useFileStore();
+  const { openFile } = useEditorStore();
   const notificationSender = useSendNotification();
   const requestSender = useSendRequest();
   const [createFile, setCreateFile] = useState(false);
+
+  useKeyboard({
+    keys: {
+      "meta+b": () => props.api.setVisible(!props.api.isVisible),
+    },
+  });
 
   const handleCreateFile = async (body: FileName) => {
     // We need to use an LSP event here for creating a file. Even if we don't tell
@@ -38,20 +47,6 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = ({}) => {
     openFile(`${base}/${path}`);
   };
 
-  const onDebug = () => {
-    requestSender(
-      {
-        method: "textDocument/documentSymbol",
-        params: {
-          textDocument: {
-            uri: `file:///${Object.keys(activeFiles)[0]}`,
-          },
-        },
-      },
-      Object.keys(activeFiles)[0].split(".").pop(),
-    );
-  };
-
   const onTest = () => {
     requestSender({
       method: "workspace/workspaceFolders",
@@ -63,9 +58,13 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = ({}) => {
 
   return (
     <div className="h-full flex flex-col">
-      <ToolBar onCreateFile={() => setCreateFile((prev) => !prev)} onDebug={onDebug} onTest={onTest} />
+      <ToolBar
+        onCreateFile={() => setCreateFile((prev) => !prev)}
+        onDebug={() => console.log("debug")}
+        onTest={onTest}
+      />
       {createFile && <CreateFileForm onCreate={handleCreateFile} />}
-      <FsTree files={tree} onSelect={loadAndOpenFile} />
+      <FsTree files={fileTree?.children} onSelect={loadAndOpenFile} />
     </div>
   );
 };

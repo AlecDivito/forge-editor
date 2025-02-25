@@ -1,23 +1,22 @@
 "use client";
 
 import { FC, useEffect, useState } from "react";
-import { useFileStore } from "@/store/filetree";
 import { DockviewApi, DockviewDidDropEvent, DockviewReact, IDockviewPanel, IGridviewPanelProps } from "dockview";
 import EditorView from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
 import { useSendNotification } from "@/hooks/use-send-notification";
+import { useEditorStore } from "@/store/editor";
 
 interface Props {
   theme?: "material" | "gruvbox";
   onThemeLoadError?: (error: Error) => void;
 }
 
-const Editor: FC<IGridviewPanelProps<Props>> = ({ theme = "gruvbox" }) => {
-  const { base, activeFiles } = useFileStore((state) => state);
+const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } }) => {
+  const { activeFiles } = useEditorStore((state) => state);
   const sendNotification = useSendNotification();
   const [view, setView] = useState<DockviewApi | null>(null);
-  // const [activeGroup, setActiveGroup] = useState<IDockviewGroupPanel[]>([]);
   const [panels, setPanels] = useState<IDockviewPanel[]>([]);
 
   useEffect(() => {
@@ -74,7 +73,7 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ theme = "gruvbox" }) => {
         disposable.dispose();
       };
     }
-  }, [view, base, sendNotification]);
+  }, [view, sendNotification]);
 
   useEffect(() => {
     if (view && activeFiles) {
@@ -110,15 +109,13 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ theme = "gruvbox" }) => {
   };
 
   return (
-    <div className="flex-grow border border-red-500">
-      <DockviewReact
-        onReady={(view) => setView(view.api)}
-        components={components}
-        tabComponents={tabComponents}
-        onDidDrop={onDidDrop}
-        className={"dockview-theme-abyss"}
-      />
-    </div>
+    <DockviewReact
+      onReady={(view) => setView(view.api)}
+      components={components}
+      tabComponents={tabComponents}
+      onDidDrop={onDidDrop}
+      className={"dockview-theme-abyss"}
+    />
   );
 };
 

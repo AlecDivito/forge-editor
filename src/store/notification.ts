@@ -11,14 +11,14 @@ export interface NotificationState {
   notifications: Notification[];
   diagnostics: { [key: string]: Diagnostic[] };
 
-  pushNotification: (message: ServerLspNotification) => void;
+  handleNotification: (message: ServerLspNotification) => void;
 }
 
 export const useNotification = create<NotificationState>((set) => ({
   notifications: [],
   diagnostics: {},
 
-  pushNotification: (message: ServerLspNotification) => {
+  handleNotification: (message: ServerLspNotification) => {
     return set((state) => ({
       notifications: ["window/logMessage", "$/logTrace"].includes(message.method)
         ? [...state.notifications, { createdAt: new Date(Date.now()), message }]
