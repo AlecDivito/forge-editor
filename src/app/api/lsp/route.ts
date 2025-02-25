@@ -7,6 +7,10 @@ import { CacheManager } from "@/service/lsp/cache";
 import { LspEventHandler } from "@/service/lsp/events";
 import WebSocketClient, { ProxyErrorObject } from "@/service/lsp/websocket";
 import { LspError, ServerAcceptedMessage } from "@/service/lsp";
+import watchman from "fb-watchman";
+import { FileChangeType } from "vscode-languageserver-protocol";
+import { DirectoryEntry } from "@/lib/storage";
+import { NoopLspClient } from "@/service/lsp/proxy/noop";
 
 export async function SOCKET(
   client: WebSocket,
@@ -18,6 +22,7 @@ export async function SOCKET(
   console.log("New LSP WebSocket connection.");
   let cacheManager: CacheManager | undefined = undefined;
   let manager: LspProxyManager | undefined = undefined;
+  let watchmanClient: watchman.Client | undefined = undefined;
   // TODO: Alec the project name must be validated before it's used because it
   // will be used in the directory name. We should only allow for english characters.
 
@@ -34,6 +39,13 @@ export async function SOCKET(
       await cacheManager.syncAllToS3();
       console.log("- All files synced to S3.");
     }
+
+    if (watchmanClient) {
+      console.log("- Shutting down watchman");
+      watchmanClient.removeAllListeners("subscription");
+      watchmanClient.end();
+      console.log("- Successfully shutdown watchman");
+    }
     console.log("Connection cleaned up successfully");
   });
 
@@ -41,7 +53,7 @@ export async function SOCKET(
     try {
       const requestClient = new WebSocketClient(client);
       const wsRequest = JSON.parse(body.toString()) as ServerAcceptedMessage;
-      // console.log(JSON.stringify(wsRequest, null, 2));
+      console.log(JSON.stringify(wsRequest, null, 2));
       const { type, id, ctx, message } = wsRequest;
 
       if (!["client-to-server-notification", "client-to-server-request", "client-to-server-response"].includes(type)) {
@@ -55,6 +67,108 @@ export async function SOCKET(
       if (type === "client-to-server-request" && message.method === "initialize") {
         if (!cacheManager) {
           cacheManager = new CacheManager(process.env.S3_BUCKET!, ctx.workspace);
+        }
+        if (!watchmanClient) {
+          watchmanClient = new watchman.Client();
+          if (watchmanClient) {
+            const root = process.env.ROOT_PROJECT_DIRECTORY as string;
+            // TODO(Alec): Hard coding for now to prove a point
+            const watchPath = `${root}/test/test`;
+            watchmanClient.capabilityCheck(
+              {
+                optional: [],
+                required: ["relative_root"],
+              },
+              (capError, capResp) => {
+                if (capError) {
+                  console.error("Error checking capabilities:", capError);
+                  watchmanClient!.end();
+                  return;
+                }
+
+                console.log("Watchman capabilities:", capResp);
+
+                // 2) Initiate watch on the target directory
+                watchmanClient!.command(["watch-project", watchPath], (watchError, watchResp) => {
+                  if (watchError) {
+                    console.error("Error initiating watch:", watchError);
+                    watchmanClient!.end();
+                    return;
+                  }
+
+                  // watchResp.watch = the path being watched
+                  // watchResp.relative_path = relative path if a watch-project re-mapped
+                  const { watch, relative_path } = watchResp;
+                  console.log(`Watching ${watch} (relative path: ${relative_path || ""})`);
+
+                  // 3) Set up a subscription
+                  //    We'll subscribe to any change (files being created, modified, etc.)
+                  const sub = {
+                    expression: [
+                      "anyof",
+                      ["type", "f"], // Files
+                      ["type", "d"], // Directories
+                    ],
+                    relative_root: relative_path,
+                    fields: ["name", "exists", "type", "size"],
+                  };
+
+                  watchmanClient!.command(
+                    ["subscribe", watch, "mysubscription", sub],
+                    (subscribeError, subscribeResp) => {
+                      if (subscribeError) {
+                        console.error("Failed to subscribe:", subscribeError);
+                        watchmanClient!.end();
+                        return;
+                      }
+                      console.log("Subscription established:", Object.keys(subscribeResp));
+                    },
+                  );
+                });
+              },
+            );
+
+            // 4) Handle subscription events (Watchman sends them to the client)
+            watchmanClient.on("subscription", (resp) => {
+              // Only handle the subscription we named "mysubscription"
+              if (resp.subscription !== "mysubscription") {
+                return;
+              }
+
+              // resp.files contains an array of changed files
+              const changes: (DirectoryEntry & { type: FileChangeType })[] = resp.files.map((file) => {
+                const { name, exists, size, type } = file;
+
+                let fileTy: "f" | "d";
+                let changeTy = FileChangeType.Changed;
+                const path = `/${name}`;
+                if (type === "f") {
+                  fileTy = "f";
+                } else if (type === "d") {
+                  fileTy = "d";
+                } else {
+                  return undefined;
+                }
+
+                if (!exists) {
+                  changeTy = FileChangeType.Deleted;
+                } else if (size === 0) {
+                  changeTy = FileChangeType.Created;
+                } else {
+                  changeTy = FileChangeType.Created;
+                }
+
+                return { path, name, ty: fileTy, type: changeTy } as DirectoryEntry & {
+                  type: FileChangeType;
+                };
+              });
+
+              requestClient.sendNotification({
+                method: "proxy/filesystem/changed",
+                params: { changes },
+              });
+            });
+          }
         }
         if (!manager) {
           console.log("Received initialize request. Creating LSP manager for client.");
@@ -96,7 +210,7 @@ export async function SOCKET(
             const uri = change.uri.replace("file:///", "");
             await cacheManager.createDocument(uri);
             requestClient.sendNotification({
-              method: "proxy/textDocument/created",
+              method: "proxy/filesystem/created",
               params: { uri: change.uri },
             });
           } else if (change.type === 3) {
@@ -141,7 +255,7 @@ export async function SOCKET(
         if (message.method === "textDocument/didOpen") {
           const params = await eventHandler.textDocumentDidOpen(message.params);
           requestClient.sendSuccessConfirmation();
-          requestClient.sendNotification({ method: "proxy/textDocument/open", params });
+          requestClient.sendNotification({ method: "proxy/filesystem/open", params });
         } else if (message.method === "textDocument/didClose") {
           await eventHandler.textDocumentDidClose(message.params);
           requestClient.sendSuccessConfirmation();

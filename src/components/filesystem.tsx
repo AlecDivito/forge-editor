@@ -44,7 +44,7 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
   };
 
   const loadAndOpenFile = (path: string) => {
-    openFile(`${base}/${path}`);
+    openFile(`${base}${path}`);
   };
 
   const onTest = () => {

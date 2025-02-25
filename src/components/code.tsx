@@ -45,7 +45,7 @@ const VSCodeLayout = () => {
   useEffect(() => {
     const handleMessage = (event: { data: string }) => {
       const response = JSON.parse(event.data) as ClientAcceptedMessage;
-      // console.log(response);
+      console.log(response);
       if (response.type === "server-to-client-confirmation") {
         if (response.message.result) {
           resolveNotification(response.id);
@@ -113,12 +113,13 @@ const VSCodeLayout = () => {
       position: { referencePanel: "code", direction: "left" },
     });
 
-    event.api.addPanel({
+    const chat = event.api.addPanel({
       id: "chat",
       component: "chat",
       params: {},
       position: { referencePanel: "code", direction: "right" },
     });
+    chat.api.setVisible(false);
 
     event.api.addPanel({
       id: "terminal",

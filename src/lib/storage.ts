@@ -36,6 +36,7 @@ export class FileSystemProvider {
     }
 
     const directories = await this.list(directoryPath);
+    console.log(JSON.stringify(directories));
     return directories;
   }
 
@@ -58,30 +59,26 @@ export class FileSystemProvider {
     }
 
     // Read the directory asynchronously
-    const dirEntries = await readdir(normalizedPath, { withFileTypes: true });
+    const dirEntries = await readdir(normalizedPath, { withFileTypes: true, recursive: true });
 
     // Gather file stats for each entry
     const result: DirectoryEntry[] = (
       await Promise.all(
-        dirEntries.map(async (entry) => {
-          const entryPath = join(normalizedPath, entry.name);
-          const stats = await stat(entryPath);
-          let ty;
-          if (stats.isFile()) {
-            ty = "f";
-          } else if (stats.isSymbolicLink()) {
-            ty = "d";
-            // } else if (stats.isSymbolicLink()) {
-            //   ty = "s";
-          } else {
+        dirEntries.map(async (entry): Promise<DirectoryEntry | undefined> => {
+          try {
+            if (entry.isFile()) {
+              const path = join(entry.parentPath, entry.name).replace(this.absoluteRoot, "");
+              return { ty: "f", name: entry.name, path };
+            } else if (entry.isDirectory()) {
+              const path = join(entry.parentPath, entry.name).replace(this.absoluteRoot, "");
+              return { ty: "d", name: entry.name, path };
+            } else {
+              return undefined;
+            }
+          } catch (error) {
+            console.warn(`[WARN]: ${error}`);
             return undefined;
           }
-
-          return {
-            ty,
-            name: entry.name,
-            path: entryPath.replace(this.absoluteRoot, "/"),
-          } as DirectoryEntry;
         }),
       )
     ).filter((o) => o !== undefined);

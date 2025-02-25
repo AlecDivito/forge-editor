@@ -1,6 +1,8 @@
 import { DirectoryEntry } from "@/lib/storage";
+import { FileChangeType, FileEvent } from "vscode-languageserver-protocol";
 
 export type FileNode = {
+  id: string;
   path: string; // Full path of the file/directory
   name: string;
   type: "f" | "d";
@@ -11,7 +13,7 @@ export type FileNode = {
  * Converts a flat list of FileItems into a hierarchical tree structure.
  */
 export function buildFileTree(fileList: DirectoryEntry[]): FileNode {
-  const root: FileNode = { path: "/", name: "/", type: "d", children: [] };
+  const root: FileNode = { id: "/", path: "/", name: "/", type: "d", children: [] };
   const nodeMap = new Map<string, FileNode>([["", root]]);
 
   const directories = fileList.filter((f) => f.ty === "d");
@@ -29,7 +31,7 @@ export function buildFileTree(fileList: DirectoryEntry[]): FileNode {
       continue;
     }
 
-    const newNode: FileNode = { path: file.path, name: file.name, type: file.ty };
+    const newNode: FileNode = { id: file.path, path: file.path, name: file.name, type: file.ty };
     if (file.ty === "d") newNode.children = [];
 
     parent.children = parent.children || [];
@@ -70,7 +72,7 @@ export function addFileToTree(root: FileNode, newFile: DirectoryEntry | Director
     return;
   }
 
-  const newNode: FileNode = { path: newFile.path, name: newFile.name, type: newFile.ty };
+  const newNode: FileNode = { id: newFile.path, path: newFile.path, name: newFile.name, type: newFile.ty };
   if (newFile.ty === "d") newNode.children = [];
 
   parentNode.children.push(newNode);

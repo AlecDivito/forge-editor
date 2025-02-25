@@ -7,6 +7,7 @@ import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
 import { useSendNotification } from "@/hooks/use-send-notification";
 import { useEditorStore } from "@/store/editor";
+import DebugView from "./editor/DebugView";
 
 interface Props {
   theme?: "material" | "gruvbox";
@@ -98,6 +99,7 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
   const components = {
     default: DefaultView,
     editor: EditorView,
+    debug: DebugView,
   };
 
   const tabComponents = {
@@ -110,7 +112,13 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
 
   return (
     <DockviewReact
-      onReady={(view) => setView(view.api)}
+      onReady={(view) => {
+        view.api.addPanel({
+          id: "debug",
+          component: "debug",
+        });
+        setView(view.api);
+      }}
       components={components}
       tabComponents={tabComponents}
       onDidDrop={onDidDrop}

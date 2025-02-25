@@ -1,3 +1,5 @@
+"use client";
+
 import "@xterm/xterm/css/xterm.css";
 
 import * as React from "react";

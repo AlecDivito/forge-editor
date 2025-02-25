@@ -17,24 +17,24 @@ export const useEditorStore = create<EditorState>((set) => ({
   handleNotification: (message: ServerLspNotification) => {
     if (message.method === "proxy/filesystem/created") {
       return set((state) => {
-        const path = message.params.uri.replace("file:///", "");
+        const path = message.params.uri.replace("file://", "").replace("test/test", "");
         const item = { uri: path, languageId: "", version: 0, text: "" };
         return { activeFiles: { ...state.activeFiles, [path]: item } };
       });
     }
     if (message.method === "proxy/filesystem/open") {
-      const path = message.params.textDocument.uri.replace("file:///", "");
+      const path = message.params.textDocument.uri.replace("file://", "");
       message.params.textDocument.uri = path;
       set((state) => {
-        if (state.activeFiles?.[path] !== null) {
-          return {};
+        if (state.activeFiles?.[message.params.textDocument.languageId] !== null) {
+          return { ...state.activeFiles };
         }
         return {
-          activeFiles: { ...state.activeFiles, [path]: message.params.textDocument },
+          activeFiles: { ...state.activeFiles, [message.params.textDocument.languageId]: message.params.textDocument },
         };
       });
     } else if (message.method === "proxy/filesystem/close") {
-      const path = message.params.textDocument.uri.replace("file:///", "");
+      const path = message.params.textDocument.uri.replace("file://", "");
       set((state) => {
         const updatedFiles = { ...state.activeFiles };
         delete updatedFiles[path];

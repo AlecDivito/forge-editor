@@ -2,7 +2,7 @@
 
 import { DirectoryEntry } from "@/lib/storage";
 import { ServerLspNotification } from "@/service/lsp";
-import { addFileToTree, buildFileTree, FileNode } from "@/utils/filetree";
+import { addFileToTree, buildFileTree, FileNode, removeFileFromTree } from "@/utils/filetree";
 import { create } from "zustand";
 
 export interface FileTreeState {
@@ -23,6 +23,7 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
 
   // Initializes the tree structure based on the folder data
   initialize: (user: string, project: string, files: DirectoryEntry[]) => {
+    console.log(files);
     set({ user, project, base: `${user}/${project}`, fileTree: buildFileTree(files) });
   },
 
@@ -38,14 +39,16 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
       addFileToTree(fileTree, file);
       return set({ fileTree });
     } else if (message.method === "proxy/filesystem/changed") {
-      // let updatedTree = { ...fileTree }; // Create a copy of the current tree
-      // for (const change of message.params.changes) {
-      //   if (change.type === 1) {
-      //     updatedTree = addFileToTree(change.uri, updatedTree, base);
-      //   } else if (change.type === 3) {
-      //     updatedTree = removeFileFromTree(change.uri, updatedTree);
-      //   }
-      // }
+      const updatedTree = { ...fileTree }; // Create a copy of the current tree
+      console.log(updatedTree);
+      for (const change of message.params.changes) {
+        console.log(change);
+        if (change.type === 1) {
+          addFileToTree(updatedTree, change);
+        } else if (change.type === 3) {
+          removeFileFromTree(updatedTree, change.path);
+        }
+      }
       set({ fileTree: fileTree });
     }
   },

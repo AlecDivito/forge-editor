@@ -14,7 +14,7 @@ const TreeItem = ({ node, style, dragHandle }: NodeRendererProps<FileNode>) => (
         event.dataTransfer.setData("text/plain", node.data.id);
       }
     }}
-    draggable={node.data.type === "file"}>
+    draggable={node.data.type === "f"}>
     {node.isLeaf ? <FaFile /> : node.isOpen ? <FaFolderOpen /> : <FaFolder />}
     <span>{node.data.name}</span>
   </div>

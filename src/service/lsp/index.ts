@@ -1,3 +1,4 @@
+import { DirectoryEntry } from "@/lib/storage";
 import {
   CodeAction,
   CodeActionParams,
@@ -15,6 +16,8 @@ import {
   DocumentDiagnosticParams,
   DocumentFormattingParams,
   DocumentSymbolParams,
+  FileChangeType,
+  FileEvent,
   Hover,
   HoverParams,
   InitializeParams,
@@ -57,6 +60,10 @@ export type ServerLspResponse = {
   error?: LspError;
 };
 
+interface DidChangeWatchedFileSystemFilesParams {
+  changes: (DirectoryEntry & { type: FileChangeType })[];
+}
+
 export type ServerLspNotification =
   | { method: "$/logTrace"; params: LogTraceParams }
   | { method: "$/typescriptVersion"; params: { version: string; source: string } }
@@ -68,7 +75,7 @@ export type ServerLspNotification =
   | { method: "proxy/filesystem/created"; params: { uri: string } }
   | { method: "proxy/filesystem/open"; params: DidOpenTextDocumentParams }
   | { method: "proxy/filesystem/close"; params: DidCloseTextDocumentParams }
-  | { method: "proxy/filesystem/changed"; params: DidChangeWatchedFilesParams };
+  | { method: "proxy/filesystem/changed"; params: DidChangeWatchedFileSystemFilesParams };
 
 export type ID = string | number;
 

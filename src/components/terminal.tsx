@@ -1,8 +1,6 @@
 "use client";
 
-import React, { FC, useEffect, useMemo, useRef } from "react";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { AttachAddon } from "@xterm/addon-attach";
+import React, { FC, useEffect, useRef, useState } from "react";
 import { IGridviewPanelProps } from "dockview";
 import { useKeyboard } from "react-pre-hooks";
 import dynamic from "next/dynamic";
@@ -11,7 +9,7 @@ interface TerminalParams {
   name: string;
 }
 
-const XTerm = dynamic(() => import("./xterm"), { ssr: false });
+const XTerm = dynamic(() => import("./xterm"), { ssr: true });
 
 const useTerminalWebsocet = (url: string) => {
   const clientRef = useRef<WebSocket | null>(null);
@@ -45,11 +43,16 @@ const Terminal: FC<IGridviewPanelProps<TerminalParams>> = (props) => {
     },
   });
   const websocket = useTerminalWebsocet("http://localhost:3000/api/terminal");
-  const addons = useMemo(() => {
-    if (websocket && websocket.OPEN) {
-      return [new WebLinksAddon(), new AttachAddon(websocket)];
-    } else {
-      return [];
+  const [addons, setAddons] = useState([]);
+
+  useEffect(() => {
+    if (websocket) {
+      const f = async () => {
+        const AttachAddon = (await import("./attach")).default;
+        // const WebLinksAddon = await import("@xterm/addon-web-links");
+        setAddons([AttachAddon(websocket)]);
+      };
+      f();
     }
   }, [websocket]);
 

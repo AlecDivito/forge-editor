@@ -3,6 +3,7 @@ import { FileExtension, LspProxyClientFactory } from "./proxy";
 import { ClientLspRequest } from ".";
 import { Proxy } from "./proxy";
 import WebSocketClient from "./websocket";
+import { NoopLspClient } from "./proxy/noop";
 
 export class LspProxyManager {
   private ws: WebSocketClient;
@@ -53,6 +54,9 @@ export class LspProxyManager {
         });
 
         return this.clients[language]!;
+      } catch (error) {
+        console.warn("[WARN] Failed to spawn proxy. Spawn Noop. - " + error);
+        return NoopLspClient.spawn();
       } finally {
         // Cleanup promise cache once the operation is completed
         delete this.spawnPromises[language];

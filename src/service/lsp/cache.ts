@@ -1,6 +1,8 @@
 import redis from "@/lib/redis";
-import { createFile, deleteFile, readFile } from "../fs";
+import { createFile, deleteFile } from "../fs";
 import { TextDocumentContentChangeEvent } from "vscode-languageserver-protocol";
+import { readFile } from "fs/promises";
+import path from "path";
 
 export interface TextDocument {
   uri: string;
@@ -41,7 +43,7 @@ export class CacheManager {
   async deleteDocument(uri: string): Promise<void> {
     const key = this.getCacheKey(uri);
     await redis.del(key);
-    await deleteFile(this.bucket, uri);
+    // await deleteFile(this.bucket, uri);
   }
 
   async getDocument(uri: string): Promise<TextDocument> {
@@ -50,7 +52,8 @@ export class CacheManager {
 
     if (!cachedDoc) {
       console.log(`Cache miss for ${uri}. Fetching from S3...`);
-      const text = await this.fetchFromS3(uri);
+      const text = await readFile(path.join(process.env.ROOT_PROJECT_DIRECTORY, uri));
+      // const text = await this.fetchFromS3(uri);
       cachedDoc = JSON.stringify({
         uri,
         languageId: this.getLanguageFromUri(uri),
