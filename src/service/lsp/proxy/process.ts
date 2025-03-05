@@ -41,6 +41,7 @@ const FileExtensionToLsp: Record<FileExtension, { cmd: string; args: string[] }>
   md: { cmd: "marksman", args: ["server"] },
   html: { cmd: "vscode-html-languageserver", args: ["--stdio"] },
   css: { cmd: "vscode-css-languageserver", args: ["--stdio"] },
+  text: { cmd: "echo", args: [""] },
 };
 
 interface ProcessOptions {

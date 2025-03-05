@@ -9,18 +9,18 @@ interface Props {
 }
 
 const Chat: FC<IGridviewPanelProps<Props>> = (props) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toggle = (e: any) => {
+    e.preventDefault();
+    e.stopPropagation();
+    props.api.setVisible(!props.api.isVisible);
+  };
+
   useKeyboard({
     keys: {
-      "ctrl+r": (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        props.api.setVisible(!props.api.isVisible);
-      },
-      "meta+shift+r": (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        props.api.setVisible(!props.api.isVisible);
-      },
+      "ctrl+r": toggle,
+      "meta+shift+r": toggle,
+      "meta+shift+i": toggle,
     },
   });
 

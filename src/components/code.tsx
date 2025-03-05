@@ -19,14 +19,14 @@ import { useLspStore } from "@/store/lsp";
 const VSCodeLayout = () => {
   const ws = useWebSocket();
   const sender = useSendRequest();
-  const { handleNotification: handleFileTreeNotification, base: projectName } = useFileStore();
+  const { handleNotification: handleFileTreeNotification, base } = useFileStore();
   const { handleNotification: handleEditorNotification } = useEditorStore();
   const { handleNotification: handleLspNotification } = useLspStore();
   const { handleNotification: handlePushNotification } = useNotification();
   const { resolveRequest, rejectRequest, resolveNotification, rejectNotification } = useRequestStore();
 
   useEffect(() => {
-    if (!ws || !projectName) {
+    if (!ws || !base) {
       return;
     }
 
@@ -34,13 +34,13 @@ const VSCodeLayout = () => {
       console.log("Initializing project");
       await sender({
         method: "initialize",
-        params: LSP_INIT_PARAMS(projectName),
+        params: LSP_INIT_PARAMS(base),
       });
       console.log("Project successfully Initialized");
     };
 
     f();
-  }, [sender, ws, projectName]);
+  }, [sender, ws, base]);
 
   useEffect(() => {
     const handleMessage = (event: { data: string }) => {

@@ -25,7 +25,7 @@ export const useNotification = create<NotificationState>((set) => ({
         : state.notifications,
       diagnostics:
         "textDocument/publishDiagnostics" === message.method
-          ? { ...state.diagnostics, [message.params.uri.replace("file:///", "")]: message.params.diagnostics }
+          ? { ...state.diagnostics, [message.params.uri]: message.params.diagnostics }
           : state.diagnostics,
     }));
   },

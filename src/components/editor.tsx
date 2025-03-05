@@ -2,7 +2,7 @@
 
 import { FC, useEffect, useState } from "react";
 import { DockviewApi, DockviewDidDropEvent, DockviewReact, IDockviewPanel, IGridviewPanelProps } from "dockview";
-import EditorView from "./editor/EditorView";
+import EditorView, { getFileExtension } from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
 import { useSendNotification } from "@/hooks/use-send-notification";
@@ -15,7 +15,7 @@ interface Props {
 }
 
 const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } }) => {
-  const { activeFiles } = useEditorStore((state) => state);
+  const { activeFiles, closeFile } = useEditorStore((state) => state);
   const sendNotification = useSendNotification();
   const [view, setView] = useState<DockviewApi | null>(null);
   const [panels, setPanels] = useState<IDockviewPanel[]>([]);
@@ -30,14 +30,14 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
               method: "textDocument/didOpen",
               params: {
                 textDocument: {
-                  uri: `file:///${e.params.file}`,
-                  languageId: "",
+                  uri: e.params.file,
+                  languageId: getFileExtension(e.params.file.split(".").pop()),
                   version: 0,
                   text: "",
                 },
               },
             },
-            e.params.file.split(".").pop(),
+            getFileExtension(e.params.file.split(".").pop()),
           );
         }
       });
@@ -48,12 +48,12 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
               method: "textDocument/didClose",
               params: {
                 textDocument: {
-                  uri: `file:///${e.params.file}`,
+                  uri: e.params.file,
                 },
               },
             },
             e.params.file.split(".").pop(),
-          );
+          ).then(() => closeFile(e.params?.file));
         }
       });
       const addGroup = view.onDidAddGroup((e) => {

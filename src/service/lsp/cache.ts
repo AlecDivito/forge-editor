@@ -1,7 +1,6 @@
 import redis from "@/lib/redis";
-import { createFile, deleteFile } from "../fs";
 import { TextDocumentContentChangeEvent } from "vscode-languageserver-protocol";
-import { readFile } from "fs/promises";
+import { readFile, writeFile, rm } from "fs/promises";
 import path from "path";
 
 export interface TextDocument {
@@ -12,23 +11,24 @@ export interface TextDocument {
 }
 
 export class CacheManager {
-  private project: string;
+  private workspace: string;
   private bucket: string;
 
-  constructor(bucket: string, project: string) {
+  constructor(bucket: string, workspace: string) {
     this.bucket = bucket;
-    this.project = project;
+    this.workspace = workspace;
   }
 
   async createDocument(uri: string): Promise<TextDocument> {
     const key = this.getCacheKey(uri);
+    const absolutePath = path.join(process.env.ROOT_PROJECT_DIRECTORY, uri);
 
-    const file = await readFile(this.bucket, uri);
+    const file = await readFile(absolutePath);
     if (file) {
       throw new Error("Failed to create new document because it already exists");
     }
 
-    await createFile(this.bucket, uri);
+    await writeFile(absolutePath, "");
     const cachedDoc = JSON.stringify({
       uri,
       languageId: this.getLanguageFromUri(uri),
@@ -43,22 +43,43 @@ export class CacheManager {
   async deleteDocument(uri: string): Promise<void> {
     const key = this.getCacheKey(uri);
     await redis.del(key);
-    // await deleteFile(this.bucket, uri);
+    await rm(uri);
   }
+
+  getFileExtension = (filename?: string): string => {
+    const parts = filename?.split(".") || [];
+    const exts: { [key: string]: string } = {
+      go: "go",
+      rs: "rust",
+      json: "json",
+      js: "javascript",
+      ts: "typescript",
+      md: "markdown",
+    };
+    const extension = parts.length > 1 ? parts.pop() : undefined;
+    if (extension && extension in exts) {
+      return exts[extension];
+    } else {
+      return "text";
+    }
+  };
 
   async getDocument(uri: string): Promise<TextDocument> {
     const key = this.getCacheKey(uri);
+    const absolutePath = path.join(process.env.ROOT_PROJECT_DIRECTORY, uri);
     let cachedDoc = await redis.get(key);
 
     if (!cachedDoc) {
-      console.log(`Cache miss for ${uri}. Fetching from S3...`);
-      const text = await readFile(path.join(process.env.ROOT_PROJECT_DIRECTORY, uri));
+      console.log(`[INFO] Cache miss for ${uri}. Fetching from file system...`);
+      const text = await readFile(absolutePath);
       // const text = await this.fetchFromS3(uri);
       cachedDoc = JSON.stringify({
         uri,
-        languageId: this.getLanguageFromUri(uri),
+        languageId: this.getFileExtension(uri.split(".")?.pop()),
         version: 1,
-        text,
+        // TODO(Alec): This might not be a string. How can we estimate
+        // what the file type is.
+        text: text.toString(),
       });
       await redis.set(key, cachedDoc);
     }
@@ -67,7 +88,7 @@ export class CacheManager {
   }
 
   async syncAllToS3(): Promise<void> {
-    const keys = await redis.keys(`fs:file:${this.project}:*`);
+    const keys = await redis.keys(`fs:file:${this.workspace}:*`);
     for (const key of keys) {
       this.syncDocumentToS3(key);
     }
@@ -132,7 +153,8 @@ export class CacheManager {
 
   private async uploadToS3(uri: string, content: string): Promise<void> {
     try {
-      await createFile(this.bucket, uri, content);
+      const absolutePath = path.join(process.env.ROOT_PROJECT_DIRECTORY, uri);
+      await writeFile(absolutePath, content);
       console.log(`Successfully uploaded ${uri} to S3.`);
     } catch (error) {
       console.error(`Failed to upload ${uri} to S3`, error);
@@ -141,8 +163,9 @@ export class CacheManager {
 
   private async fetchFromS3(uri: string): Promise<string> {
     try {
-      const response = await readFile(this.bucket, uri);
-      return response || "";
+      const absolutePath = path.join(process.env.ROOT_PROJECT_DIRECTORY, uri);
+      const response = await readFile(absolutePath);
+      return response.toString() || "";
     } catch (error) {
       console.error(`Failed to fetch ${uri} from S3`, error);
       return "";
@@ -150,10 +173,10 @@ export class CacheManager {
   }
 
   private getCacheKey(uri: string): string {
-    return `fs:file:${this.project}:${uri}`;
+    return `fs:file:${this.workspace}:${uri}`;
   }
 
   private getLanguageFromUri(uri: string): string {
-    return uri.split(".").pop() || "";
+    return uri.split(".").pop() || "text";
   }
 }

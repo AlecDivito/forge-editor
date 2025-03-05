@@ -34,7 +34,7 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
       params: {
         changes: [
           {
-            uri: `file:///${base}/${body.name}`,
+            uri: `file:///${base}${body.name}`,
             type: 1, // Created
           },
         ],
@@ -44,7 +44,7 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
   };
 
   const loadAndOpenFile = (path: string) => {
-    openFile(`${base}${path}`);
+    openFile(`file:///${base}${path}`);
   };
 
   const onTest = () => {

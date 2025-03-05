@@ -97,7 +97,7 @@ export const LSP_INIT_PARAMS = (base: string): InitializeParams => ({
   workspaceFolders: [
     {
       uri: `file:///${base}`,
-      name: "demo",
+      name: base,
     },
   ],
 });

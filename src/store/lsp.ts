@@ -1,10 +1,9 @@
 import { ServerLspNotification } from "@/service/lsp";
-import { FileExtension } from "@/service/lsp/proxy";
 import { InitializeResult } from "vscode-languageserver-protocol";
 import { create } from "zustand";
 
 export interface LspState {
-  capabilities: Partial<Record<FileExtension, InitializeResult>>;
+  capabilities: Partial<Record<string, InitializeResult>>;
 
   handleNotification: (message: ServerLspNotification) => void;
 }

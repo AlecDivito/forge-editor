@@ -34,7 +34,7 @@ export const useSendRequest = (language?: string) => {
           const request: ServerAcceptedMessage = {
             type: "client-to-server-request",
             id,
-            ctx: { workspace, language: overrideLanguage || language },
+            ctx: { workspace, language: overrideLanguage || language || "text" },
             message,
           };
           // Send the message over WebSocket

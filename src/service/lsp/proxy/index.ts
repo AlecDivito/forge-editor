@@ -7,7 +7,7 @@ export interface Proxy {
   support: InitializeResult;
 }
 
-export type FileExtension = "go" | "rs" | "ts" | "js" | "json" | "md" | "html" | "css";
+export type FileExtension = "go" | "rs" | "ts" | "js" | "json" | "md" | "html" | "css" | "text";
 
 export interface LspProxyCommonOptions {
   debug?: boolean;

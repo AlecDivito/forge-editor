@@ -12,12 +12,13 @@ import { convertLspDiagnosticsToCodemirror } from "@/utils/diagnosticConverter";
 import { EditorView as CodeMirrorView, Extension } from "@uiw/react-codemirror";
 import { useLspStore } from "@/store/lsp";
 import { useEditorStore } from "@/store/editor";
+import { useFileStore } from "@/store/filetree";
 
 const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
 });
 
-const languageExtensions: Record<FileExtension, () => Promise<Extension>> = {
+const languageExtensions: Record<string, () => Promise<Extension>> = {
   js: () => import("@codemirror/lang-javascript").then((mod) => mod.javascript()),
   ts: () => import("@codemirror/lang-javascript").then((mod) => mod.javascript({ typescript: true })),
   css: () => import("@codemirror/lang-css").then((mod) => mod.css()),
@@ -32,20 +33,29 @@ const languageExtensions: Record<FileExtension, () => Promise<Extension>> = {
   go: () => import("@codemirror/lang-go").then((mod) => mod.go()),
 };
 
-const getFileExtension = (filename: string): FileExtension | undefined => {
-  const parts = filename.split(".");
-  const exts: FileExtension[] = ["go", "rs", "json", "js", "ts", "md"];
+export const getFileExtension = (filename?: string): string => {
+  const parts = filename?.split(".") || [];
+  const exts: { [key: string]: string } = {
+    go: "go",
+    rs: "rust",
+    json: "json",
+    js: "javascript",
+    ts: "typescript",
+    md: "markdown",
+  };
   const extension = parts.length > 1 ? parts.pop() : undefined;
-  if (!extension || !(exts as string[]).includes(extension)) {
-    return undefined;
+  if (extension && extension in exts) {
+    return exts[extension];
+  } else {
+    return "text";
   }
-  return extension as FileExtension;
 };
 
 const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   const { file, theme } = params;
   const { capabilities } = useLspStore();
   const { activeFiles } = useEditorStore();
+  const { base } = useFileStore();
   const [view, setView] = useState<CodeMirrorView | undefined>();
   const language = getFileExtension(file);
   const sendRequest = useSendRequest(language);
@@ -62,13 +72,15 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
 
       const loadedExtensions = [];
       if (capabilities[language]) {
-        loadedExtensions.push(await languageExtensions[language]());
+        if (language in languageExtensions) {
+          loadedExtensions.push(await languageExtensions[language]());
+        }
         // loadedExtensions.push(collabExtension(version, client));
         loadedExtensions.push(
           lspExtensions(
             sendRequest,
             sendNotification,
-            `file:///${file}`,
+            file,
             language,
             activeFiles[file].version,
             capabilities[language],
@@ -82,7 +94,7 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
     if (activeFiles?.[file] && file && capabilities) {
       loadExtensions();
     }
-  }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme]);
+  }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme, base]);
 
   useEffect(() => {
     if (view && diagnostics) {

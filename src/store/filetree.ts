@@ -34,7 +34,7 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
     }
 
     if (message.method === "proxy/filesystem/created") {
-      const path = message.params.uri.replace("file:///", "");
+      const path = message.params.uri;
       const file: DirectoryEntry = { path, name: path.split("/")!.pop()!, ty: "f" };
       addFileToTree(fileTree, file);
       return set({ fileTree });

@@ -32,7 +32,7 @@ export const useSendNotification = (language?: string) => {
           const request: ServerAcceptedMessage = {
             type: "client-to-server-notification",
             id,
-            ctx: { workspace, language: overrideLanguage || language },
+            ctx: { workspace, language: overrideLanguage || language || "text" },
             message,
           };
 

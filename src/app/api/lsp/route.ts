@@ -10,7 +10,6 @@ import { LspError, ServerAcceptedMessage } from "@/service/lsp";
 import watchman from "fb-watchman";
 import { FileChangeType } from "vscode-languageserver-protocol";
 import { DirectoryEntry } from "@/lib/storage";
-import { NoopLspClient } from "@/service/lsp/proxy/noop";
 
 export async function SOCKET(
   client: WebSocket,

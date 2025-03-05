@@ -17,7 +17,6 @@ import {
   DocumentFormattingParams,
   DocumentSymbolParams,
   FileChangeType,
-  FileEvent,
   Hover,
   HoverParams,
   InitializeParams,
