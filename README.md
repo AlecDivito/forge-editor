@@ -2,6 +2,18 @@
 
 For forging your next project inside of a browser.
 
+Here's the pitch, what if we had a editor in the browser that anyone could visit and just start programming. The "editor" would run on the server and use a LSP-like protocol to communicate between the client and the server using websockets. The secret sauce to the idea would be that the editor is actually a large micro-service that is calling LSP's through network calls. By deploying an editor in this way, we can distribute it across multiple machines.
+
+![image](https://github.com/user-attachments/assets/5d7cad1e-4e1f-4b4e-ba69-6fbf4e4b2719)
+
+A rough sketch of some of my thoughts is below.
+
+![image](https://github.com/user-attachments/assets/451f2339-a7ae-4aca-a22e-3e49bd282d48)
+
+## 🚨 WARNING 🚨
+
+This project is currently just my thoughts and playing around with ideas. The actual implementation might now work right now.
+
 ## Development
 
 You need to setup redis. If you don't want to start a docker container, just run
@@ -15,6 +27,9 @@ redis-server
 ### Installing language servers
 
 You'll also need to install language servers so that you can effectively.
+
+> [!WARNING]
+> Only javascript has been tested.
 
 ```bash
 # Install gopls... lol idk how to do this.
@@ -34,7 +49,7 @@ Install the packages
 npm i
 ```
 
-Patch for web socket support
+Patch for web socket support (next.js doesn't support this out of the box)
 
 ```bash
 npx next-ws-cli@latest patch
@@ -53,24 +68,3 @@ pnpm dev
 # or
 bun dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
