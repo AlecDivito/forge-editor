@@ -2,6 +2,16 @@
 
 For forging your next project inside of a browser.
 
+## 🚨 WARNING 🚨
+
+This project is currently just my thoughts and playing around with ideas. Honestly it doesn't work right now because i don't have the time to polish it. Here is commit `fef7146` with files already created to show a demo of what i've worked on.
+
+
+https://github.com/user-attachments/assets/38e25954-e881-4454-a3ec-4417a906170b
+
+
+## Overview
+
 Here's the pitch, what if we had a editor in the browser that anyone could visit and just start programming. The "editor" would run on the server and use a LSP-like protocol to communicate between the client and the server using websockets. The secret sauce to the idea would be that the editor is actually a large micro-service that is calling LSP's through network calls. By deploying an editor in this way, we can distribute it across multiple machines.
 
 ![image](https://github.com/user-attachments/assets/5d7cad1e-4e1f-4b4e-ba69-6fbf4e4b2719)
@@ -9,10 +19,6 @@ Here's the pitch, what if we had a editor in the browser that anyone could visit
 A rough sketch of some of my thoughts is below.
 
 ![image](https://github.com/user-attachments/assets/451f2339-a7ae-4aca-a22e-3e49bd282d48)
-
-## 🚨 WARNING 🚨
-
-This project is currently just my thoughts and playing around with ideas. The actual implementation might now work right now.
 
 ## Development
 
@@ -24,12 +30,22 @@ brew install redis
 redis-server
 ```
 
+You'll also need an S3 server with the following variables defined in `.env` file
+
+```
+S3_BUCKET="forge-editor"
+AWS_ACCESS_KEY_ID=""
+AWS_SECRET_ACCESS_KEY=""
+# Create this folder
+ROOT_PROJECT_DIRECTORY="./.workspace-cache"
+```
+
 ### Installing language servers
 
 You'll also need to install language servers so that you can effectively.
 
 > [!WARNING]
-> Only javascript has been tested.
+> Only javascript has been tested a lot.
 
 ```bash
 # Install gopls... lol idk how to do this.
