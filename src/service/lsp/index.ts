@@ -221,6 +221,24 @@ export type ClientLspRequest =
   | {
       method: "textDocument/signatureHelp";
       params: SignatureHelpParams;
+    }
+  | {
+      method: "experimental/textDocument/create";
+      params: {
+        path: string;
+      };
+    }
+  | {
+      method: "experimental/folder/create";
+      params: {
+        path: string;
+      };
+    }
+  | {
+      method: "experimental/delete";
+      params: {
+        path: string;
+      };
     };
 // | {
 //   method: "proxy/git/"

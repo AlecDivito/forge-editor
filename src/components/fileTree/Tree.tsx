@@ -1,34 +1,35 @@
 import { FC } from "react";
-import { Tree } from "react-arborist";
-import TreeItem from "./TreeItem";
+import { TreeFolderItem } from "./TreeItem";
 import { FileNode } from "@/utils/filetree";
+import FileMenu from "./FileMenu";
 
 interface Props {
-  files?: FileNode[];
+  node: FileNode;
+  level?: number;
   onSelect?: (fileName: string) => void;
 }
 
-const FsTree: FC<Props> = ({ files, onSelect }) => {
+const Rating: Record<FileNode["type"], number> = {
+  d: 10,
+  f: 5,
+  createFile: 1,
+  createFolder: 1,
+};
+
+const FsTree: FC<Props> = ({ node, onSelect, level = 0 }) => {
+  (node?.children || []).sort((a, b) => Rating[b.type] - Rating[a.type]);
+
   return (
-    <Tree
-      data={files}
-      openByDefault={false}
-      indent={24}
-      rowHeight={24}
-      onSelect={(node) => {
-        if (node.length > 0) {
-          if (node[0].data.type === "d") {
-            node[0].toggle();
-            for (const item of node[0].children || []) {
-              item.toggle();
-            }
-          } else {
-            onSelect?.(node[0].data.path);
-          }
-        }
-      }}>
-      {TreeItem}
-    </Tree>
+    <div className="flex flex-col h-full w-full">
+      <div>
+        <TreeFolderItem node={node} level={level} onSelect={onSelect} />
+      </div>
+      <FileMenu className="h-full w-full block">
+        <div className="h-full w-full block">
+          <span></span>
+        </div>
+      </FileMenu>
+    </div>
   );
 };
 

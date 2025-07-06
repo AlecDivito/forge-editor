@@ -11,16 +11,13 @@ export interface TextDocument {
 }
 
 export class CacheManager {
-  private workspace: string;
-  private bucket: string;
-
-  constructor(bucket: string, workspace: string) {
-    this.bucket = bucket;
-    this.workspace = workspace;
-  }
+  constructor(
+    private readonly bucket: string,
+    private readonly workspace: string,
+  ) {}
 
   async createDocument(uri: string): Promise<TextDocument> {
-    const key = this.getCacheKey(uri);
+    // const key = this.getCacheKey(uri);
     const absolutePath = path.join(process.env.ROOT_PROJECT_DIRECTORY, uri);
 
     const file = await readFile(absolutePath);

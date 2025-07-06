@@ -11,10 +11,11 @@ import { useRequestStore } from "@/store/requests";
 import { useNotification } from "@/store/notification";
 import { useSendRequest } from "@/hooks/use-send-message";
 import { GridviewReact, GridviewReadyEvent, Orientation } from "dockview";
-import Terminal from "./Terminal";
 import Chat from "./chat";
 import { useEditorStore } from "@/store/editor";
 import { useLspStore } from "@/store/lsp";
+import Terminal from "./terminal";
+import CommandPallet from "./commandPallet";
 
 const VSCodeLayout = () => {
   const ws = useWebSocket();
@@ -138,6 +139,7 @@ const VSCodeLayout = () => {
 
   return (
     <div className="flex h-screen">
+      <CommandPallet />
       <GridviewReact components={components} onReady={onReady} orientation={Orientation.VERTICAL} />
     </div>
   );
