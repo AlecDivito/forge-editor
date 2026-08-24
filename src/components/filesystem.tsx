@@ -1,99 +1,50 @@
 "use client";
 
-import { useSendNotification } from "@/hooks/use-send-notification";
 import { useFileStore } from "@/store/filetree";
-import { FC, useCallback, useEffect, useRef } from "react";
-import FsTree from "./fileTree/Tree";
-import { FileName } from "./fileTree/TreeForm";
-import { IGridviewPanelProps } from "dockview";
+import { FC } from "react";
+import FsTreeAccordionItem from "./fileTree/Tree";
+import { IGridviewPanelProps } from "dockview-react";
 import { useKeyboard } from "react-pre-hooks";
 import { useEditorStore } from "@/store/editor";
 import { FaFile, FaSearch } from "react-icons/fa";
-import { CommandEvent, useCommandQueue } from "@/store/commands";
-import { useSendRequest } from "@/hooks/use-send-message";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./ui/accordion";
+import { Button } from "./ui/button";
+import { Edit2, FilePlus2, FolderPlus, RefreshCcw, SquareMinusIcon, Trash2 } from "lucide-react";
+import { FileTreeProvider } from "./fileTree/providers/FileTreeProvider";
 
 type Props = Record<string, string>;
 
 const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
-  const { fileTree, base, insertFile, insertFolder, hideInsertFile } = useFileStore();
-  const { openFile } = useEditorStore();
-  const notificationSender = useSendNotification();
-  const requestSender = useSendRequest();
-  const { subscribe, unsubscribe } = useCommandQueue();
-  const subscriptionId = useRef<null | number>(-1);
-  const eventHandler = useCallback(
-    (cmd: CommandEvent) => {
-      if (cmd.type === "file.new") {
-        insertFile(cmd.parent);
-      } else if (cmd.type === "folder.new") {
-        insertFolder(cmd.parent);
-      } else if (cmd.type === "file.new.hide" || cmd.type === "folder.new.hide") {
-        hideInsertFile(cmd.path);
-      } else if (cmd.type === "file.create") {
-        requestSender({
-          
-        })
-      } else if (cmd.type === "folder.create") {
-        createFolder(cmd.path);
-      }
-    },
-    [insertFolder, insertFile, hideInsertFile, requestSender],
-  );
+  const { fileTree } = useFileStore();
+  // const { openFile } = useEditorStore();
+
   useKeyboard({
     keys: {
       "meta+b": () => props.api.setVisible(!props.api.isVisible),
     },
   });
 
-  useEffect(() => {
-    if (subscriptionId.current === -1) {
-      const id = subscribe(eventHandler);
-      subscriptionId.current = id;
-    }
-    return () => {
-      if (subscriptionId.current) {
-        unsubscribe(subscriptionId.current);
-      }
-    };
-  }, [subscriptionId, eventHandler, subscribe, unsubscribe]);
 
-  const handleCreateFile = async (body: FileName) => {
-    // We need to use an LSP event here for creating a file. Even if we don't tell
-    // the actual LSP about it. How would you implement this
-    await notificationSender({
-      method: "workspace/didChangeWatchedFiles",
-      params: {
-        changes: [
-          {
-            uri: `file:///${base}${body.name}`,
-            type: 1, // Created
-          },
-        ],
-      },
-    });
-    setCreateFile(false);
-  };
-
-  const loadAndOpenFile = (path: string) => {
-    openFile(`file:///${base}${path}`);
-  };
 
   return (
     <div className="h-full flex">
-      {/* <ToolBar
-          onCreateFile={() => setCreateFile((prev) => !prev)}
-          onDebug={() => console.log("debug")}
-          onTest={onTest}
-        />*/}
-      <div className="h-full w-[50px] bg-gray-300 border-red-500">
-        <div className="bg-gray-500 h-[50px] w-[50px] flex justify-center items-center">
+      <div className="h-full w-12.5 bg-gray-300 border-red-500">
+        <div className="bg-gray-500 h-12.5 w-12.5 flex justify-center items-center">
           <FaFile className="cursor-pointer" size={20} title="Create File" />
         </div>
-        <div className="bg-gray-500 h-[50px] w-[50px] flex justify-center items-center">
+        <div className="bg-gray-500 h-12.5 w-12.5 flex justify-center items-center">
           <FaSearch className="cursor-pointer" size={20} title="Search files" />
         </div>
       </div>
-      <FsTree node={fileTree!} onSelect={loadAndOpenFile} />
+      <Accordion type="multiple" defaultValue={["file-system"]} className="w-full">
+        <FileTreeProvider>
+          <FsTreeAccordionItem />
+        </FileTreeProvider>
+        <AccordionItem value="outline">
+          <AccordionTrigger header="Outline"></AccordionTrigger>
+          <AccordionContent>hi</AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
   );
 };

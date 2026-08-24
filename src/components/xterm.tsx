@@ -1,6 +1,6 @@
 "use client";
 
-import "@xterm/xterm/css/xterm.css";
+// import "@xterm/xterm/css/xterm.css";
 
 import * as React from "react";
 
@@ -255,7 +255,7 @@ class XTerm extends React.Component<XTermProps> {
    */
   constructor(props: XTermProps) {
     super(props);
-    this.elementRef = React.createRef()!;
+    // this.elementRef = React.createRef()!;
   }
 
   componentDidMount() {

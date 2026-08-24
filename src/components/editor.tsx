@@ -1,7 +1,8 @@
 "use client";
 
 import { FC, useEffect, useState } from "react";
-import { DockviewApi, DockviewDidDropEvent, DockviewReact, IDockviewPanel, IGridviewPanelProps } from "dockview";
+import { DockviewApi, DockviewDidDropEvent, IDockviewPanel } from "dockview";
+import { DockviewReact, IGridviewPanelProps } from "dockview-react"
 import EditorView, { getFileExtension } from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
@@ -62,7 +63,7 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
       const removeGroup = view.onDidRemoveGroup((e) => {
         console.log(e);
       });
-      const disposable = view.onUnhandledDragOverEvent((event) => {
+      const disposable = view.onUnhandledDragOver((event) => {
         event.accept();
       });
 

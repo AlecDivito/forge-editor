@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 .cm-theme,
 .cm-theme-dark,
@@ -962,11 +960,11 @@
   }
 }
 /*---break---*/
-@layer base {
+/* @layer base {
   * {
     @apply border-border;
   }
   body {
     @apply bg-background text-foreground;
   }
-}
+} */

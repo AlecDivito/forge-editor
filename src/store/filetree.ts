@@ -6,23 +6,17 @@ import { addFileToTree, buildFileTree, FileNode, findNodeByPath, removeFileFromT
 import { create } from "zustand";
 
 export interface FileTreeState {
-  user: string;
-  project: string;
-  base: string;
   fileTree?: FileNode;
 
   hideInsertFile: (path: string) => void;
   insertFile: (parent: string) => void;
   insertFolder: (parent: string) => void;
 
-  initialize: (user: string, project: string, folder: DirectoryEntry[]) => void; // Initializes the file tree
+  initialize: (folder: DirectoryEntry[]) => void; // Initializes the file tree
   handleNotification: (message: ServerLspNotification) => void;
 }
 
 export const useFileStore = create<FileTreeState>((set, get) => ({
-  base: "",
-  user: "",
-  project: "",
   fileTree: undefined,
 
   hideInsertFile(path) {
@@ -55,9 +49,9 @@ export const useFileStore = create<FileTreeState>((set, get) => ({
   },
 
   // Initializes the tree structure based on the folder data
-  initialize: (user: string, project: string, files: DirectoryEntry[]) => {
+  initialize: (files: DirectoryEntry[]) => {
     console.log(files);
-    set({ user, project, base: `${user}/${project}`, fileTree: buildFileTree(files) });
+    set({ fileTree: buildFileTree(files) });
   },
 
   handleNotification: (message: ServerLspNotification) => {

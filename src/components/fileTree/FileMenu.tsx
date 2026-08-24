@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { MouseEventHandler, ReactNode, useCallback, useState } from "react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -6,90 +6,75 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "../ui/context-menu";
-import { useCommandQueue } from "@/store/commands";
-import { FileNode } from "@/utils/filetree";
+import { FsFile, FsFileType } from "@/lib/generated";
+import useDeleteFile from "./hooks/use-delete-file.hook";
+import { cn } from "@/lib/utils";
 
 interface Props {
   children: ReactNode;
-  node?: FileNode;
+  file: FsFile;
   className?: string;
+  onRename: () => void;
+  onNewFile: (ty: FsFileType) => void;
 }
 
-const getParent = (node: FileNode) => {
-  if (node.type === "d") {
-    return node.path;
-  }
-  const parts = node.path.split("/");
-  if (parts.length === 1) {
-    return "/";
-  } else {
-    return parts.splice(0, parts.length - 1).join("/");
-  }
-};
+export default function FileMenu({ file, children, className, onRename, onNewFile }: Props) {
+  const [open, setOpen] = useState(false)
+  const { mutateAsync: deleteFileOp } = useDeleteFile(file);
 
-export default function FileMenu({ node, children, className, canRename = false }: Props) {
-  const { push } = useCommandQueue();
+  const newFile: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setOpen(false);
+    requestAnimationFrame(() => { onNewFile(FsFileType.FILE); });
+  }, [file])
+
+  const newFolder: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setOpen(false);
+    requestAnimationFrame(() => { onNewFile(FsFileType.DIRECTORY); });
+  }, [file])
+
+  const copyPath: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
+    navigator.clipboard.writeText(file.path);
+    e.stopPropagation()
+  }, [file])
+
+  const rename: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setOpen(false);
+    requestAnimationFrame(() => { onRename(); });
+  }, [file])
+
+  const deleteFile: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
+    e.stopPropagation()
+    await deleteFileOp({ body: { path: file.path } })
+  }, [file])
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger className={className}>{children}</ContextMenuTrigger>
+    <ContextMenu open={open} onOpenChange={setOpen}>
+      <ContextMenuTrigger className={open ? `${className} bg-gray-300` : className}>{children}</ContextMenuTrigger>
 
-      <ContextMenuContent>
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            push({ parent: node ? getParent(node) : "", type: "file.new" });
-          }}>
+      <ContextMenuContent className="bg-white">
+        <ContextMenuItem onClick={newFile} className="hover:bg-gray-300 hover:cursor-pointer">
           New File
         </ContextMenuItem>
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            push({ parent: node ? getParent(node) : "", type: "folder.new" });
-          }}>
+        <ContextMenuItem onClick={newFolder} className="hover:bg-gray-300 hover:cursor-pointer">
           New Folder
         </ContextMenuItem>
-        <ContextMenuSeparator />
-        {/* <ContextMenuItem>Open in Terminal</ContextMenuItem>
-        <ContextMenuSeparator /> */}
-        {/* <ContextMenuItem>Cut</ContextMenuItem>
-        <ContextMenuItem>Copy</ContextMenuItem>
-        <ContextMenuItem>Duplicate</ContextMenuItem>
-        <ContextMenuItem>Paste</ContextMenuItem>
-        <ContextMenuSeparator /> */}
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            push({ type: "copy.abs.path" });
-          }}>
-          Copy Absolute Path
+        <ContextMenuSeparator className="bg-black" />
+        <ContextMenuItem onClick={copyPath} className="hover:bg-gray-300 hover:cursor-pointer">
+          Copy Path
         </ContextMenuItem>
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            push({ type: "copy.rel.path" });
-          }}>
-          Copy Relative Path
+        <ContextMenuSeparator className="bg-black" />
+        <ContextMenuItem onClick={rename} className="hover:bg-gray-300 hover:cursor-pointer">
+          Rename
         </ContextMenuItem>
-        {node && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              onClick={(e) => {
-                e.stopPropagation();
-                push({ path: node.path, type: "rename.prepare" });
-              }}>
-              Rename
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={(e) => {
-                e.stopPropagation();
-                push({ path: node.path, type: "delete" });
-              }}>
-              Delete
-            </ContextMenuItem>
-          </>
-        )}
+        <ContextMenuItem onClick={deleteFile} className="hover:bg-gray-300 hover:cursor-pointer">
+          Delete
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
