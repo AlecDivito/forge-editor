@@ -1,4 +1,4 @@
-use std::{sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use axum::{Json, extract::{Query, State}, response::IntoResponse};
 use rovo::{axum::IntoApiResponse, rovo};
@@ -157,6 +157,7 @@ async fn rename_file_impl(
     let (from, to) = path.to_file_path();
     let to_path = state.to_absolute_path(to.path.clone())?;
     let from_path = state.to_absolute_path(from.path.clone())?;
+    println!("{:?} ({}) -> {:?} ({})", from_path, from_path.try_exists()?, to_path, to_path.try_exists()?);
     if !from_path.try_exists()? {
         return Err(AppError::String("Source file can't be moved because it does not exist".into()))
     }
@@ -164,11 +165,13 @@ async fn rename_file_impl(
         return Err(AppError::String("File can't be moved because it already exists in end result location".into()))
     }
     
+    let from_file = FsFile::from_app_state(&state, Path::new(&from.path)).unwrap().unwrap();
     std::fs::rename(from_path, to_path)?;
+    let to_file = FsFile::from_app_state(&state, Path::new(&to.path)).unwrap().unwrap();
 
     Ok(Json(FsMoveFileResult {
-        from: from.path,
-        to: to.path,
+        from: from_file,
+        to: to_file,
     }))
 }
 

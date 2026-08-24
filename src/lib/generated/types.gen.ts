@@ -39,8 +39,8 @@ export type FsListDirectory = {
 };
 
 export type FsMoveFileResult = {
-    from: string;
-    to: string;
+    from: FsFile;
+    to: FsFile;
 };
 
 export type MovePath = {

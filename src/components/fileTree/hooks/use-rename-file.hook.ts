@@ -8,14 +8,22 @@ export default function useRenameFile(file: FsFile) {
 
     return useMutation({
         ...renameFileMutation(),
-        onSuccess: async () => {
+        onSuccess: async (data) => {
             queryClient.invalidateQueries({
                 queryKey: listFilesQueryKey({
                     query: {
-                        path: file.parent,
+                        path: data.from.parent,
                         ...DEFAULT_LIST_FILE_PAGINATION
                     }
                 })
+            })
+            queryClient.invalidateQueries({
+                queryKey: listFilesQueryKey({
+                    query: {
+                        path: data.to.parent,
+                        ...DEFAULT_LIST_FILE_PAGINATION
+                    }
+                }),
             })
         }
     })

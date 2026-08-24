@@ -8,6 +8,7 @@ import { FilePlus2, FolderPlus, RefreshCcw, SquareMinusIcon } from "lucide-react
 import { FsFile, FsFileType } from "@/lib/generated";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
+import { useDropTarget } from "./hooks/use-drag-and-drop.hook";
 
 interface Props {
   path?: string;
@@ -21,7 +22,15 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   const { mutateAsync: createFileOp } = useCreateFile()
   const [newFile, setNewFile] = useState(false)
   const [newFolder, setNewFolder] = useState(false)
+  const genericFile = { path: "/", parent: "/" }
+  const file = { ...genericFile, ty: FsFileType.FILE }
+  const folder = { ...genericFile, ty: FsFileType.DIRECTORY }
 
+  // Root is a drop target (files/folders can be dropped here to move
+  // them to "/"), not a drag source — you don't drag the root itself.
+  const dropTarget = useDropTarget(folder as FsFile, {
+    onHoverExpand: () => setOpen(true),
+  });
 
   const loadAndOpenFile = useCallback((path: string) => {
     openFile(`file:///${path}`);
@@ -38,13 +47,8 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
     })
   }, [])
 
-
-
   const folders = useMemo(() => data?.files.filter(f => f.ty === FsFileType.DIRECTORY) || [], [data])
   const files = useMemo(() => data?.files.filter(f => f.ty === FsFileType.FILE) || [], [data])
-  const genericFile = { path: "/", parent: "/" }
-  const file = { ...genericFile, ty: FsFileType.FILE }
-  const folder = { ...genericFile, ty: FsFileType.DIRECTORY }
 
   return (
     <AccordionItem value="file-system">
@@ -65,7 +69,12 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
         </div>
       </AccordionTrigger>
       <AccordionContent>
-        <div className="flex flex-col h-full w-full">
+        <div
+          className={`flex flex-col h-full w-full min-h-4 pb-8 ${dropTarget.isDragOver ? "bg-blue-50 outline-1 outline-blue-300 outline-dashed" : ""}`}
+          onDragOver={dropTarget.onDragOver}
+          onDragLeave={dropTarget.onDragLeave}
+          onDrop={dropTarget.onDrop}
+        >
           {newFolder && <TreeInputItem file={folder} onComplete={path => createFile(folder, path)} onDismiss={() => setNewFolder(false)} />}
           {folders.map(file => <TreeItem key={file.path} file={file} level={0} path={file.path} onSelect={loadAndOpenFile} />)}
           {newFile && <TreeInputItem file={file} onComplete={path => createFile(file, path)} onDismiss={() => setNewFile(false)} />}
@@ -73,8 +82,6 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
         </div>
       </AccordionContent>
     </AccordionItem>
-
-
   );
 };
 

@@ -28,8 +28,8 @@ export const zFsFile = z.object({
 });
 
 export const zFsMoveFileResult = z.object({
-    from: z.string(),
-    to: z.string()
+    from: zFsFile,
+    to: zFsFile
 });
 
 export const zMovePath = z.object({

@@ -7,6 +7,7 @@ import { Spinner } from "../ui/spinner";
 import useRenameFile from "./hooks/use-rename-file.hook";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
+import { useDragSource, useDropTarget } from "./hooks/use-drag-and-drop.hook";
 
 interface Props {
   file: FsFile;
@@ -31,12 +32,14 @@ const TreeFileItem = ({ file, onSelect }: Props) => {
   const { mutateAsync: renameFileOp } = useRenameFile(file)
   const { mutateAsync: createFileOp } = useCreateFile(file)
 
+  // Files are drag sources only — they can't accept drops.
+  const dragSource = useDragSource(file);
+
   const enableRenameFile = () => setIsEditing(true)
   const disableRenameFile = () => setIsEditing(false)
   const disableNewFile = () => setNewFileType(undefined)
 
   const createFile = useCallback((path: string) => {
-    console.log('wow', newFileType)
     if (newFileType) {
       createFileOp({ body: { path, ty: newFileType } })
       disableNewFile()
@@ -52,7 +55,12 @@ const TreeFileItem = ({ file, onSelect }: Props) => {
     return (
       <>
         <FileMenu file={file} onRename={enableRenameFile} onNewFile={setNewFileType}>
-          <div onClick={() => onSelect?.(file.path)} className=" space-x-2 cursor-pointer" style={{ paddingLeft: `12px` }}>
+          <div
+            {...dragSource}
+            onClick={() => onSelect?.(file.path)}
+            className="space-x-2 cursor-pointer"
+            style={{ paddingLeft: `12px` }}
+          >
             <span className="flex items-center space-x-2 cursor-pointer hover:bg-gray-300">
               <FaFile />
               <span>{file.name}</span>
@@ -79,6 +87,13 @@ const TreeFolderItem = ({ file, onSelect, path = '/', level }: Props) => {
   const { mutateAsync: renameFileOp } = useRenameFile(file)
   const { mutateAsync: createFileOp } = useCreateFile(file, true)
 
+  // Folders are both drag sources (can be moved) and drop targets
+  // (can receive other files/folders). Hovering with a drag auto-expands.
+  const dragSource = useDragSource(file);
+  const dropTarget = useDropTarget(file, {
+    onHoverExpand: () => setOpen(true),
+  });
+
   const enableRenameFile = () => setIsEditing(true)
   const disableRenameFile = () => setIsEditing(false)
   const enableNewFile = (ty: FsFileType) => {
@@ -98,7 +113,6 @@ const TreeFolderItem = ({ file, onSelect, path = '/', level }: Props) => {
     renameFileOp({ body: { from: file.path, to: newPath } })
     disableRenameFile()
   }, [])
-
 
   const click: MouseEventHandler<HTMLDivElement> = useCallback((e) => {
     e.preventDefault();
@@ -122,7 +136,15 @@ const TreeFolderItem = ({ file, onSelect, path = '/', level }: Props) => {
     return (
       <>
         <FileMenu file={file} onRename={enableRenameFile} onNewFile={enableNewFile}>
-          <div onClick={click} style={{ paddingLeft: `12px` }} >
+          <div
+            {...dragSource}
+            onDragOver={dropTarget.onDragOver}
+            onDragLeave={dropTarget.onDragLeave}
+            onDrop={dropTarget.onDrop}
+            onClick={click}
+            style={{ paddingLeft: `12px` }}
+            className={dropTarget.isDragOver ? "bg-blue-200 outline-1 outline-blue-400" : undefined}
+          >
             <div className="flex flex-row items-center space-x-2 cursor-pointer hover:bg-gray-300">
               {isLoading ? <Spinner /> : isOpen ? <FaFolderOpen /> : <FaFolder />}
               <span>{file?.name}</span>
@@ -148,8 +170,6 @@ export const TreeInputItem = ({ file, onComplete, onDismiss, indent = false }: T
   const [state, setState] = useState(file.name || '');
   const ref = useRef<HTMLInputElement>(null);
 
-  console.log(file)
-
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
@@ -165,13 +185,11 @@ export const TreeInputItem = ({ file, onComplete, onDismiss, indent = false }: T
 
   const submit = useCallback<SubmitEventHandler<HTMLFormElement>>((e) => {
     e.preventDefault();
-    console.log(state, state === file.name)
     if (!state.trim() || state === file.name) {
       onDismiss();
       return;
     }
 
-    console.log(getPath())
     onComplete(getPath());
   },
     [state, file, getPath, onComplete, onDismiss]

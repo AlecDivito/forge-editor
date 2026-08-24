@@ -4,7 +4,7 @@ use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::fs::DirEntry;
 
-use crate::models::PaginationParams;
+use crate::{models::PaginationParams, state::AppState};
 
 #[derive(Serialize, JsonSchema)]
 pub struct FsListDirectory {
@@ -16,8 +16,8 @@ pub struct FsListDirectory {
 
 #[derive(Serialize, JsonSchema)]
 pub struct FsMoveFileResult {
-    pub from: String,
-    pub to: String,
+    pub from: FsFile,
+    pub to: FsFile,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -76,6 +76,20 @@ impl FsFile {
             parent: path.parent().map(|f| f.to_string_lossy().to_string()).unwrap_or("/".to_string()),
             ty: FsFileType::from_path(path)?,
         })
+    }
+
+    pub fn from_app_state(state: &AppState, relative: &Path) -> anyhow::Result<Option<Self>> {
+        let absolute_path = state.to_absolute_path(relative)?;
+        if let Some(ty) = FsFileType::from_path(&absolute_path) {
+            Ok(Some(Self {
+                name: relative.file_name().map(|f| f.to_string_lossy().to_string()),
+                path: relative.as_os_str().to_string_lossy().to_string(),
+                parent: relative.parent().map(|f| f.to_string_lossy().to_string()).unwrap_or("/".to_string()),
+                ty,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn from_dir(parent: &Path, entry: DirEntry) -> anyhow::Result<Option<Self>> {
