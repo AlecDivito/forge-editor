@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses } from './types.gen';
+import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -79,4 +79,13 @@ export const deleteFile = <ThrowOnError extends boolean = false>(options: Option
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Search files
+ */
+export const searchFiles = <ThrowOnError extends boolean = false>(options: Options<SearchFilesData, ThrowOnError>) => (options.client ?? client).get<SearchFilesResponses, SearchFilesErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/fs/search',
+    ...options
 });

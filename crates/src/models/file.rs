@@ -1,4 +1,7 @@
-use std::{fs::FileType, path::{Path, PathBuf}};
+use std::{
+    fs::FileType,
+    path::{Path, PathBuf},
+};
 
 use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,8 +29,7 @@ pub struct FsFileOperation {
     pub path: String,
 }
 
-
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
 pub enum FsFileType {
     Directory,
     File,
@@ -58,12 +60,20 @@ impl FsFileType {
             None
         }
     }
+
+    pub fn order(&self) -> usize {
+        match self {
+            FsFileType::Directory => 0,
+            FsFileType::File => 1,
+            FsFileType::SymLink => 2,
+        }
+    }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Debug)]
 pub struct FsFile {
     name: Option<String>,
-    path: String,
+    pub path: String,
     parent: String,
     ty: FsFileType,
 }
@@ -73,18 +83,30 @@ impl FsFile {
         Some(Self {
             name: path.file_name().map(|f| f.to_string_lossy().to_string()),
             path: path.as_os_str().to_string_lossy().to_string(),
-            parent: path.parent().map(|f| f.to_string_lossy().to_string()).unwrap_or("/".to_string()),
+            parent: path
+                .parent()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or("/".to_string()),
             ty: FsFileType::from_path(path)?,
         })
     }
 
     pub fn from_app_state(state: &AppState, relative: &Path) -> anyhow::Result<Option<Self>> {
-        let absolute_path = state.to_absolute_path(relative)?;
+        return Self::from_base_path(&state.config.base_dir, relative);
+    }
+
+    pub fn from_base_path(base: &Path, relative: &Path) -> anyhow::Result<Option<Self>> {
+        let absolute_path = AppState::base_to_absolute_path(base, relative)?;
         if let Some(ty) = FsFileType::from_path(&absolute_path) {
             Ok(Some(Self {
-                name: relative.file_name().map(|f| f.to_string_lossy().to_string()),
+                name: relative
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string()),
                 path: relative.as_os_str().to_string_lossy().to_string(),
-                parent: relative.parent().map(|f| f.to_string_lossy().to_string()).unwrap_or("/".to_string()),
+                parent: relative
+                    .parent()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or("/".to_string()),
                 ty,
             }))
         } else {
@@ -99,25 +121,21 @@ impl FsFile {
             Ok(Some(Self {
                 name: path.file_name().map(|f| f.to_string_lossy().to_string()),
                 path: path.to_string_lossy().to_string(),
-                parent: path.parent().map(|f| f.to_string_lossy().to_string()).unwrap_or("/".to_string()),
+                parent: path
+                    .parent()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or("/".to_string()),
                 ty,
             }))
         } else {
-            return Ok(None)
+            return Ok(None);
         }
     }
 
-
     pub fn sort(files: &mut Vec<Self>) {
         files.sort_by(|a, b| {
-            let type_order = |ty: &FsFileType| match ty {
-                FsFileType::Directory => 0,
-                FsFileType::File => 1,
-                FsFileType::SymLink => 2,
-            };
-        
-            type_order(&a.ty)
-                .cmp(&type_order(&b.ty))
+            a.ty.order()
+                .cmp(&b.ty.order())
                 .then_with(|| a.path.cmp(&b.path))
         });
     }
@@ -149,7 +167,6 @@ pub struct CreateFile {
     pub ty: FsFileType,
 }
 
-
 #[derive(Deserialize, Serialize, JsonSchema, Debug)]
 pub struct FilePath {
     pub path: String,
@@ -163,7 +180,7 @@ impl FilePath {
     pub fn as_path_buf(&self) -> &Path {
         Path::new(&self.path)
     }
-    
+
     pub fn to_os_path(&self) -> anyhow::Result<PathBuf> {
         let path = Path::new(&self.path);
         if !path.exists() {

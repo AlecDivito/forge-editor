@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile } from '../sdk.gen';
-import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse } from '../types.gen';
+import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile, searchFiles } from '../sdk.gen';
+import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchFilesData, SearchFilesResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -183,3 +183,21 @@ export const deleteFileMutation = (options?: Partial<Options<DeleteFileData>>): 
     };
     return mutationOptions;
 };
+
+export const searchFilesQueryKey = (options: Options<SearchFilesData>) => createQueryKey('searchFiles', options);
+
+/**
+ * Search files
+ */
+export const searchFilesOptions = (options: Options<SearchFilesData>) => queryOptions<SearchFilesResponse, AxiosError<DefaultError>, SearchFilesResponse, ReturnType<typeof searchFilesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await searchFiles({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: searchFilesQueryKey(options)
+});

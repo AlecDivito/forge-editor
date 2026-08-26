@@ -32,6 +32,33 @@ export const zFsMoveFileResult = z.object({
     to: zFsFile
 });
 
+export const zFsSearchLine = z.object({
+    end: z.int().gte(0),
+    line: z.int().gte(0),
+    start: z.int().gte(0),
+    text: z.string()
+});
+
+export const zFsSearchQuery = z.object({
+    exclude: z.string().nullish(),
+    include: z.string().nullish(),
+    match_case: z.boolean().optional().default(false),
+    match_whole_word: z.boolean().optional().default(false),
+    open_files_only: z.boolean().optional().default(false),
+    regex: z.boolean().optional().default(false),
+    search: z.string(),
+    use_ignore_files: z.boolean().optional().default(false)
+});
+
+export const zFsSearchResult = z.object({
+    file: zFsFile,
+    matches: z.array(zFsSearchLine)
+});
+
+export const zFsSearchResponse = z.object({
+    results: z.array(zFsSearchResult)
+});
+
 export const zMovePath = z.object({
     from: z.string(),
     to: z.string()
@@ -94,3 +121,19 @@ export const zDeleteFileBody = zFilePath;
  * Successfully deleted file or directory
  */
 export const zDeleteFileResponse = zFilePath;
+
+export const zSearchFilesQuery = z.object({
+    exclude: z.string().nullish(),
+    include: z.string().nullish(),
+    match_case: z.boolean().optional().default(false),
+    match_whole_word: z.boolean().optional().default(false),
+    open_files_only: z.boolean().optional().default(false),
+    regex: z.boolean().optional().default(false),
+    search: z.string(),
+    use_ignore_files: z.boolean().optional().default(false)
+});
+
+/**
+ * Successfully searched files
+ */
+export const zSearchFilesResponse = zFsSearchResponse;

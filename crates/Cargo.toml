@@ -17,3 +17,9 @@ tower-http = { version = "0.6.1", features = ["fs", "limit", "trace", "cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15.7"
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+ignore = "0.4.33"
+globset = "0.4.20"
+regex = "1.13.1"
+grep-matcher = "0.1.9"

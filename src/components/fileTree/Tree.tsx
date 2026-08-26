@@ -9,6 +9,7 @@ import { FsFile, FsFileType } from "@/lib/generated";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
 import { useDropTarget } from "./hooks/use-drag-and-drop.hook";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
 
 interface Props {
   path?: string;
@@ -54,18 +55,50 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
     <AccordionItem value="file-system">
       <AccordionTrigger header="File System">
         <div>
-          <Button size="icon" variant="ghost" onClick={() => setNewFile(true)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-foreground">
-            <FilePlus2 className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="icon" variant="ghost" onClick={() => setNewFolder(true)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
-            <FolderPlus className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="icon" variant="ghost" onClick={refreshFileSystem} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
-            <RefreshCcw className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="icon" variant="ghost" onClick={() => setOpen(false)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
-            <SquareMinusIcon className="h-3.5 w-3.5" />
-          </Button>
+          <HoverCard>
+            <HoverCardTrigger>
+              <Button size="icon" variant="ghost" onClick={() => setNewFile(true)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-foreground">
+                <FilePlus2 className="h-3.5 w-3.5" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="p-2 w-fit z-50">
+              New file
+            </HoverCardContent>
+          </HoverCard>
+
+          <HoverCard>
+            <HoverCardTrigger>
+              <Button size="icon" variant="ghost" onClick={() => setNewFolder(true)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
+                <FolderPlus className="h-3.5 w-3.5" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="p-2 w-fit z-50">
+              New folder
+            </HoverCardContent>
+          </HoverCard>
+
+          <HoverCard>
+            <HoverCardTrigger>
+              <Button size="icon" variant="ghost" onClick={refreshFileSystem} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
+                <RefreshCcw className="h-3.5 w-3.5" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="p-2 w-fit z-50">
+              Refresh Explorer
+            </HoverCardContent>
+          </HoverCard>
+
+          <HoverCard>
+            <HoverCardTrigger>
+              <Button size="icon" variant="ghost" onClick={() => setOpen(false)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
+                <SquareMinusIcon className="h-3.5 w-3.5" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="p-2 w-fit z-50">
+              Collapse Folders in Explorer
+            </HoverCardContent>
+          </HoverCard>
+
         </div>
       </AccordionTrigger>
       <AccordionContent>

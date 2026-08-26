@@ -1,11 +1,12 @@
 mod file_system;
+mod file_search;
 
 use std::sync::Arc;
 
 
-use rovo::{IntoNestRouter, Router, routing::{delete, get, post}};
+use rovo::{IntoNestRouter, Router, routing::{get, post}};
 
-use crate::{routes::file_system::{create_file, delete_file, rename_file, save_file}, state::AppState};
+use crate::{routes::{file_search::search_files, file_system::{create_file, delete_file, rename_file, save_file}}, state::AppState};
 
 use file_system::{list_files};
 
@@ -18,5 +19,6 @@ pub fn fs_router(state: Arc<AppState>) -> impl IntoNestRouter<Arc<AppState>> {
         .route("/fs/create", post(create_file))
         .route("/fs/rename", post(rename_file))
         .route("/fs/delete", post(delete_file))
+        .route("/fs/search", get(search_files))
         .with_state(state)
 }

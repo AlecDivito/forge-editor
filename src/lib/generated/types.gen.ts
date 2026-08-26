@@ -43,6 +43,68 @@ export type FsMoveFileResult = {
     to: FsFile;
 };
 
+export type FsSearchLine = {
+    end: number;
+    line: number;
+    start: number;
+    text: string;
+};
+
+export type FsSearchQuery = {
+    /**
+     * Glob patterns for files to exclude.
+     */
+    exclude?: string | null;
+    /**
+     * Glob patterns for files to include.
+     *
+     * Examples:
+     * *.rs
+     * src**
+     * ***.test.ts
+     */
+    include?: string | null;
+    /**
+     * Case-sensitive matching. Defaults to false.
+     */
+    match_case?: boolean;
+    /**
+     * Require the search text to be a whole word. Defaults to false.
+     */
+    match_whole_word?: boolean;
+    /**
+     * Only search files currently open in the editor.
+     *
+     * The plumbing is here, but the implementation can initially
+     * ignore this option.
+     */
+    open_files_only?: boolean;
+    /**
+     * Treat `search` as a regular expression. Defaults to false.
+     */
+    regex?: boolean;
+    /**
+     * Text to search for.
+     */
+    search: string;
+    /**
+     * Whether filesystem ignore files such as .gitignore should be
+     * respected.
+     *
+     * Currently this can default to false and be enabled later.
+     */
+    use_ignore_files?: boolean;
+};
+
+export type FsSearchResponse = {
+    results: Array<FsSearchResult>;
+};
+
+export type FsSearchResult = {
+    file: FsFile;
+    matches: Array<FsSearchLine>;
+};
+
 export type MovePath = {
     from: string;
     to: string;
@@ -178,3 +240,70 @@ export type DeleteFileResponses = {
 };
 
 export type DeleteFileResponse = DeleteFileResponses[keyof DeleteFileResponses];
+
+export type SearchFilesData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Glob patterns for files to exclude.
+         */
+        exclude?: string | null;
+        /**
+         * Glob patterns for files to include.
+         *
+         * Examples:
+         * *.rs
+         * src**
+         * ***.test.ts
+         */
+        include?: string | null;
+        /**
+         * Case-sensitive matching. Defaults to false.
+         */
+        match_case?: boolean;
+        /**
+         * Require the search text to be a whole word. Defaults to false.
+         */
+        match_whole_word?: boolean;
+        /**
+         * Only search files currently open in the editor.
+         *
+         * The plumbing is here, but the implementation can initially
+         * ignore this option.
+         */
+        open_files_only?: boolean;
+        /**
+         * Treat `search` as a regular expression. Defaults to false.
+         */
+        regex?: boolean;
+        /**
+         * Text to search for.
+         */
+        search: string;
+        /**
+         * Whether filesystem ignore files such as .gitignore should be
+         * respected.
+         *
+         * Currently this can default to false and be enabled later.
+         */
+        use_ignore_files?: boolean;
+    };
+    url: '/api/fs/search';
+};
+
+export type SearchFilesErrors = {
+    /**
+     * Failed to search files
+     */
+    400: unknown;
+};
+
+export type SearchFilesResponses = {
+    /**
+     * Successfully searched files
+     */
+    200: FsSearchResponse;
+};
+
+export type SearchFilesResponse = SearchFilesResponses[keyof SearchFilesResponses];

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
@@ -10,11 +10,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn to_absolute_path(&self, path: impl Into<PathBuf>) -> anyhow::Result<PathBuf> {
-        let path = path.into();
-        Ok(if path.is_absolute() {
-            self.config.base_dir.join(path.strip_prefix("/")?)
+        return Self::base_to_absolute_path(&self.config.base_dir, &path.into())
+    }
+
+    pub fn base_to_absolute_path(base: &Path, relative: &Path) -> anyhow::Result<PathBuf> {
+        Ok(if relative.is_absolute() {
+            base.join(relative.strip_prefix("/")?)
         } else {
-            self.config.base_dir.join(path)
+            base.join(relative)
         })
     }
 }
