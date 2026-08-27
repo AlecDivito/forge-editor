@@ -69,7 +69,6 @@ export default function FileSearchView() {
             title: open ? 'Collapse All' : 'Expand All',
             onClick: () => setOpen(!open),
         },
-
     ], [view, isRefreshDisabled, open, setOpen, refetch, clearData])
 
     return (

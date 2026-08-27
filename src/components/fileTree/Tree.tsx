@@ -4,7 +4,7 @@ import useListFiles, { useInvalidateAllFileLists } from "./hooks/use-list-files.
 import { useEditorStore } from "@/store/editor";
 import { Button } from "../ui/button";
 import { AccordionContent, AccordionItem, AccordionTrigger } from "../ui/accordion";
-import { FilePlus2, FolderPlus, RefreshCcw, SquareMinusIcon } from "lucide-react";
+import { FilePlus2, FolderPlus, RefreshCcw, SquareMinusIcon, SquarePlusIcon } from "lucide-react";
 import { FsFile, FsFileType } from "@/lib/generated";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
@@ -51,59 +51,52 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   const folders = useMemo(() => data?.files.filter(f => f.ty === FsFileType.DIRECTORY) || [], [data])
   const files = useMemo(() => data?.files.filter(f => f.ty === FsFileType.FILE) || [], [data])
 
+  const options = useMemo(() => [
+    {
+      Icon: FilePlus2,
+      title: 'New file',
+      onClick: () => setNewFile(true),
+    },
+    {
+      Icon: FolderPlus,
+      title: 'New folder',
+      onClick: () => setNewFolder(true),
+    },
+    {
+      Icon: RefreshCcw,
+      title: 'Refresh Explorer',
+      onClick: refreshFileSystem,
+      // Hmm, this one is interesting, i think we'll be able to
+      // do it, but we'll need to open this component in a tab
+    },
+    {
+      Icon: open ? SquareMinusIcon : SquarePlusIcon,
+      title: 'Collapse Folders in Explorer',
+      onClick: () => setOpen(!open),
+    },
+  ], [open, setOpen, refreshFileSystem])
+
   return (
     <AccordionItem value="file-system">
       <AccordionTrigger header="File System">
         <div>
-          <HoverCard>
-            <HoverCardTrigger>
-              <Button size="icon" variant="ghost" onClick={() => setNewFile(true)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-foreground">
-                <FilePlus2 className="h-3.5 w-3.5" />
-              </Button>
-            </HoverCardTrigger>
-            <HoverCardContent className="p-2 w-fit z-50">
-              New file
-            </HoverCardContent>
-          </HoverCard>
-
-          <HoverCard>
-            <HoverCardTrigger>
-              <Button size="icon" variant="ghost" onClick={() => setNewFolder(true)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
-                <FolderPlus className="h-3.5 w-3.5" />
-              </Button>
-            </HoverCardTrigger>
-            <HoverCardContent className="p-2 w-fit z-50">
-              New folder
-            </HoverCardContent>
-          </HoverCard>
-
-          <HoverCard>
-            <HoverCardTrigger>
-              <Button size="icon" variant="ghost" onClick={refreshFileSystem} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
-                <RefreshCcw className="h-3.5 w-3.5" />
-              </Button>
-            </HoverCardTrigger>
-            <HoverCardContent className="p-2 w-fit z-50">
-              Refresh Explorer
-            </HoverCardContent>
-          </HoverCard>
-
-          <HoverCard>
-            <HoverCardTrigger>
-              <Button size="icon" variant="ghost" onClick={() => setOpen(false)} className="h-7 w-7 rounded-xl hover:bg-gray-300 cursor-pointer hover:text-destructive">
-                <SquareMinusIcon className="h-3.5 w-3.5" />
-              </Button>
-            </HoverCardTrigger>
-            <HoverCardContent className="p-2 w-fit z-50">
-              Collapse Folders in Explorer
-            </HoverCardContent>
-          </HoverCard>
-
+          {options.map(({ Icon, title, onClick }) =>
+            <HoverCard key={title}>
+              <HoverCardTrigger asChild>
+                <Button size="sm" variant='ghost' className="p-2" onClick={onClick}>
+                  <Icon className="h-4 w-4" />
+                </Button>
+              </HoverCardTrigger>
+              <HoverCardContent className="p-2 w-fit z-50 bg-white">
+                {title}
+              </HoverCardContent>
+            </HoverCard>
+          )}
         </div>
       </AccordionTrigger>
-      <AccordionContent>
+      <AccordionContent className="pt-1">
         <div
-          className={`flex flex-col h-full w-full min-h-4 pb-8 ${dropTarget.isDragOver ? "bg-blue-50 outline-1 outline-blue-300 outline-dashed" : ""}`}
+          className={`flex flex-col h-full w-full min-h-4 pb-8 box-border ${dropTarget.isDragOver ? "bg-secondary outline-1 outline-secondary-foreground outline-dashed" : ""}`}
           onDragOver={dropTarget.onDragOver}
           onDragLeave={dropTarget.onDragLeave}
           onDrop={dropTarget.onDrop}
@@ -111,7 +104,10 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
           {newFolder && <TreeInputItem file={folder} onComplete={path => createFile(folder, path)} onDismiss={() => setNewFolder(false)} />}
           {folders.map(file => <TreeItem key={file.path} file={file} level={0} path={file.path} onSelect={loadAndOpenFile} />)}
           {newFile && <TreeInputItem file={file} onComplete={path => createFile(file, path)} onDismiss={() => setNewFile(false)} />}
+            <div className="ml-6">
+
           {files.map(file => <TreeItem key={file.path} file={file} level={0} path={file.path} onSelect={loadAndOpenFile} />)}
+            </div>
         </div>
       </AccordionContent>
     </AccordionItem>

@@ -8,6 +8,8 @@ import useRenameFile from "./hooks/use-rename-file.hook";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
 import { useDragSource, useDropTarget } from "./hooks/use-drag-and-drop.hook";
+import { Input } from "../ui/input";
+import FileDropdownToggle from "../fileSearch/components/FileDropdownToggle";
 
 interface Props {
   file: FsFile;
@@ -26,7 +28,7 @@ export const TreeItem = ({ file, onSelect, level, path = '/' }: Props) => {
   }
 }
 
-const TreeFileItem = ({ file, onSelect }: Props) => {
+const TreeFileItem = ({ file, onSelect, level }: Props) => {
   const [isEditing, setIsEditing] = useState(false);
   const [newFileType, setNewFileType] = useState<FsFileType | undefined>(undefined);
   const { mutateAsync: renameFileOp } = useRenameFile(file)
@@ -58,11 +60,11 @@ const TreeFileItem = ({ file, onSelect }: Props) => {
           <div
             {...dragSource}
             onClick={() => onSelect?.(file.path)}
-            className="space-x-2 cursor-pointer"
-            style={{ paddingLeft: `12px` }}
+            className={`space-x-2 cursor-pointer`}
+            style={{ paddingLeft: level === 0 ? `6px` : `30px` }}
           >
-            <span className="flex items-center space-x-2 cursor-pointer hover:bg-gray-300">
-              <FaFile />
+            <span className="flex items-center space-x-2 cursor-pointer hover:bg-accent hover:text-accent-foreground">
+              <FaFile className="text-accent-foreground" />
               <span>{file.name}</span>
             </span>
           </div>
@@ -71,7 +73,7 @@ const TreeFileItem = ({ file, onSelect }: Props) => {
       </>
     );
   } else {
-    return <div className="flex items-center space-x-2 cursor-pointer bg-gray-300">
+    return <div className="flex items-center space-x-2 cursor-pointer">
       <TreeInputItem file={file} onComplete={renameFile} onDismiss={disableRenameFile} />
     </div>
   }
@@ -142,14 +144,19 @@ const TreeFolderItem = ({ file, onSelect, path = '/', level }: Props) => {
             onDragLeave={dropTarget.onDragLeave}
             onDrop={dropTarget.onDrop}
             onClick={click}
-            style={{ paddingLeft: `12px` }}
-            className={dropTarget.isDragOver ? "bg-blue-200 outline-1 outline-blue-400" : undefined}
+            style={{ paddingLeft: `6px` }}
+            className={`${dropTarget.isDragOver ? "bg-secondary outline-1 outline-secondary-foreground" : undefined}`}
           >
-            <div className="flex flex-row items-center space-x-2 cursor-pointer hover:bg-gray-300">
-              {isLoading ? <Spinner /> : isOpen ? <FaFolderOpen /> : <FaFolder />}
-              <span>{file?.name}</span>
+            <div className={`flex gap-2`}>
+              <FileDropdownToggle expanded={isOpen} />
+              <div className={`flex flex-row items-center space-x-2 cursor-pointer hover:bg-accent hover:text-accent-foreground`}>
+                {isLoading ? <Spinner className="text-accent-foreground" /> : isOpen ? <FaFolderOpen className="text-accent-foreground" /> : <FaFolder className="text-accent-foreground" />}
+                <span>{file?.name}</span>
+              </div>
             </div>
-            {files?.map(file => <TreeItem key={file.path} file={file} level={level + 1} onSelect={onSelect} />)}
+            <div className="ml-1.5 border-l border-border">
+              {files?.map(file => <TreeItem key={file.path} file={file} level={level + 1} onSelect={onSelect} />)}
+            </div>
           </div>
         </FileMenu>
         {newFileType && <TreeInputItem file={{ ...file, parent: file.path, ty: newFileType }} onComplete={createFile} onDismiss={disableNewFile} indent />}
@@ -218,18 +225,18 @@ export const TreeInputItem = ({ file, onComplete, onDismiss, indent = false }: T
   return (
     <div
       className="flex items-center gap-2"
-      style={{ paddingLeft: !indent ? '12px' : '24px' }}
+      style={{ paddingLeft: !indent ? '6px' : '24px' }}
     >
       {file.ty === FsFileType.FILE ? <FaFile /> : <FaFolder />}
 
       <form onSubmit={submit}>
-        <input
+        <Input
           ref={ref}
           value={state}
           onChange={(e) => setState(e.target.value)}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
-          className="w-full text-white border-gray-800 bg-gray-500"
+          className="h-5 p-0.5 text-sm"
         />
       </form>
     </div>

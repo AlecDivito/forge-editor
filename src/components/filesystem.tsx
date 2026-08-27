@@ -26,7 +26,7 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 
   const viewComponent: Record<ViewType, ReactNode> = {
     'file': (
-      <Accordion type="multiple" defaultValue={["file-system"]} className="w-full">
+      <Accordion type="multiple" defaultValue={["file-system"]} className="w-full h-full bg-background">
         <FileTreeProvider>
           <FsTreeAccordionItem />
         </FileTreeProvider>
@@ -45,14 +45,80 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 
   return (
     <div className="h-full flex">
-      <div className="h-full w-12.5 bg-gray-300 border-red-500">
-        <div className="bg-gray-500 h-12.5 w-12.5 flex justify-center items-center">
-          <FaFile onClick={() => setView('file')} className="cursor-pointer" size={20} title="Create File" />
+
+<div className="h-full w-12.5 shrink-0 bg-sidebar">
+  {/* File Tab */}
+  <div
+    onClick={() => setView("file")}
+    className={`
+      relative flex h-12.5 w-12.5 items-center justify-center
+      cursor-pointer transition-colors
+      ${view === "file" ? "bg-background" : "bg-sidebar"}
+      ${view === "search" ? "rounded-br-2xl" : ""}
+    `}
+  >
+    <FaFile
+      size={20}
+      title="Create File"
+      className={
+        view === "file"
+          ? "text-sidebar-foreground"
+          : "text-sidebar-accent-foreground"
+      }
+    />
+
+    {view === "file" && (
+      <>
+        {/* Top-right curve */}
+        <div className="pointer-events-none absolute -top-4 right-0 h-4 w-4 bg-sidebar">
+          <div className="h-full w-full rounded-br-2xl bg-background" />
         </div>
-        <div className="bg-gray-500 h-12.5 w-12.5 flex justify-center items-center">
-          <FaSearch onClick={() => setView('search')} className="cursor-pointer" size={20} title="Search files" />
+
+        {/* Bottom-right curve */}
+        <div className="pointer-events-none absolute -bottom-4 right-0 h-4 w-4 bg-sidebar">
+          <div className="h-full w-full rounded-tr-2xl bg-background" />
         </div>
-      </div>
+      </>
+    )}
+  </div>
+
+  {/* Search Tab */}
+  <div
+    onClick={() => setView("search")}
+    className={`
+      relative flex h-12.5 w-12.5 items-center justify-center
+      cursor-pointer transition-colors
+      ${view === "search" ? "bg-background" : "bg-sidebar"}
+      ${view === "file" ? "rounded-br-2xl" : ""}
+    `}
+  >
+    <FaSearch
+      size={20}
+      title="Search files"
+      className={
+        view === "search"
+          ? "text-sidebar-foreground"
+          : "text-sidebar-accent-foreground"
+      }
+    />
+
+    {view === "search" && (
+      <>
+        {/* Top-right curve */}
+        <div className="pointer-events-none absolute -top-4 right-0 h-4 w-4 bg-sidebar">
+          <div className="h-full w-full rounded-br-2xl bg-background" />
+        </div>
+
+        {/* Bottom-right curve */}
+        <div className="pointer-events-none absolute -bottom-4 right-0 h-4 w-4 bg-sidebar">
+          <div className="h-full w-full rounded-tr-2xl bg-background" />
+        </div>
+      </>
+    )}
+  </div>
+</div>
+
+
       {viewComponent[view]}
     </div>
   );

@@ -46,3 +46,5 @@ next-env.d.ts
 
 crates/workspace
 crates/target
+.next
+/node_modules/**

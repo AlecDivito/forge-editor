@@ -1053,3 +1053,33 @@
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
 }
+
+@layer utilities {
+  /* Inverted radius for the element ABOVE the active item */
+  .inverse-round-bottom::after {
+    content: '';
+    position: absolute;
+    bottom: -16px; /* Matches the 2xl radius (16px) */
+    right: 0;
+    width: 16px;
+    height: 16px;
+    border-top-right-radius: 16px;
+    /* Uses your Tailwind sidebar primary color variable to fill the gap */
+    box-shadow: 0 -8px 0 0 var(--sidebar-primary); 
+    pointer-events: none;
+  }
+
+  /* Inverted radius for the element BELOW the active item */
+  .inverse-round-top::before {
+    content: '';
+    position: absolute;
+    top: -16px; /* Matches the 2xl radius (16px) */
+    right: 0;
+    width: 16px;
+    height: 16px;
+    border-bottom-right-radius: 16px;
+    /* Uses your Tailwind sidebar primary color variable to fill the gap */
+    box-shadow: 0 8px 0 0 var(--sidebar-primary);
+    pointer-events: none;
+  }
+}
