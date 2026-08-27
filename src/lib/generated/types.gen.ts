@@ -79,10 +79,15 @@ export type FsSearchQuery = {
      * ignore this option.
      */
     open_files_only?: boolean;
+    preserve_case?: boolean;
     /**
      * Treat `search` as a regular expression. Defaults to false.
      */
     regex?: boolean;
+    /**
+     * String to use during replace operation
+     */
+    replace: string;
     /**
      * Text to search for.
      */
@@ -273,10 +278,15 @@ export type SearchFilesData = {
          * ignore this option.
          */
         open_files_only?: boolean;
+        preserve_case?: boolean;
         /**
          * Treat `search` as a regular expression. Defaults to false.
          */
         regex?: boolean;
+        /**
+         * String to use during replace operation
+         */
+        replace: string;
         /**
          * Text to search for.
          */
@@ -307,3 +317,26 @@ export type SearchFilesResponses = {
 };
 
 export type SearchFilesResponse = SearchFilesResponses[keyof SearchFilesResponses];
+
+export type SearchAndReplaceFilesData = {
+    body: FsSearchQuery;
+    path?: never;
+    query?: never;
+    url: '/api/fs/replace';
+};
+
+export type SearchAndReplaceFilesErrors = {
+    /**
+     * Failed to search files
+     */
+    400: unknown;
+};
+
+export type SearchAndReplaceFilesResponses = {
+    /**
+     * Files successfully edited and text replaced
+     */
+    200: FsSearchResponse;
+};
+
+export type SearchAndReplaceFilesResponse = SearchAndReplaceFilesResponses[keyof SearchAndReplaceFilesResponses];

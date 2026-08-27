@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rovo::{IntoNestRouter, Router, routing::{get, post}};
 
-use crate::{routes::{file_search::search_files, file_system::{create_file, delete_file, rename_file, save_file}}, state::AppState};
+use crate::{routes::{file_search::{search_and_replace_files, search_files}, file_system::{create_file, delete_file, rename_file, save_file}}, state::AppState};
 
 use file_system::{list_files};
 
@@ -20,5 +20,6 @@ pub fn fs_router(state: Arc<AppState>) -> impl IntoNestRouter<Arc<AppState>> {
         .route("/fs/rename", post(rename_file))
         .route("/fs/delete", post(delete_file))
         .route("/fs/search", get(search_files))
+        .route("/fs/replace", post(search_and_replace_files))
         .with_state(state)
 }

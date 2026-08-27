@@ -37,7 +37,9 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
       </Accordion>
     ),
     'search': (
-      <FileSearchView />
+      <FileTreeProvider>
+        <FileSearchView />
+      </FileTreeProvider>
     )
   }
 

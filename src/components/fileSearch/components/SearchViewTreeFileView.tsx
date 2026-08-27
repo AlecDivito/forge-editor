@@ -1,10 +1,11 @@
-import { FsFileType, FsSearchLine, FsSearchResult } from "@/lib/generated";
+import { FsSearchLine, FsSearchResult } from "@/lib/generated";
 import { buildFileTree } from "../utils/buildFileTree";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { TreeDirectoryNode, TreeFileNode } from "../models/viewMode.model";
 import FileDropdownToggle from "./FileDropdownToggle";
 import { Badge } from "@/components/ui/badge";
 import SearchViewLineMatch from "./SeachViewLineMatch";
+import { useFileTree } from "@/components/fileTree/providers/FileTreeProvider";
 
 interface Props {
     results: FsSearchResult[];
@@ -40,7 +41,12 @@ export default function SearchViewTreeFileView({ results, onLineClick }: Props) 
 }
 
 function TreeDirectoryResult({ node, onLineClick }: ChildProps & { node: TreeDirectoryNode; }) {
+    const { open, setOpen } = useFileTree();
     const [expanded, setExpanded] = useState(true);
+
+    useEffect(() => {
+        setExpanded(open)
+    }, [open])
 
     return (
         <div>

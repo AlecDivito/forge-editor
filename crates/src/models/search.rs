@@ -24,10 +24,13 @@ pub struct FsSearchLine {
     pub end: usize,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct FsSearchQuery {
     /// Text to search for.
     pub search: String,
+
+    /// String to use during replace operation
+    pub replace: String,
 
     /// Case-sensitive matching. Defaults to false.
     #[serde(default)]
@@ -40,6 +43,9 @@ pub struct FsSearchQuery {
     /// Treat `search` as a regular expression. Defaults to false.
     #[serde(default)]
     pub regex: bool,
+
+    #[serde(default)]
+    pub preserve_case: bool,
 
     /// Glob patterns for files to include.
     ///

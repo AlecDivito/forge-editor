@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile, searchFiles } from '../sdk.gen';
-import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchFilesData, SearchFilesResponse } from '../types.gen';
+import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFiles } from '../sdk.gen';
+import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFilesData, SearchFilesResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -201,3 +201,20 @@ export const searchFilesOptions = (options: Options<SearchFilesData>) => queryOp
     },
     queryKey: searchFilesQueryKey(options)
 });
+
+/**
+ * Search files and replace occurrences of text found
+ */
+export const searchAndReplaceFilesMutation = (options?: Partial<Options<SearchAndReplaceFilesData>>): UseMutationOptions<SearchAndReplaceFilesResponse, AxiosError<DefaultError>, Options<SearchAndReplaceFilesData>> => {
+    const mutationOptions: UseMutationOptions<SearchAndReplaceFilesResponse, AxiosError<DefaultError>, Options<SearchAndReplaceFilesData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await searchAndReplaceFiles({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};

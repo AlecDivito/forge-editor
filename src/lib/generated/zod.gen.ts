@@ -45,7 +45,9 @@ export const zFsSearchQuery = z.object({
     match_case: z.boolean().optional().default(false),
     match_whole_word: z.boolean().optional().default(false),
     open_files_only: z.boolean().optional().default(false),
+    preserve_case: z.boolean().optional().default(false),
     regex: z.boolean().optional().default(false),
+    replace: z.string(),
     search: z.string(),
     use_ignore_files: z.boolean().optional().default(false)
 });
@@ -128,7 +130,9 @@ export const zSearchFilesQuery = z.object({
     match_case: z.boolean().optional().default(false),
     match_whole_word: z.boolean().optional().default(false),
     open_files_only: z.boolean().optional().default(false),
+    preserve_case: z.boolean().optional().default(false),
     regex: z.boolean().optional().default(false),
+    replace: z.string(),
     search: z.string(),
     use_ignore_files: z.boolean().optional().default(false)
 });
@@ -137,3 +141,10 @@ export const zSearchFilesQuery = z.object({
  * Successfully searched files
  */
 export const zSearchFilesResponse = zFsSearchResponse;
+
+export const zSearchAndReplaceFilesBody = zFsSearchQuery;
+
+/**
+ * Files successfully edited and text replaced
+ */
+export const zSearchAndReplaceFilesResponse = zFsSearchResponse;

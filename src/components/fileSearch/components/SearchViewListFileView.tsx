@@ -1,8 +1,9 @@
 import { FsSearchLine, FsSearchResult } from "@/lib/generated";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import FileDropdownToggle from "./FileDropdownToggle";
 import { Badge } from "@/components/ui/badge";
 import SearchViewLineMatch from "./SeachViewLineMatch";
+import { useFileTree } from "@/components/fileTree/providers/FileTreeProvider";
 
 interface Props {
   results: FsSearchResult[];
@@ -30,9 +31,14 @@ function ListFileResult({
   result: FsSearchResult;
   onLineClick?: (result: FsSearchResult, match: FsSearchLine) => void;
 }) {
+  const { open } = useFileTree();
   const [expanded, setExpanded] = useState(true);
   const path = result.file.path;
   const name = path.slice(path.lastIndexOf("/") + 1);
+
+  useEffect(() => {
+    setExpanded(open)
+}, [open])
 
   return (
     <div>

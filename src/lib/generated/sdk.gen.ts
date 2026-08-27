@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
+import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -88,4 +88,17 @@ export const searchFiles = <ThrowOnError extends boolean = false>(options: Optio
     responseType: 'json',
     url: '/api/fs/search',
     ...options
+});
+
+/**
+ * Search files and replace occurrences of text found
+ */
+export const searchAndReplaceFiles = <ThrowOnError extends boolean = false>(options: Options<SearchAndReplaceFilesData, ThrowOnError>) => (options.client ?? client).post<SearchAndReplaceFilesResponses, SearchAndReplaceFilesErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/fs/replace',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
