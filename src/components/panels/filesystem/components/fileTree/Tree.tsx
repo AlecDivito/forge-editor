@@ -2,14 +2,16 @@ import { FC, useCallback, useMemo, useState } from "react";
 import { TreeInputItem, TreeItem } from "./TreeItem";
 import useListFiles, { useInvalidateAllFileLists } from "./hooks/use-list-files.hook";
 import { useEditorStore } from "@/store/editor";
-import { Button } from "../ui/button";
-import { AccordionContent, AccordionItem, AccordionTrigger } from "../ui/accordion";
 import { FilePlus2, FolderPlus, RefreshCcw, SquareMinusIcon, SquarePlusIcon } from "lucide-react";
 import { FsFile, FsFileType } from "@/lib/generated";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
 import { useDropTarget } from "./hooks/use-drag-and-drop.hook";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
+import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Button } from "@/components/ui/button";
+import { useUICodeState } from "@/components/panels/code/hooks/use-code-ui-state.hook";
+import { FileId, WorkspaceId } from "@/lib/ws/messages";
 
 interface Props {
   path?: string;
@@ -17,8 +19,8 @@ interface Props {
 
 const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   const { data } = useListFiles({ path })
-  const { openFile } = useEditorStore();
   const { open, setOpen } = useFileTree();
+  const openFile = useUICodeState((s) => s.openFile);
   const refreshFileSystem = useInvalidateAllFileLists()
   const { mutateAsync: createFileOp } = useCreateFile()
   const [newFile, setNewFile] = useState(false)
@@ -34,7 +36,7 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   });
 
   const loadAndOpenFile = useCallback((path: string) => {
-    openFile(`file:///${path}`);
+    openFile("" as WorkspaceId, path as FileId);
   }, []);
 
   const createFile = useCallback((file: FsFile, path: string) => {

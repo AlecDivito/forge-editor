@@ -1,21 +1,19 @@
 "use client";
 
-import { useFileStore } from "@/store/filetree";
 import { FC, ReactNode, useState } from "react";
-import FsTreeAccordionItem from "./fileTree/Tree";
 import { IGridviewPanelProps } from "dockview-react";
 import { useKeyboard } from "react-pre-hooks";
 import { FaFile, FaSearch } from "react-icons/fa";
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./ui/accordion";
-import { FileTreeProvider } from "./fileTree/providers/FileTreeProvider";
-import FileSearchView from "./fileSearch/SearchView";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { FileTreeProvider } from "./components/fileTree/providers/FileTreeProvider";
+import FsTreeAccordionItem from "./components/fileTree/Tree";
+import FileSearchView from "./components/fileSearch/SearchView";
 
 type Props = Record<string, string>;
 
 type ViewType = 'file' | 'search'
 
 const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
-  const { fileTree } = useFileStore();
   const [view, setView] = useState<ViewType>('file')
 
   useKeyboard({

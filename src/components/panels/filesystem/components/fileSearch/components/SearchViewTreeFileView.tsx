@@ -5,7 +5,7 @@ import { TreeDirectoryNode, TreeFileNode } from "../models/viewMode.model";
 import FileDropdownToggle from "./FileDropdownToggle";
 import { Badge } from "@/components/ui/badge";
 import SearchViewLineMatch from "./SeachViewLineMatch";
-import { useFileTree } from "@/components/fileTree/providers/FileTreeProvider";
+import { useFileTree } from "../../fileTree/providers/FileTreeProvider";
 
 interface Props {
     results: FsSearchResult[];

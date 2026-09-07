@@ -10,12 +10,12 @@ import {
     CopyMinus,
     CopyPlus,
 } from "lucide-react";
-import { HoverCardContent, HoverCardTrigger, HoverCard } from "../ui/hover-card";
+import { HoverCardContent, HoverCardTrigger, HoverCard } from "@/components/ui/hover-card";
 import SearchViewForm from "./components/SearchViewForm";
 import useSearchFiles from "./hooks/use-search-files.hook";
 import SearchViewResults from "./components/SearchViewResults";
 import { ViewMode } from "./models/viewMode.model";
-import { Button } from "../ui/button";
+import { Button } from "@/components/ui/button";
 import { useFileTree } from "../fileTree/providers/FileTreeProvider";
 import { FsSearchQuery } from "@/lib/generated";
 import SearchViewSummary from "./components/SearchViewSummary";

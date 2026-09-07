@@ -1,32 +1,32 @@
 "use client";
 
-import Editor from "./editor";
-import FileViewerController from "@/components/filesystem";
-import { useWebSocket } from "next-ws/client";
-import { useEffect } from "react";
-import { useFileStore } from "@/store/filetree";
-import { LSP_INIT_PARAMS } from "./editor/lsp";
-import { ClientAcceptedMessage } from "@/service/lsp";
-import { useRequestStore } from "@/store/requests";
-import { useNotification } from "@/store/notification";
+import FileViewerController from "@/components/panels/filesystem/filesystem";
 import { useSendRequest } from "@/hooks/use-send-message";
-import { DockviewReadyEvent, GridviewComponent, Orientation } from "dockview";
+import { DockviewApi, DockviewReadyEvent, GridviewApi, GridviewComponent, Orientation } from "dockview";
 import Chat from "./chat";
-import { useEditorStore } from "@/store/editor";
-import { useLspStore } from "@/store/lsp";
 import Terminal from "./terminal";
 import CommandPallet from "./commandPallet";
 
 import { GridviewReact, GridviewReadyEvent } from "dockview-react"
+import CodeViewerController from "./panels/code/CodeViewerController";
+import { useUICodeState } from "./panels/code/hooks/use-code-ui-state.hook";
+import { useEffect, useRef, useState } from "react";
+
+const components = {
+  filesystem: FileViewerController,
+  code: CodeViewerController,
+  terminal: Terminal,
+  chat: Chat,
+};
 
 const VSCodeLayout = () => {
   // const ws = useWebSocket();
-  const sender = useSendRequest();
-  const { handleNotification: handleFileTreeNotification, base } = useFileStore();
-  const { handleNotification: handleEditorNotification } = useEditorStore();
-  const { handleNotification: handleLspNotification } = useLspStore();
-  const { handleNotification: handlePushNotification } = useNotification();
-  const { resolveRequest, rejectRequest, resolveNotification, rejectNotification } = useRequestStore();
+  // const sender = useSendRequest();
+  // const { handleNotification: handleFileTreeNotification } = useFileStore();
+  // const { handleNotification: handleEditorNotification } = useEditorStore();
+  // const { handleNotification: handleLspNotification } = useLspStore();
+  // const { handleNotification: handlePushNotification } = useNotification();
+  // const { resolveRequest, rejectRequest, resolveNotification, rejectNotification } = useRequestStore();
 
   // useEffect(() => {
   //   if (!ws || !base) {
@@ -105,7 +105,7 @@ const VSCodeLayout = () => {
   const onReady = (event: GridviewReadyEvent) => {
     event.api.addPanel({
       id: "code",
-      component: "editor",
+      component: "code",
       params: {},
     });
 
@@ -130,13 +130,6 @@ const VSCodeLayout = () => {
     //   params: {},
     //   position: { referencePanel: "code", direction: "below" },
     // });
-  };
-
-  const components = {
-    filesystem: FileViewerController,
-    editor: Editor,
-    terminal: Terminal,
-    chat: Chat,
   };
 
   return (

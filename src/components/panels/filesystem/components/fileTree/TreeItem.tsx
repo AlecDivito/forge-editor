@@ -3,12 +3,12 @@ import FileMenu from "./FileMenu";
 import { MouseEventHandler, SubmitEventHandler, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useListFiles from "./hooks/use-list-files.hook";
 import { FsFile, FsFileType } from "@/lib/generated";
-import { Spinner } from "../ui/spinner";
+import { Spinner } from "@/components/ui/spinner";
 import useRenameFile from "./hooks/use-rename-file.hook";
 import { useFileTree } from "./providers/FileTreeProvider";
 import useCreateFile from "./hooks/use-create-file.hook";
 import { useDragSource, useDropTarget } from "./hooks/use-drag-and-drop.hook";
-import { Input } from "../ui/input";
+import { Input } from "@/components/ui/input";
 import FileDropdownToggle from "../fileSearch/components/FileDropdownToggle";
 
 interface Props {

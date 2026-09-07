@@ -5,7 +5,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "../ui/context-menu";
+} from "@/components/ui/context-menu";
 import { FsFile, FsFileType } from "@/lib/generated";
 import useDeleteFile from "./hooks/use-delete-file.hook";
 import { cn } from "@/lib/utils";
