@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path};
 
 use axum::{
     Json,
@@ -31,14 +31,14 @@ use crate::models::FsSearchResponse;
 /// @tag fs
 #[rovo]
 pub async fn search_files(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Query(query): Query<FsSearchQuery>,
 ) -> impl IntoApiResponse {
     search_files_impl(state, query).await.into_response()
 }
 
 async fn search_files_impl(
-    state: Arc<AppState>,
+    state: AppState,
     query: FsSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let base_dir = state.config.base_dir.clone();
@@ -145,7 +145,7 @@ fn search_files_blocking(
 /// @tag fs
 #[rovo]
 pub async fn search_and_replace_files(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Json(query): Json<FsSearchQuery>,
 ) -> impl IntoApiResponse {
     search_and_replace_files_impl(state, query)
@@ -154,7 +154,7 @@ pub async fn search_and_replace_files(
 }
 
 async fn search_and_replace_files_impl(
-    state: Arc<AppState>,
+    state: AppState,
     query: FsSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let base_dir = state.config.base_dir.clone();

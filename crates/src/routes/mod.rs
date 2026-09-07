@@ -1,16 +1,24 @@
-mod file_system;
 mod file_search;
+mod file_system;
+mod ws;
 
-use std::sync::Arc;
+use rovo::{
+    IntoNestRouter, Router,
+    routing::{any, get, post},
+};
 
+use crate::{
+    routes::{
+        file_search::{search_and_replace_files, search_files},
+        file_system::{create_file, delete_file, rename_file, save_file},
+        ws::ws,
+    },
+    state::AppState,
+};
 
-use rovo::{IntoNestRouter, Router, routing::{get, post}};
+use file_system::list_files;
 
-use crate::{routes::{file_search::{search_and_replace_files, search_files}, file_system::{create_file, delete_file, rename_file, save_file}}, state::AppState};
-
-use file_system::{list_files};
-
-pub fn fs_router(state: Arc<AppState>) -> impl IntoNestRouter<Arc<AppState>> {
+pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
     Router::new()
         .route("/fs/list", get(list_files))
         // .route("/fs/open", post(open_file))
@@ -22,4 +30,8 @@ pub fn fs_router(state: Arc<AppState>) -> impl IntoNestRouter<Arc<AppState>> {
         .route("/fs/search", get(search_files))
         .route("/fs/replace", post(search_and_replace_files))
         .with_state(state)
+}
+
+pub fn ws_router(state: AppState) -> impl IntoNestRouter<AppState> {
+    Router::new().route("/editor", any(ws)).with_state(state)
 }

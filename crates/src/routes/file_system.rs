@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path};
 
 use axum::{Json, extract::{Query, State}, response::IntoResponse};
 use rovo::{axum::IntoApiResponse, rovo};
@@ -18,7 +18,7 @@ use crate::{error::AppError, models::{CreateFile, FilePath, FsFile, FsFileOperat
 /// @tag fs
 #[rovo]
 pub async fn list_files(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Query(path): Query<FilePath>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoApiResponse {
@@ -28,7 +28,7 @@ pub async fn list_files(
 }
 
 async fn list_files_impl(
-    state: Arc<AppState>,
+    state: AppState,
     path: FilePath,
     pagination: PaginationParams,
 ) -> Result<impl IntoResponse, AppError> {
@@ -78,14 +78,14 @@ async fn list_files_impl(
 /// @tag fs
 #[rovo]
 pub async fn save_file(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Json(body): Json<SaveFile>,
 ) -> impl IntoApiResponse {
     save_file_impl(state, body).await.into_response()
 }
 
 async fn save_file_impl(
-    state: Arc<AppState>,
+    state: AppState,
     body: SaveFile,
 ) -> Result<impl IntoResponse, AppError> {
     let local_path = state.to_absolute_path(&body.path)?;
@@ -112,14 +112,14 @@ async fn save_file_impl(
 /// @tag fs
 #[rovo]
 pub async fn create_file(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Json(body): Json<CreateFile>,
 ) -> impl IntoApiResponse {
     create_file_impl(state, body).await.into_response()
 }
 
 async fn create_file_impl(
-    state: Arc<AppState>,
+    state: AppState,
     body: CreateFile,
 ) -> Result<impl IntoResponse, AppError> {
     let local_path = state.to_absolute_path(&body.path)?;
@@ -144,14 +144,14 @@ async fn create_file_impl(
 /// @tag fs
 #[rovo]
 pub async fn rename_file(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Json(path): Json<MovePath>,
 ) -> impl IntoApiResponse {
     rename_file_impl(state, path).await.into_response()
 }
 
 async fn rename_file_impl(
-    state: Arc<AppState>,
+    state: AppState,
     path: MovePath,
 ) -> Result<impl IntoResponse, AppError> {
     let (from, to) = path.to_file_path();
@@ -186,14 +186,14 @@ async fn rename_file_impl(
 /// @tag fs
 #[rovo]
 pub async fn delete_file(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Json(body): Json<FilePath>,
 ) -> impl IntoApiResponse {
     delete_file_impl(state, body).await.into_response()
 }
 
 async fn delete_file_impl(
-    state: Arc<AppState>,
+    state: AppState,
     body: FilePath,
 ) -> Result<impl IntoResponse, AppError> {
     let os_path = body.with_path(&state.config.base_dir)?;

@@ -49,7 +49,7 @@ impl IntoResponse for AppError {
             AppError::String(error) => (StatusCode::BAD_REQUEST, format!("{}", error)),
             AppError::GenericError(error) => (StatusCode::BAD_REQUEST, format!("{}", error)),
         };
-        let mut response = (status, AppJson(ErrorResponse { message })).into_response();
+        let response = (status, AppJson(ErrorResponse { message })).into_response();
         // if let Some(err) = err {
         //     // Insert our error into the response, our logging middleware will use this.
         //     // By wrapping the error in an Arc we can use it as an Extension regardless of any inner types not deriving Clone.

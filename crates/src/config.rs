@@ -9,6 +9,12 @@ use crate::models::FilePath;
 pub struct Config {
     pub port: u16,
     pub base_dir: PathBuf,
+    // Current only one workspace is supported through the base directory, however
+    // i think i want to add in a WORKSPACE_X_{BASE_DIR,NAME,ECT} enviornment variable.
+    // This will allow for openning multiple projects when the editor is openned.
+    // The server environments configure how to configure the server.
+
+    // TODO: include a way to set a token which should be checked on every API route.
 }
 
 impl Config {
