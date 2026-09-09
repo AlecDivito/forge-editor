@@ -16,7 +16,10 @@ use tracing::debug;
 
 use crate::{
     error::AppError,
-    models::{FileNameSearchQuery, FileNameSearchResponse, FileNameSearchResult, FsFile, FsSearchLine, FsSearchQuery, FsSearchResult},
+    models::{
+        FileNameSearchQuery, FileNameSearchResponse, FileNameSearchResult, FsFile, FsSearchLine,
+        FsSearchQuery, FsSearchResult,
+    },
     state::AppState,
 };
 
@@ -40,9 +43,10 @@ async fn search_file_names_impl(
     query: FileNameSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let base_dir = state.config.base_dir.clone();
-    let response = tokio::task::spawn_blocking(move || search_file_names_blocking(&base_dir, query))
-        .await
-        .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
+    let response =
+        tokio::task::spawn_blocking(move || search_file_names_blocking(&base_dir, query))
+            .await
+            .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
     Ok(Json(response))
 }
 
@@ -52,7 +56,9 @@ fn search_file_names_blocking(
 ) -> Result<FileNameSearchResponse, AppError> {
     let query = query.search.trim().to_lowercase();
     if query.is_empty() {
-        return Ok(FileNameSearchResponse { results: Vec::new() });
+        return Ok(FileNameSearchResponse {
+            results: Vec::new(),
+        });
     }
 
     let walker = ignore::WalkBuilder::new(base_dir)
@@ -77,7 +83,9 @@ fn search_file_names_blocking(
             Err(_) => continue,
         };
         let path = format!("/{}", relative.to_string_lossy().replace('\\', "/"));
-        let name = relative.file_name().map(|value| value.to_string_lossy().to_string())
+        let name = relative
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
         let score = fuzzy_score(&path.to_lowercase(), &name.to_lowercase(), &query);
         if let Some(score) = score {
@@ -87,7 +95,9 @@ fn search_file_names_blocking(
 
     results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)));
     results.truncate(100);
-    Ok(FileNameSearchResponse { results: results.into_iter().map(|(_, file)| file).collect() })
+    Ok(FileNameSearchResponse {
+        results: results.into_iter().map(|(_, file)| file).collect(),
+    })
 }
 
 fn fuzzy_score(path: &str, name: &str, query: &str) -> Option<usize> {
@@ -137,8 +147,8 @@ async fn search_files_impl(
     let response = tokio::task::spawn_blocking(move || {
         search_files_blocking(&base_dir, query, open_files.as_ref())
     })
-        .await
-        .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
+    .await
+    .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
 
     Ok(Json(response))
 }
@@ -287,7 +297,7 @@ async fn search_and_replace_files_impl(
                 query.preserve_case,
             )?;
         }
-        return Ok(response)
+        return Ok(response);
     })
     .await
     .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
@@ -311,17 +321,28 @@ fn relative_file_id(file_id: &str) -> PathBuf {
 }
 
 fn apply_case_pattern(matched: &str, replacement: &str) -> String {
-    if matched.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) {
+    if matched
+        .chars()
+        .all(|c| !c.is_alphabetic() || c.is_uppercase())
+    {
         replacement.to_uppercase()
-    } else if matched.chars().all(|c| !c.is_alphabetic() || c.is_lowercase()) {
+    } else if matched
+        .chars()
+        .all(|c| !c.is_alphabetic() || c.is_lowercase())
+    {
         replacement.to_lowercase()
     } else if matched.chars().next().is_some_and(|c| c.is_uppercase())
-        && matched.chars().skip(1).all(|c| !c.is_alphabetic() || c.is_lowercase())
+        && matched
+            .chars()
+            .skip(1)
+            .all(|c| !c.is_alphabetic() || c.is_lowercase())
     {
         // Title case: capitalize first char, lowercase the rest
         let mut chars = replacement.chars();
         match chars.next() {
-            Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+            Some(first) => {
+                first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+            }
             None => String::new(),
         }
     } else {
@@ -459,7 +480,6 @@ fn match_file(path: &Path, matcher: &RegexMatcher) -> Result<Vec<FsSearchLine>, 
 
     Ok(matches)
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,12 +1,9 @@
+use dashmap::{DashMap, DashSet};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use dashmap::{DashMap, DashSet};
-use tokio::{
-    sync::{mpsc},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
     actors::{DocumentActor, LspServerActor, TerminalActor},
@@ -76,11 +73,19 @@ impl AppState {
         self.config.base_dir.clone()
     }
 
-    pub fn resolve_file_path(&self, _workspace_id: &WorkspaceId, file_id: &FileId) -> anyhow::Result<PathBuf> {
+    pub fn resolve_file_path(
+        &self,
+        _workspace_id: &WorkspaceId,
+        file_id: &FileId,
+    ) -> anyhow::Result<PathBuf> {
         Self::base_to_absolute_path(&self.config.base_dir, &PathBuf::from(file_id))
     }
-    
-    pub fn authorize(&self, _client_id: &ClientId, _workspace_id: &WorkspaceId) -> anyhow::Result<bool> {
+
+    pub fn authorize(
+        &self,
+        _client_id: &ClientId,
+        _workspace_id: &WorkspaceId,
+    ) -> anyhow::Result<bool> {
         Ok(true)
     }
 }

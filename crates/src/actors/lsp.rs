@@ -319,7 +319,7 @@ impl LspServerActor {
         let Some(uri) = params.get("uri").and_then(|v| v.as_str()) else {
             return;
         };
-        let Some(file_id) = self.uri_to_file_id(uri) else {
+        let Some(file_id) = self.uri_to_file_id(uri).await else {
             debug!("diagnostics for untracked uri: {uri}");
             return;
         };
@@ -341,12 +341,20 @@ impl LspServerActor {
         }
     }
 
-    fn uri_to_file_id(&self, uri: &str) -> Option<FileId> {
+    async fn uri_to_file_id(&self, uri: &str) -> Option<FileId> {
         let path = uri.strip_prefix("file://")?;
-        self.app_state
+        let candidates: Vec<_> = self
+            .app_state
             .open_files
             .iter()
-            .find(|entry| entry.key().0 == self.workspace_id && entry.value().path_matches(path))
-            .map(|entry| entry.key().1.clone())
+            .filter(|entry| entry.key().0 == self.workspace_id)
+            .map(|entry| (entry.key().1.clone(), entry.value().clone()))
+            .collect();
+        for (file_id, document) in candidates {
+            if document.path_matches(path).await {
+                return Some(file_id);
+            }
+        }
+        None
     }
 }

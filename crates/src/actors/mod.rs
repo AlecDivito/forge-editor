@@ -1,7 +1,7 @@
-mod terminal;
 mod document;
 mod lsp;
+mod terminal;
 
-pub use terminal::TerminalActor;
 pub use document::DocumentActor;
 pub use lsp::LspServerActor;
+pub use terminal::TerminalActor;

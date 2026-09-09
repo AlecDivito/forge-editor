@@ -1,11 +1,20 @@
-use std::{path::Path};
+use std::path::Path;
 
-use axum::{Json, extract::{Query, State}, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Query, State},
+    response::IntoResponse,
+};
 use rovo::{axum::IntoApiResponse, rovo};
 
-use crate::{error::AppError, models::{CreateFile, FilePath, FsFile, FsFileOperation, FsFileType, FsListDirectory, FsMoveFileResult, MovePath, PaginationParams, SaveFile}, state::AppState};
-
-
+use crate::{
+    error::AppError,
+    models::{
+        CreateFile, FilePath, FsFile, FsFileOperation, FsFileType, FsListDirectory,
+        FsMoveFileResult, MovePath, PaginationParams, SaveFile,
+    },
+    state::AppState,
+};
 
 /// Get list of files for directory
 ///
@@ -66,7 +75,6 @@ async fn list_files_impl(
     }))
 }
 
-
 /// Update the contents of a file
 ///
 /// # Responses
@@ -84,17 +92,16 @@ pub async fn save_file(
     save_file_impl(state, body).await.into_response()
 }
 
-async fn save_file_impl(
-    state: AppState,
-    body: SaveFile,
-) -> Result<impl IntoResponse, AppError> {
+async fn save_file_impl(state: AppState, body: SaveFile) -> Result<impl IntoResponse, AppError> {
     let local_path = state.to_absolute_path(&body.path)?;
     if local_path.is_file() {
         tokio::fs::write(local_path, body.contents).await?;
     } else {
-        return Err(AppError::String(format!("Updating non file is not supported")))
+        return Err(AppError::String(format!(
+            "Updating non file is not supported"
+        )));
     }
-    
+
     Ok(Json(FsFileOperation {
         success: true,
         path: body.path,
@@ -126,9 +133,13 @@ async fn create_file_impl(
     match body.ty {
         FsFileType::Directory => tokio::fs::create_dir(local_path).await?,
         FsFileType::File => tokio::fs::write(local_path, "").await?,
-        FsFileType::SymLink => return Err(AppError::String("Creating sym link is not supported".into())),
+        FsFileType::SymLink => {
+            return Err(AppError::String(
+                "Creating sym link is not supported".into(),
+            ));
+        }
     }
-    
+
     Ok(Json(body))
 }
 
@@ -150,24 +161,35 @@ pub async fn rename_file(
     rename_file_impl(state, path).await.into_response()
 }
 
-async fn rename_file_impl(
-    state: AppState,
-    path: MovePath,
-) -> Result<impl IntoResponse, AppError> {
+async fn rename_file_impl(state: AppState, path: MovePath) -> Result<impl IntoResponse, AppError> {
     let (from, to) = path.to_file_path();
     let to_path = state.to_absolute_path(to.path.clone())?;
     let from_path = state.to_absolute_path(from.path.clone())?;
-    println!("{:?} ({}) -> {:?} ({})", from_path, from_path.try_exists()?, to_path, to_path.try_exists()?);
+    println!(
+        "{:?} ({}) -> {:?} ({})",
+        from_path,
+        from_path.try_exists()?,
+        to_path,
+        to_path.try_exists()?
+    );
     if !from_path.try_exists()? {
-        return Err(AppError::String("Source file can't be moved because it does not exist".into()))
+        return Err(AppError::String(
+            "Source file can't be moved because it does not exist".into(),
+        ));
     }
     if to_path.try_exists()? {
-        return Err(AppError::String("File can't be moved because it already exists in end result location".into()))
+        return Err(AppError::String(
+            "File can't be moved because it already exists in end result location".into(),
+        ));
     }
-    
-    let from_file = FsFile::from_app_state(&state, Path::new(&from.path)).unwrap().unwrap();
+
+    let from_file = FsFile::from_app_state(&state, Path::new(&from.path))
+        .unwrap()
+        .unwrap();
     std::fs::rename(from_path, to_path)?;
-    let to_file = FsFile::from_app_state(&state, Path::new(&to.path)).unwrap().unwrap();
+    let to_file = FsFile::from_app_state(&state, Path::new(&to.path))
+        .unwrap()
+        .unwrap();
 
     Ok(Json(FsMoveFileResult {
         from: from_file,
@@ -192,15 +214,15 @@ pub async fn delete_file(
     delete_file_impl(state, body).await.into_response()
 }
 
-async fn delete_file_impl(
-    state: AppState,
-    body: FilePath,
-) -> Result<impl IntoResponse, AppError> {
+async fn delete_file_impl(state: AppState, body: FilePath) -> Result<impl IntoResponse, AppError> {
     let os_path = body.with_path(&state.config.base_dir)?;
     if let Some(file) = FsFile::from_path(&os_path) {
         file.delete().await?;
     } else {
-        return Err(AppError::String(format!("File '{}' does not exist. Failed to delete file.", body.path)))
+        return Err(AppError::String(format!(
+            "File '{}' does not exist. Failed to delete file.",
+            body.path
+        )));
     }
 
     Ok(Json(body))

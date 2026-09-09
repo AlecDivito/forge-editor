@@ -1,8 +1,4 @@
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
-};
-
-
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct JsonRpcError {
@@ -17,9 +13,18 @@ impl std::fmt::Display for JsonRpcError {
 impl std::error::Error for JsonRpcError {}
 
 pub enum JsonRpcMessage {
-    Response { id: i64, result: Result<serde_json::Value, JsonRpcError> },
-    Notification { method: String, params: serde_json::Value },
-    Request { id: i64, method: String },
+    Response {
+        id: i64,
+        result: Result<serde_json::Value, JsonRpcError>,
+    },
+    Notification {
+        method: String,
+        params: serde_json::Value,
+    },
+    Request {
+        id: i64,
+        method: String,
+    },
 }
 
 impl JsonRpcMessage {
@@ -29,7 +34,10 @@ impl JsonRpcMessage {
     fn parse(bytes: &[u8]) -> Option<Self> {
         let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
         let id = value.get("id").and_then(|v| v.as_i64());
-        let method = value.get("method").and_then(|v| v.as_str()).map(str::to_string);
+        let method = value
+            .get("method")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         match (id, method) {
             (None, Some(method)) => Some(Self::Notification {
@@ -41,7 +49,10 @@ impl JsonRpcMessage {
                 let result = if let Some(err) = value.get("error") {
                     Err(serde_json::from_value(err.clone()).ok()?)
                 } else {
-                    Ok(value.get("result").cloned().unwrap_or(serde_json::Value::Null))
+                    Ok(value
+                        .get("result")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null))
                 };
                 Some(Self::Response { id, result })
             }
@@ -56,7 +67,9 @@ pub struct LspFramedReader<R> {
 
 impl<R: tokio::io::AsyncRead + Unpin> LspFramedReader<R> {
     pub fn new(inner: R) -> Self {
-        Self { reader: BufReader::new(inner) }
+        Self {
+            reader: BufReader::new(inner),
+        }
     }
 
     pub async fn next_message(&mut self) -> Option<JsonRpcMessage> {

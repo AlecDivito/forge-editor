@@ -5,9 +5,9 @@ pub struct LspDiagnostic {
     pub range: LspRange,
     pub severity: DiagnosticSeverity,
     pub message: String,
-    pub source: Option<String>,          // e.g. "rust-analyzer", "eslint"
-    pub code: Option<DiagnosticCode>,      // e.g. "E0308", or eslint rule name
-    pub tags: Vec<DiagnosticTag>,           // e.g. Unnecessary, Deprecated
+    pub source: Option<String>,       // e.g. "rust-analyzer", "eslint"
+    pub code: Option<DiagnosticCode>, // e.g. "E0308", or eslint rule name
+    pub tags: Vec<DiagnosticTag>,     // e.g. Unnecessary, Deprecated
     pub related_information: Vec<RelatedInfo>,
 }
 
@@ -19,8 +19,8 @@ pub struct LspRange {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct LspPosition {
-    pub line: u32,       // zero-indexed, per LSP spec
-    pub character: u32,   // UTF-16 code unit offset — see note below
+    pub line: u32,      // zero-indexed, per LSP spec
+    pub character: u32, // UTF-16 code unit offset — see note below
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,7 +48,7 @@ pub enum DiagnosticTag {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RelatedInfo {
-    pub location_uri: String,   // could be a different file than the diagnostic itself
+    pub location_uri: String, // could be a different file than the diagnostic itself
     pub range: LspRange,
     pub message: String,
 }
@@ -106,13 +106,22 @@ impl From<RawLspDiagnostic> for LspDiagnostic {
                 serde_json::Value::String(s) => Some(DiagnosticCode::String(s)),
                 _ => None,
             }),
-            tags: raw.tags.unwrap_or_default().into_iter().filter_map(|t| match t {
-                1 => Some(DiagnosticTag::Unnecessary),
-                2 => Some(DiagnosticTag::Deprecated),
-                _ => None,
-            }).collect(),
-            related_information: raw.related_information.unwrap_or_default()
-                .into_iter().map(Into::into).collect(),
+            tags: raw
+                .tags
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|t| match t {
+                    1 => Some(DiagnosticTag::Unnecessary),
+                    2 => Some(DiagnosticTag::Deprecated),
+                    _ => None,
+                })
+                .collect(),
+            related_information: raw
+                .related_information
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }

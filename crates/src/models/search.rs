@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::FsFile;
 
-
-
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct FsSearchResponse {
     pub results: Vec<FsSearchResult>,

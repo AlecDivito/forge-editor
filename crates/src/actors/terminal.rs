@@ -7,7 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{info, warn};
 
@@ -32,9 +32,13 @@ impl std::fmt::Debug for TerminalActor {
 
 fn default_shell() -> String {
     #[cfg(unix)]
-    { std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()) }
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    }
     #[cfg(windows)]
-    { "cmd.exe".to_string() }
+    {
+        "cmd.exe".to_string()
+    }
 }
 
 impl TerminalActor {
@@ -45,7 +49,12 @@ impl TerminalActor {
         rows: u16,
     ) -> anyhow::Result<(Arc<Self>, JoinHandle<()>)> {
         let pty_system = native_pty_system();
-        let pair = pty_system.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+        let pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
 
         let mut cmd = CommandBuilder::new(default_shell());
         cmd.cwd(cwd);
@@ -116,10 +125,12 @@ impl TerminalActor {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.master
-            .lock()
-            .unwrap()
-            .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+        self.master.lock().unwrap().resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
         Ok(())
     }
 
@@ -127,11 +138,12 @@ impl TerminalActor {
         // prune subscribers whose receiver has actually disconnected;
         // leave ones that are merely full (drop this message for them,
         // don't punish the whole workspace for one slow client)
-        self.subscribers.retain(|_, sender| match sender.try_send(msg.clone()) {
-            Ok(()) => true,
-            Err(mpsc::error::TrySendError::Full(_)) => true,
-            Err(mpsc::error::TrySendError::Closed(_)) => false,
-        });
+        self.subscribers
+            .retain(|_, sender| match sender.try_send(msg.clone()) {
+                Ok(()) => true,
+                Err(mpsc::error::TrySendError::Full(_)) => true,
+                Err(mpsc::error::TrySendError::Closed(_)) => false,
+            });
     }
 
     /// Returns true if no subscribers remain — caller decides whether that

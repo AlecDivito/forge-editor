@@ -1,26 +1,23 @@
+mod actors;
 mod config;
 mod error;
 mod models;
 mod routes;
 mod state;
-mod actors;
 mod util;
 
 use axum::http::{HeaderValue, Method, header};
 use rovo::{Router, aide::openapi::OpenApi};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use std::error::Error;
 use std::net::SocketAddr;
-use std::{error::Error};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::routes::{fs_router, ws_router};
-use crate::{
-    config::Config,
-    state::AppState,
-};
+use crate::{config::Config, state::AppState};
 use dotenvy;
 
 #[tokio::main]
@@ -42,9 +39,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let state = AppState::new(config);
 
     let cors = CorsLayer::new()
-    .allow_origin(AllowOrigin::exact(HeaderValue::from_static("http://localhost:3000")))
-    .allow_methods([Method::GET, Method::POST])
-    .allow_headers([header::CONTENT_TYPE]);
+        .allow_origin(AllowOrigin::exact(HeaderValue::from_static(
+            "http://localhost:3000",
+        )))
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::CONTENT_TYPE]);
 
     let mut api = OpenApi::default();
     api.info.title = "Code Server API".to_string();
@@ -58,7 +57,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_state(state)
         .finish()
         .layer(cors)
-        .layer(TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::default().include_headers(true)));
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::default().include_headers(true)),
+        );
 
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(
