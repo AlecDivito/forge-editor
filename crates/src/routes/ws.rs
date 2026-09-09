@@ -19,8 +19,9 @@ use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, error, info};
+use tracing::{debug, error, warn, info};
 use yrs::StateVector;
 use yrs::updates::decoder::Decode;
 
@@ -183,13 +184,12 @@ async fn dispatch(
             workspace_id,
             file_id,
         } => {
-            debug!("DocSubscribe event recieved");
             authorize(state, &client_id, &workspace_id).await?;
-            debug!("User is authorized to load document");
             let doc = get_or_load_doc(state, &workspace_id, &file_id).await?;
-            debug!("Document is loaded");
             doc.subscribe().await;
-            debug!("Document was subscribed to.");
+            
+            let lsp = get_or_spawn_lsp(state, &workspace_id, &file_id).await?;
+            doc.ensure_lsp_open(&lsp).await?;
 
             // full state (sync step 2) — first time this client has seen the doc
             let full = doc.state_as_update(&StateVector::default()).await;
@@ -282,6 +282,8 @@ async fn dispatch(
             file_id,
             update,
         } => {
+            let workspace_id_copy = workspace_id.clone();
+            let file_id_copy = file_id.clone();
             let doc = state
                 .open_files
                 .get(&(workspace_id.clone(), file_id.clone()))
@@ -290,7 +292,25 @@ async fn dispatch(
                     anyhow::anyhow!("doc not open: {workspace_id:?}/{file_id:?}")
                 })?;
             match doc.apply_remote_update(&update, client_id).await {
-                Ok(()) => Ok(()),
+                Ok(generation) => {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        if doc.generation() != generation {
+                            return; // a later edit landed — that window owns the sync now
+                        }
+                        match get_lsp_if_running(&state, workspace_id_copy.clone(), file_id_copy.clone()).await {
+                            Ok(Some(lsp)) => {
+                                if let Err(e) = doc.sync_to_lsp(&lsp).await {
+                                    warn!("failed to sync {workspace_id_copy}/{file_id_copy} to lsp: {e}");
+                                }
+                            }
+                            Ok(None) => {} // unsupported language, or server not attached yet
+                            Err(e) => warn!("lsp lookup failed for {workspace_id_copy}/{file_id_copy}: {e}"),
+                        }
+                    });
+                    Ok(())
+                },
                 Err(e) => {
                     document_tx
                         .send(ServerMessage::Error {

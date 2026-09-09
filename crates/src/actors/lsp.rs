@@ -30,6 +30,7 @@ pub struct LspServerActor {
     workspace_id: WorkspaceId,
     language_id: LanguageId,
     stdin: Mutex<ChildStdin>,
+    child: Mutex<tokio::process::Child>,
     pending: DashMap<i64, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>,
     next_id: AtomicI64,
     app_state: Arc<AppState>,
@@ -52,6 +53,7 @@ impl LspServerActor {
         workspace_id: WorkspaceId,
         language: LanguageId,
     ) -> anyhow::Result<Arc<Self>> {
+        debug!("Spawning LSP {:?}", language.server_binary_path());
         let mut child = Command::new(language.server_binary_path())
             .arg("--stdio")
             .current_dir(workspace_root)
@@ -69,6 +71,7 @@ impl LspServerActor {
             workspace_id,
             language_id: language,
             stdin: Mutex::new(stdin),
+            child: Mutex::new(child),
             pending: DashMap::new(),
             next_id: AtomicI64::new(1),
             app_state,
@@ -89,13 +92,99 @@ impl LspServerActor {
         self.request(
             "initialize",
             serde_json::json!({
-                "processId": std::process::id(),
-                "rootUri": format!("file://{}", root.display()),
-                "capabilities": {}, // expand as you wire up specific LSP features
-            }),
+                    "processId": std::process::id(),
+                    "rootUri": format!("file://{}", root.display()),
+                    "capabilities": {
+                        "general": {
+                            "positionEncodings": ["utf-8", "utf-16"]
+                        },
+                        "workspace": {
+                            "workspaceEdit": {
+                                // versioned per-document edits (TextDocumentEdit[]) rather
+                                // than the flat uri->TextEdit[] map — worth declaring now
+                                // even though nothing uses it yet, since rename/code actions
+                                // will want it and it's awkward to add capabilities later
+                                // without re-negotiating.
+                                "documentChanges": true
+                            },
+                            "symbol": {
+                                // for workspace/symbol — "go to symbol in workspace", a
+                                // command-palette staple. No special item-kind support
+                                // declared yet; add "tagSupport"/"resolveSupport" only once
+                                // you're actually consuming those fields.
+                                "dynamicRegistration": false
+                            }
+                        },
+                        "textDocument": {
+                            "synchronization": {
+                                "dynamicRegistration": false,
+                                "willSave": false,
+                                "willSaveWaitUntil": false,
+                                "didSave": true
+                            },
+                            "publishDiagnostics": {
+                                "relatedInformation": true,
+                                "tagSupport": { "valueSet": [1, 2] }, // Unnecessary, Deprecated — matches DiagnosticTag
+                                "versionSupport": false
+                            },
+                            "hover": {
+                                // matches what hover.ts actually renders — plaintext/markdown
+                                // strings via formatContents(), nothing richer.
+                                "dynamicRegistration": false,
+                                "contentFormat": ["plaintext", "markdown"]
+                            },
+                            "completion": {
+                                // matches what autocomplete.ts actually consumes: label, kind,
+                                // detail, textEdit.newText, documentation, sortText, filterText.
+                                "dynamicRegistration": false,
+                                "completionItem": {
+                                    "snippetSupport": false, // set true only once you insert $1/$2 placeholders, not just newText verbatim
+                                    "documentationFormat": ["plaintext", "markdown"],
+                                    "deprecatedSupport": true // maps directly to CompletionItemTag.Deprecated, cheap to declare
+                                },
+                                "contextSupport": true // you already send `context: { triggerKind, triggerCharacter }`
+                            },
+                            "definition": {
+                                // textDocument/definition — "go to definition"
+                                "dynamicRegistration": false,
+                                "linkSupport": false // true only once you handle LocationLink (with originSelectionRange) vs plain Location
+                            },
+                            "references": {
+                                // textDocument/references — "find all references"
+                                "dynamicRegistration": false
+                            },
+                            "documentSymbol": {
+                                // textDocument/documentSymbol — "go to symbol in file"
+                                "dynamicRegistration": false,
+                                "hierarchicalDocumentSymbolSupport": true // nested DocumentSymbol[] tree instead of flat SymbolInformation[] — worth it for outline views
+                            },
+                            "codeAction": {
+                                // textDocument/codeAction — quick fixes, refactors
+                                "dynamicRegistration": false,
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix", "refactor", "source", "source.organizeImports"]
+                                    }
+                                }
+                            },
+                            "formatting": {
+                                // textDocument/formatting — "format document"
+                                "dynamicRegistration": false
+                            },
+                            "rename": {
+                                // textDocument/rename — "rename symbol"
+                                "dynamicRegistration": false,
+                                "prepareSupport": false // true only once you call textDocument/prepareRename first to validate/get a range
+                            }
+                        }
+                    }, // expand as you wire up specific LSP features
+                }),
         )
         .await?;
         self.notify("initialized", serde_json::json!({})).await
+
+        // TODO(AI): We also need to actually get the return value back from the
+        // LSP server so we respect what it outputs. This will need to be saved.
     }
 
     pub async fn request(
@@ -114,9 +203,24 @@ impl LspServerActor {
             return Err(e);
         }
 
+        let language = self.language_id();
         match tokio::time::timeout(Duration::from_secs(10), rx).await {
-            Ok(Ok(Ok(result))) => Ok(result),
-            Ok(Ok(Err(rpc_err))) => Err(rpc_err.into()),
+            Ok(Ok(Ok(result))) => {
+                debug!(
+                    "LSP {:?} Response {:?}",
+                    language.server_binary_path(),
+                    result
+                );
+                Ok(result)
+            }
+            Ok(Ok(Err(rpc_err))) => {
+                warn!(
+                    "LSP {:?} Response {:?}",
+                    language.server_binary_path(),
+                    rpc_err
+                );
+                Err(rpc_err.into())
+            }
             Ok(Err(_)) => anyhow::bail!("lsp server dropped request '{method}' without responding"),
             Err(_) => {
                 self.pending.remove(&id);
@@ -173,6 +277,15 @@ impl LspServerActor {
                 "LSP server for {:?} exited (stdout closed)",
                 actor.language_id
             );
+            if let Ok(status) = actor.child.lock().await.wait().await {
+                debug!("LSP {:?} exit status: {status:?}", actor.language_id);
+            }
+            // TODO: There might be a cleaner way to handle this.
+            actor
+                .app_state
+                .lsp_servers
+                .remove(&(actor.workspace_id.clone(), actor.language_id));
+
             let pending_ids: Vec<i64> = actor.pending.iter().map(|e| *e.key()).collect();
             for id in pending_ids {
                 if let Some((_, tx)) = actor.pending.remove(&id) {

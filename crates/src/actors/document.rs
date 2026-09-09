@@ -2,7 +2,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicUsize, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 use yrs::{GetString, ReadTxn, StateVector, Text, Transact, Update, updates::decoder::Decode};
 
 use crate::{
+    util::{diff, byte_offset_to_position},
     actors::LspServerActor, models::{ClientId, DocEvent, FileId, LspDiagnostic, WorkspaceId}, state::AppState,
 };
 use yrs::WriteTxn;
@@ -43,6 +44,8 @@ pub struct DocumentActor {
     lsp_opened: AtomicBool,
     lsp_version: AtomicI64,
     diagnostics: RwLock<Vec<LspDiagnostic>>,
+    edit_generation: AtomicU64,
+    last_synced_text: RwLock<String>,
     eviction_task: AsyncMutex<Option<JoinHandle<()>>>,
 }
 
@@ -81,6 +84,8 @@ impl DocumentActor {
             lsp_opened: AtomicBool::new(false),
             lsp_version: AtomicI64::new(0),
             diagnostics: RwLock::new(Vec::new()),
+            edit_generation: AtomicU64::new(0),
+            last_synced_text: RwLock::new(content),
             eviction_task: AsyncMutex::new(None),
         }))
     }
@@ -135,7 +140,7 @@ impl DocumentActor {
         *self.eviction_task.lock().await = Some(handle);
     }
 
-    pub async fn apply_remote_update(&self, update: &[u8], origin: ClientId) -> anyhow::Result<()> {
+    pub async fn apply_remote_update(self: &Arc<Self>, update: &[u8], origin: ClientId) -> anyhow::Result<u64> {
         if !self.editable.load(Ordering::Acquire) {
             anyhow::bail!("document is read-only");
         }
@@ -149,8 +154,50 @@ impl DocumentActor {
 
         self.dirty.store(true, Ordering::Release);
         self.last_activity.store(now_ms(), Ordering::Relaxed);
+        let generation = self.edit_generation.fetch_add(1, Ordering::AcqRel) + 1;
         let _ = self.updates_tx.send(DocEvent::Update { update: update.to_vec(), origin });
-        Ok(())
+
+        // Debounced LSP push. Every edit spawns one of these, but only the task
+        // that sees no further edits within the window actually does anything —
+        // the rest bail on the generation check. Cheap enough not to bother
+        // cancelling the losers.
+        // let this = self.clone();
+        // tokio::spawn(async move {
+        //     tokio::time::sleep(Duration::from_millis(400)).await;
+        //     if this.edit_generation.load(Ordering::Acquire) != generation {
+        //         return; // a later edit landed — that task will handle the sync
+        //     }
+        //     let Some(lsp) = this.lsp.read().await.clone() else {
+        //         return; // no LSP attached (unsupported language, or spawn failed)
+        //     };
+        //     if let Err(e) = this.sync_to_lsp(&lsp).await {
+        //         warn!("failed to sync {:?} to lsp: {e}", this.path);
+        //     }
+        // });
+
+        // Debounced disk flush, independent of the eviction path. This is what
+        // bounds crash data-loss during a long-lived session with active
+        // subscribers — eviction only flushes after everyone leaves.
+        let this = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if this.edit_generation.load(Ordering::Acquire) != generation {
+                return;
+            }
+            if !this.dirty.load(Ordering::Acquire) {
+                return; // already flushed by something else (e.g. eviction) meanwhile
+            }
+            debug!("Attempting to write {:?} to disk", this.path);
+            if let Err(e) = this.flush_to_disk().await {
+                warn!("autosave failed for {:?}: {e}", this.path);
+            }
+        });
+
+        Ok(self.generation())
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.edit_generation.load(Ordering::Acquire)
     }
 
     /// Opaque to the server — see earlier discussion. Just fan it out.
@@ -205,6 +252,7 @@ impl DocumentActor {
             return Ok(());
         }
         let text = self.content_snapshot().await;
+        *self.last_synced_text.write().await = text.clone();
         lsp.notify("textDocument/didOpen", serde_json::json!({
             "textDocument": {
                 "uri": self.lsp_uri(),
@@ -218,12 +266,46 @@ impl DocumentActor {
     /// Full-document sync. Call this from a debounced flush task, never
     /// on every keystroke — see the "why full sync" note from earlier.
     pub async fn sync_to_lsp(&self, lsp: &LspServerActor) -> anyhow::Result<()> {
-        let text = self.content_snapshot().await;
+        let new_text = self.content_snapshot().await;
+        let mut last = self.last_synced_text.write().await;
+    
+        if *last == new_text {
+            return Ok(()); // nothing changed since the last successful sync
+        }
+    
         let version = self.lsp_version.fetch_add(1, Ordering::AcqRel) + 1;
+    
+        let change = if true /* lsp.sync_kind() == 2 */ {
+            match diff(&last, &new_text) {
+                Some(c) => {
+                    let encoding = "utf-16"; // lsp.position_encoding();
+                    let start = byte_offset_to_position(&last, c.old_start, &encoding);
+                    let end = byte_offset_to_position(&last, c.old_end, &encoding);
+                    let value = serde_json::json!({
+                        "range": {
+                            "start": { "line": start.line, "character": start.character },
+                            "end": { "line": end.line, "character": end.character },
+                        },
+                        "text": c.new_text,
+                    });
+                    debug!("Syncing code update to LSP {:?}", value);
+                    value
+                }
+                None => return Ok(()), // unreachable given the equality check above
+            }
+        } else {
+            // server only declared Full sync — send the whole document, same
+            // as before. This is the fallback path, not a special case.
+            serde_json::json!({ "text": new_text })
+        };
+    
         lsp.notify("textDocument/didChange", serde_json::json!({
             "textDocument": { "uri": self.lsp_uri(), "version": version },
-            "contentChanges": [{ "text": text }],
-        })).await
+            "contentChanges": [change],
+        })).await?;
+    
+        *last = new_text;
+        Ok(())
     }
 
     pub async fn ensure_lsp_closed(&self, lsp: &LspServerActor) -> anyhow::Result<()> {
