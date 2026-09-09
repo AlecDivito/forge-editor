@@ -5,7 +5,7 @@ import { useSendRequest } from "@/hooks/use-send-message";
 import { DockviewApi, DockviewReadyEvent, GridviewApi, GridviewComponent, Orientation } from "dockview";
 import Chat from "./chat";
 import Terminal from "./terminal";
-import CommandPallet from "./commandPallet";
+import CommandPallet from "./panels/commandPallet/CommandPallet";
 
 import { GridviewReact, GridviewReadyEvent } from "dockview-react"
 import CodeViewerController from "./panels/code/CodeViewerController";

@@ -9,6 +9,10 @@ export type CreateFile = {
     ty: FsFileType;
 };
 
+export type FileNameSearchQuery = {
+    search: string;
+};
+
 export type FilePath = {
     path: string;
 };
@@ -317,6 +321,15 @@ export type SearchFilesResponses = {
 };
 
 export type SearchFilesResponse = SearchFilesResponses[keyof SearchFilesResponses];
+
+export type SearchFileNamesData = {
+    body?: never;
+    path?: never;
+    query: {
+        search: string;
+    };
+    url: '/api/fs/files/search';
+};
 
 export type SearchAndReplaceFilesData = {
     body: FsSearchQuery;

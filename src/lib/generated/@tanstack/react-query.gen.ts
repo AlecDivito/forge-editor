@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFiles } from '../sdk.gen';
-import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFilesData, SearchFilesResponse } from '../types.gen';
+import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles } from '../sdk.gen';
+import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFilesData, SearchFilesResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -200,6 +200,28 @@ export const searchFilesOptions = (options: Options<SearchFilesData>) => queryOp
         return data;
     },
     queryKey: searchFilesQueryKey(options)
+});
+
+export const searchFileNamesQueryKey = (options: Options<SearchFileNamesData>) => createQueryKey('searchFileNames', options);
+
+/**
+ * Fuzzy-search file names and relative paths in the workspace.
+ *
+ * This is deliberately separate from `search_files`: that endpoint searches
+ * file contents, while the command palette needs cheap file candidates as the
+ * user types.
+ */
+export const searchFileNamesOptions = (options: Options<SearchFileNamesData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof searchFileNamesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await searchFileNames({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: searchFileNamesQueryKey(options)
 });
 
 /**

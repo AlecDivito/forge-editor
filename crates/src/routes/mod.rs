@@ -9,7 +9,7 @@ use rovo::{
 
 use crate::{
     routes::{
-        file_search::{search_and_replace_files, search_files},
+        file_search::{search_and_replace_files, search_file_names, search_files},
         file_system::{create_file, delete_file, rename_file, save_file},
         ws::ws,
     },
@@ -28,6 +28,7 @@ pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
         .route("/fs/rename", post(rename_file))
         .route("/fs/delete", post(delete_file))
         .route("/fs/search", get(search_files))
+        .route("/fs/files/search", get(search_file_names))
         .route("/fs/replace", post(search_and_replace_files))
         .with_state(state)
 }

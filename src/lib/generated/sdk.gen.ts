@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
+import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -89,6 +89,15 @@ export const searchFiles = <ThrowOnError extends boolean = false>(options: Optio
     url: '/api/fs/search',
     ...options
 });
+
+/**
+ * Fuzzy-search file names and relative paths in the workspace.
+ *
+ * This is deliberately separate from `search_files`: that endpoint searches
+ * file contents, while the command palette needs cheap file candidates as the
+ * user types.
+ */
+export const searchFileNames = <ThrowOnError extends boolean = false>(options: Options<SearchFileNamesData, ThrowOnError>) => (options.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/fs/files/search', ...options });
 
 /**
  * Search files and replace occurrences of text found

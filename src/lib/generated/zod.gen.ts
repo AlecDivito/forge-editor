@@ -4,6 +4,10 @@ import * as z from 'zod';
 
 import { FsFileType } from './types.gen';
 
+export const zFileNameSearchQuery = z.object({
+    search: z.string()
+});
+
 export const zFilePath = z.object({
     path: z.string()
 });
@@ -141,6 +145,10 @@ export const zSearchFilesQuery = z.object({
  * Successfully searched files
  */
 export const zSearchFilesResponse = zFsSearchResponse;
+
+export const zSearchFileNamesQuery = z.object({
+    search: z.string()
+});
 
 export const zSearchAndReplaceFilesBody = zFsSearchQuery;
 

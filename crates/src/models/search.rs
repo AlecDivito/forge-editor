@@ -59,9 +59,6 @@ pub struct FsSearchQuery {
     pub exclude: Option<String>,
 
     /// Only search files currently open in the editor.
-    ///
-    /// The plumbing is here, but the implementation can initially
-    /// ignore this option.
     #[serde(default)]
     pub open_files_only: bool,
 
@@ -71,4 +68,20 @@ pub struct FsSearchQuery {
     /// Currently this can default to false and be enabled later.
     #[serde(default)]
     pub use_ignore_files: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FileNameSearchQuery {
+    pub search: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FileNameSearchResult {
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FileNameSearchResponse {
+    pub results: Vec<FileNameSearchResult>,
 }

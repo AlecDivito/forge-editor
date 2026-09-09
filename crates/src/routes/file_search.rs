@@ -1,4 +1,7 @@
-use std::{path::Path};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use axum::{
     Json,
@@ -13,11 +16,98 @@ use tracing::debug;
 
 use crate::{
     error::AppError,
-    models::{FsFile, FsSearchLine, FsSearchQuery, FsSearchResult},
+    models::{FileNameSearchQuery, FileNameSearchResponse, FileNameSearchResult, FsFile, FsSearchLine, FsSearchQuery, FsSearchResult},
     state::AppState,
 };
 
 use crate::models::FsSearchResponse;
+
+/// Fuzzy-search file names and relative paths in the workspace.
+///
+/// This is deliberately separate from `search_files`: that endpoint searches
+/// file contents, while the command palette needs cheap file candidates as the
+/// user types.
+#[rovo]
+pub async fn search_file_names(
+    State(state): State<AppState>,
+    Query(query): Query<FileNameSearchQuery>,
+) -> impl IntoApiResponse {
+    search_file_names_impl(state, query).await.into_response()
+}
+
+async fn search_file_names_impl(
+    state: AppState,
+    query: FileNameSearchQuery,
+) -> Result<impl IntoResponse, AppError> {
+    let base_dir = state.config.base_dir.clone();
+    let response = tokio::task::spawn_blocking(move || search_file_names_blocking(&base_dir, query))
+        .await
+        .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
+    Ok(Json(response))
+}
+
+fn search_file_names_blocking(
+    base_dir: &Path,
+    query: FileNameSearchQuery,
+) -> Result<FileNameSearchResponse, AppError> {
+    let query = query.search.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(FileNameSearchResponse { results: Vec::new() });
+    }
+
+    let walker = ignore::WalkBuilder::new(base_dir)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .build();
+    let mut results = Vec::new();
+
+    for entry in walker {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        if !entry.file_type().is_some_and(|ty| ty.is_file()) {
+            continue;
+        }
+
+        let relative = match entry.path().strip_prefix(base_dir) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        let path = format!("/{}", relative.to_string_lossy().replace('\\', "/"));
+        let name = relative.file_name().map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let score = fuzzy_score(&path.to_lowercase(), &name.to_lowercase(), &query);
+        if let Some(score) = score {
+            results.push((score, FileNameSearchResult { path, name }));
+        }
+    }
+
+    results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)));
+    results.truncate(100);
+    Ok(FileNameSearchResponse { results: results.into_iter().map(|(_, file)| file).collect() })
+}
+
+fn fuzzy_score(path: &str, name: &str, query: &str) -> Option<usize> {
+    fn score(candidate: &str, query: &str) -> Option<usize> {
+        let mut cursor = 0;
+        let mut previous_end = None;
+        let mut total = 0;
+        for character in query.chars() {
+            let index = candidate[cursor..].find(character)? + cursor;
+            total += index + if previous_end == Some(index) { 0 } else { 2 };
+            cursor = index + character.len_utf8();
+            previous_end = Some(cursor);
+        }
+        Some(total)
+    }
+
+    let path_score = score(path, query)?;
+    let name_score = score(name, query).map(|value| value.saturating_sub(20));
+    Some(name_score.unwrap_or(path_score).min(path_score))
+}
 
 /// Search files
 ///
@@ -42,8 +132,11 @@ async fn search_files_impl(
     query: FsSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let base_dir = state.config.base_dir.clone();
+    let open_files = open_file_paths(&state, query.open_files_only);
 
-    let response = tokio::task::spawn_blocking(move || search_files_blocking(&base_dir, query))
+    let response = tokio::task::spawn_blocking(move || {
+        search_files_blocking(&base_dir, query, open_files.as_ref())
+    })
         .await
         .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
 
@@ -53,6 +146,7 @@ async fn search_files_impl(
 fn search_files_blocking(
     base_dir: &Path,
     query: FsSearchQuery,
+    open_files: Option<&HashSet<PathBuf>>,
 ) -> Result<FsSearchResponse, AppError> {
     let pattern = if query.regex {
         query.search.clone()
@@ -103,6 +197,11 @@ fn search_files_blocking(
                 continue;
             }
         };
+
+        if open_files.is_some_and(|files| !files.contains(relative_path)) {
+            debug!(action = "searching", result = "not an open file");
+            continue;
+        }
 
         if !matches_include(relative_path, &include) {
             debug!(action = "searching", result = "not in included path");
@@ -158,6 +257,7 @@ async fn search_and_replace_files_impl(
     query: FsSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let base_dir = state.config.base_dir.clone();
+    let open_files = open_file_paths(&state, query.open_files_only);
 
     let pattern = if query.regex {
         query.search.clone()
@@ -172,7 +272,7 @@ async fn search_and_replace_files_impl(
     };
 
     let response = tokio::task::spawn_blocking(move || -> Result<FsSearchResponse, AppError> {
-        let response = search_files_blocking(&base_dir, query.clone())?;
+        let response = search_files_blocking(&base_dir, query.clone(), open_files.as_ref())?;
         let is_regex = query.regex;
         let replace = query.replace;
         let case_insensitive = !query.regex && !query.match_case;
@@ -193,6 +293,21 @@ async fn search_and_replace_files_impl(
     .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
 
     Ok(Json(response))
+}
+
+fn open_file_paths(state: &AppState, only_open_files: bool) -> Option<HashSet<PathBuf>> {
+    only_open_files.then(|| {
+        state
+            .open_files
+            .iter()
+            .map(|entry| relative_file_id(&entry.key().1))
+            .collect()
+    })
+}
+
+fn relative_file_id(file_id: &str) -> PathBuf {
+    let path = Path::new(file_id);
+    path.strip_prefix("/").unwrap_or(path).to_path_buf()
 }
 
 fn apply_case_pattern(matched: &str, replacement: &str) -> String {
@@ -343,4 +458,31 @@ fn match_file(path: &Path, matcher: &RegexMatcher) -> Result<Vec<FsSearchLine>, 
         .map_err(|err| AppError::String(format!("failed searching file: {err}")))?;
 
     Ok(matches)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{fuzzy_score, relative_file_id};
+
+    #[test]
+    fn fuzzy_score_handles_a_match_at_the_start_of_a_file_name() {
+        assert!(fuzzy_score("/sweep.rs", "sweep.rs", "swee").is_some());
+    }
+
+    #[test]
+    fn fuzzy_score_prefers_contiguous_file_name_matches() {
+        let contiguous = fuzzy_score("/sweep.rs", "sweep.rs", "swee").unwrap();
+        let scattered = fuzzy_score("/src/service.rs", "service.rs", "swee");
+        assert!(scattered.is_none() || contiguous < scattered.unwrap());
+    }
+
+    #[test]
+    fn open_file_ids_match_walked_relative_paths() {
+        let open_file = relative_file_id("/src/main.rs");
+        assert_eq!(open_file, Path::new("src/main.rs"));
+        assert_ne!(open_file, Path::new("src/lib.rs"));
+    }
 }

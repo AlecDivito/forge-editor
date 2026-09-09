@@ -1,4 +1,4 @@
-import { CompletionItem, CompletionList, CompletionParams, Hover, HoverParams } from "vscode-languageserver-protocol";
+import { CodeAction, CodeActionParams, CompletionItem, CompletionList, CompletionParams, DefinitionParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams, Hover, HoverParams, LocationLink, ReferenceParams, RenameParams, SymbolInformation, TextEdit, WorkspaceEdit, WorkspaceSymbolParams } from "vscode-languageserver-protocol";
 
 export type WorkspaceId = string & { readonly __brand: 'WorkspaceId' };
 export type FileId = string & { readonly __brand: 'FileId' };
@@ -25,6 +25,36 @@ export interface LspMethodMap {
     params: Omit<CompletionParams, "textDocument">;
     result: CompletionItem[] | CompletionList | null
   }
+  "textDocument/definition": {
+    params: Omit<DefinitionParams, "textDocument">;
+    result: Location | Location[] | LocationLink[] | null;
+  };
+  "textDocument/references": {
+    params: Omit<ReferenceParams, "textDocument">;
+    result: Location[] | null;
+  };
+  "textDocument/documentSymbol": {
+    params: Omit<DocumentSymbolParams, "textDocument">;
+    result: DocumentSymbol[] | SymbolInformation[] | null;
+  };
+  // no textDocument field at all — this is the one that doesn't fit the
+  // "always scoped to a file" shape the wire format currently assumes.
+  "workspace/symbol": {
+    params: WorkspaceSymbolParams;
+    result: SymbolInformation[] | null;
+  };
+  "textDocument/codeAction": {
+    params: Omit<CodeActionParams, "textDocument">;
+    result: (/* LspCommand | */ CodeAction)[] | null;
+  };
+  "textDocument/rename": {
+    params: Omit<RenameParams, "textDocument">;
+    result: WorkspaceEdit | null;
+  };
+  "textDocument/formatting": {
+    params: Omit<DocumentFormattingParams, "textDocument">;
+    result: TextEdit[] | null;
+  };
 }
 
 export type ClientMessage =
