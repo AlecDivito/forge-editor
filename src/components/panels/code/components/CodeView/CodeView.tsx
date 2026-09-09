@@ -10,11 +10,18 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
-import { EditorState, EditorView, Extension } from "@uiw/react-codemirror";
+import { EditorState, EditorView, Extension, hoverTooltip } from "@uiw/react-codemirror";
 import { basicSetup } from "codemirror";
 import { IDockviewPanelProps } from "dockview";
-import { FC, useEffect, useRef } from "react";
+import { FC, useEffect, useRef, useState } from "react";
 import { yCollab } from "y-codemirror.next";
+import { useDocumentDiagnosticsSync } from "./hook/use-document-diagnostics.hook";
+import { linterExtension } from "./extensions/lint.extension";
+import { infoPanelExtension } from "./extensions/info-panel.extension";
+import { requestHoverToolTip } from "./extensions/tooltip.extension";
+import { DocumentFileId, DocumentWorkspaceId } from "./extensions/state.extension";
+import { autocompletion } from "@codemirror/autocomplete";
+import { autoCompletionOverride } from "./extensions/autocomplete.extension";
 
 function languageForFile(fileId?: string): Extension[] {
     const ext = fileId?.split('.').pop()?.toLowerCase();
@@ -42,22 +49,67 @@ const CodeView: FC<IDockviewPanelProps<DocumentKeyParts>> = (props) => {
     const { workspace, fileId } = props.params
     const document = useDocument(workspace, fileId)
     const editorRef = useRef<HTMLDivElement>(null)
+    const [view, setView] = useState<EditorView | null>(null)
+
+    useDocumentDiagnosticsSync(view, workspace, fileId);
 
     useEffect(() => {
         if (!document || !editorRef.current) return;
         const ytext = document.ydoc.getText('content');
+        const tooltipExtension = hoverTooltip(requestHoverToolTip, {
+            hideOn: (tr, tooltip) => {
+                return false;
+            },
+            hideOnChange: false,
+            hoverTime: 200,
+        });
+
         const view = new EditorView({
             parent: editorRef.current,
             state: EditorState.create({
                 doc: ytext.toString(),
                 extensions: [
                     basicSetup,
+                    DocumentWorkspaceId.of(workspace),
+                    DocumentFileId.of(fileId),
                     yCollab(ytext, document.awareness),
                     ...languageForFile(fileId),
+                    tooltipExtension,
+                    autocompletion({
+                        activateOnTyping: true,
+                        activateOnTypingDelay: 100,
+                        selectOnOpen: true,
+                        closeOnBlur: false,
+                        maxRenderedOptions: 200,
+                        // add to the completion dialog element.
+                        // This is the popup that appears on the page. It's the entire box
+                        tooltipClass: (state) => {
+                          // console.log(state);
+                          return "tooltipClass";
+                        },
+                        // Add CSS classes to completion options
+                        optionClass: (completion) => {
+                          // console.log(completion);
+                          return "completion";
+                        },
+                        filterStrict: true,
+                        icons: true,
+                        activateOnCompletion: (test) => {
+                          // console.log(test);
+                          return true;
+                        },
+                        override: [autoCompletionOverride],
+                      }),
+                    linterExtension(),
+                    infoPanelExtension()
                 ],
             }),
         });
-        return () => view.destroy();
+        setView(view);
+        return () => {
+            view.destroy();
+            setView(null)
+        }
     }, [document]);
 
 
