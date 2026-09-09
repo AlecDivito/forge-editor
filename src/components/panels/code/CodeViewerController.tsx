@@ -94,7 +94,12 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 
         const layoutSub = view.onDidLayoutChange(pushSnapshot);
         const activeSub = view.onDidActivePanelChange((panel) => {
-            setActivePanel(panel?.id ?? null, panel?.group?.id ?? null);
+            setActivePanel(
+                panel.panel?.id ?? null,
+                panel.panel?.group?.id ?? null,
+                panel.panel?.params?.workspace,
+                panel.panel?.params?.fileId
+            );
         });
 
         return () => {

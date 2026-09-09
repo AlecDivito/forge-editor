@@ -37,7 +37,7 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
 
   const loadAndOpenFile = useCallback((path: string) => {
     openFile("" as WorkspaceId, path as FileId);
-  }, []);
+  }, [openFile]);
 
   const createFile = useCallback((file: FsFile, path: string) => {
     setNewFile(false)

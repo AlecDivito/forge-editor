@@ -24,13 +24,15 @@ interface UICodeState {
     groupOrder: string[];
     activeGroupId: string | null;
     activePanelId: string | null;
+    activeWorkspaceId: WorkspaceId | null;
+    activeFileId: FileId | null;
 
     openFile: (workspace: WorkspaceId, fileId: FileId) => string; // returns panel id
     closeFile: (panelId: string) => void;
     setDiagnostics: (workspace: WorkspaceId, fileId: FileId, diagnostics: LspDiagnostic[]) => void;
 
     syncGroups: (groups: GroupDescriptor[], groupOrder: string[]) => void;
-    setActivePanel: (panelId: string | null, groupId: string | null) => void;
+    setActivePanel: (panelId: string | null, groupId: string | null, activeWorkspaceId: WorkspaceId | null, activeFileId: FileId | null) => void;
 }
 
 export const useUICodeState = create<UICodeState>((set, get) => ({
@@ -40,6 +42,8 @@ export const useUICodeState = create<UICodeState>((set, get) => ({
     groupOrder: [],
     activeGroupId: null,
     activePanelId: null,
+    activeWorkspaceId: null,
+    activeFileId: null,
 
     openFile: (workspace, fileId) => {
         const existing = get().openPanels.find(
@@ -80,8 +84,9 @@ export const useUICodeState = create<UICodeState>((set, get) => ({
             groupOrder,
         }),
 
-    setActivePanel: (panelId, groupId) =>
-        set({ activePanelId: panelId, activeGroupId: groupId }),
+    setActivePanel: (panelId, groupId, activeWorkspaceId, activeFileId) =>
+        set({ activePanelId: panelId, activeGroupId: groupId, activeWorkspaceId: activeWorkspaceId, activeFileId: activeFileId }),
+
 }));
 
 // --- Derived, not stored — recomputed from ids on read ---

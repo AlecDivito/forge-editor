@@ -112,7 +112,6 @@ const CodeView: FC<IDockviewPanelProps<DocumentKeyParts>> = (props) => {
         }
     }, [document]);
 
-
     return <div ref={editorRef} className="h-full" />;
 }
 
