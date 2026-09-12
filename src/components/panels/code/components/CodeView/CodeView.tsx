@@ -24,6 +24,8 @@ import { autocompletion } from "@codemirror/autocomplete";
 import { autoCompletionOverride } from "./extensions/autocomplete.extension";
 import { CodePanelDescriptor } from "../../state/editor-session.store";
 import { registerEditorInstance } from "../../state/editor-instance.registry";
+import { useDocumentAwareness } from "./hook/use-document-awareness.hook";
+import { DocumentParticipants } from "./components/DocumentParticipants";
 
 function languageForFile(fileId?: string): Extension[] {
     const ext = fileId?.split('.').pop()?.toLowerCase();
@@ -52,12 +54,15 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
     const document = useDocument(workspace, fileId)
     const lifecycle = useDocumentLifecycle(workspace, fileId)
     const editorRef = useRef<HTMLDivElement>(null)
+    const containerRef = useRef<HTMLDivElement>(null)
     const [view, setView] = useState<EditorView | null>(null)
     const identityCompartment = useRef(new Compartment())
     const languageCompartment = useRef(new Compartment())
     const readOnlyCompartment = useRef(new Compartment())
 
     useDocumentDiagnosticsSync(view, workspace, fileId);
+
+    const participants = useDocumentAwareness(document, containerRef);
 
     useEffect(() => {
         if (!document || !editorRef.current) return;
@@ -152,7 +157,10 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
         });
     }, [lifecycle.phase, view]);
 
-    return <div ref={editorRef} className="code-view h-full min-h-0 min-w-0 overflow-hidden" />;
+    return <div ref={containerRef} className="relative h-full min-h-0 min-w-0 overflow-hidden">
+        <DocumentParticipants participants={participants} />
+        <div ref={editorRef} className="code-view h-full min-h-0 min-w-0 overflow-hidden" />
+    </div>;
 }
 
 export default CodeView

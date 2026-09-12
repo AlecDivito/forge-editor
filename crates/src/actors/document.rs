@@ -1,5 +1,6 @@
 // src/document.rs
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -14,7 +15,13 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::{debug, info, warn};
-use yrs::{GetString, ReadTxn, StateVector, Text, Transact, Update, updates::decoder::Decode};
+use yrs::ClientID;
+use yrs::sync::AwarenessUpdate;
+use yrs::sync::awareness::AwarenessUpdateEntry;
+use yrs::{
+    GetString, ReadTxn, StateVector, Text, Transact, Update,
+    updates::{decoder::Decode, encoder::Encode},
+};
 
 use crate::{
     actors::LspServerActor,
@@ -42,6 +49,7 @@ pub struct DocumentActor {
     file_id: RwLock<FileId>,
     doc: RwLock<yrs::Doc>,
     updates_tx: broadcast::Sender<DocEvent>,
+    awareness: AsyncMutex<HashMap<ClientID, AwarenessRecord>>,
     editable: AtomicBool,
     deleted: AtomicBool,
     subscribers: AtomicUsize,
@@ -64,6 +72,13 @@ pub struct DocumentActor {
 struct DocumentLocation {
     path: PathBuf,
     epoch: u64,
+}
+
+#[derive(Clone)]
+struct AwarenessRecord {
+    owner_client: ClientId,
+    owner_connection: u64,
+    entry: AwarenessUpdateEntry,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +133,7 @@ impl DocumentActor {
             file_id: RwLock::new(file_id.clone()),
             doc: RwLock::new(doc),
             updates_tx: broadcast::channel(256).0,
+            awareness: AsyncMutex::new(HashMap::new()),
             editable: AtomicBool::new(true),
             deleted: AtomicBool::new(false),
             subscribers: AtomicUsize::new(0),
@@ -318,10 +334,17 @@ impl DocumentActor {
         let generation = {
             let _state_guard = self.state_lock.lock().await;
             let doc = self.doc.read().await;
-            let before = doc.transact().state_vector();
             let mut txn = doc.transact_mut();
+            let before = txn
+                .get_text("content")
+                .map(|text| text.get_string(&txn))
+                .unwrap_or_default();
             txn.apply_update(decoded)?;
-            if before == txn.state_vector() {
+            let after = txn
+                .get_text("content")
+                .map(|text| text.get_string(&txn))
+                .unwrap_or_default();
+            if before == after {
                 None
             } else {
                 // Keep the revision paired with the applied Yrs state. A
@@ -514,11 +537,94 @@ impl DocumentActor {
         write_result
     }
 
-    /// Opaque to the server — see earlier discussion. Just fan it out.
-    pub fn apply_awareness(&self, payload: Vec<u8>, origin: ClientId) {
+    /// Validate protocol framing and bind awareness client IDs to the socket
+    /// that first advertised them. Application JSON remains opaque.
+    pub async fn apply_awareness(
+        &self,
+        payload: Vec<u8>,
+        origin: ClientId,
+        connection_id: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(payload.len() <= 64 * 1024, "awareness payload is too large");
+        let update = AwarenessUpdate::decode_v1(&payload)?;
+        anyhow::ensure!(
+            update.clients.len() <= 32,
+            "too many awareness clients in one update"
+        );
+        let mut awareness = self.awareness.lock().await;
+        for (awareness_id, next) in &update.clients {
+            if let Some(current) = awareness.get(awareness_id) {
+                anyhow::ensure!(
+                    current.owner_client == origin && current.owner_connection == connection_id,
+                    "awareness client ID is owned by another connection"
+                );
+                if next.clock < current.entry.clock {
+                    continue;
+                }
+            }
+            awareness.insert(
+                *awareness_id,
+                AwarenessRecord {
+                    owner_client: origin.clone(),
+                    owner_connection: connection_id,
+                    entry: next.clone(),
+                },
+            );
+        }
+        drop(awareness);
         let _ = self
             .updates_tx
-            .send(DocEvent::Awareness { payload, origin });
+            .send(DocEvent::AwarenessUpdate { payload, origin });
+        Ok(())
+    }
+
+    pub async fn awareness_snapshot(&self) -> Vec<u8> {
+        let awareness = self.awareness.lock().await;
+        AwarenessUpdate {
+            clients: awareness
+                .iter()
+                .filter(|(_, record)| record.entry.json.as_ref() != "null")
+                .map(|(id, record)| (*id, record.entry.clone()))
+                .collect(),
+        }
+        .encode_v1()
+    }
+
+    pub async fn remove_awareness_owner(&self, owner_client: &ClientId, owner_connection: u64) {
+        let mut awareness = self.awareness.lock().await;
+        let owned: Vec<_> = awareness
+            .iter()
+            .filter(|(_, record)| {
+                &record.owner_client == owner_client && record.owner_connection == owner_connection
+            })
+            .map(|(id, record)| (*id, record.entry.clock.saturating_add(1)))
+            .collect();
+        for (id, _) in &owned {
+            awareness.remove(id);
+        }
+        drop(awareness);
+        if owned.is_empty() {
+            return;
+        }
+        let payload = AwarenessUpdate {
+            clients: owned
+                .into_iter()
+                .map(|(id, clock)| {
+                    (
+                        id,
+                        AwarenessUpdateEntry {
+                            clock,
+                            json: "null".into(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+        .encode_v1();
+        let _ = self.updates_tx.send(DocEvent::AwarenessUpdate {
+            payload,
+            origin: owner_client.clone(),
+        });
     }
 
     /// Sync step 2 for a brand-new subscriber: pass `StateVector::default()`.
@@ -715,6 +821,65 @@ mod tests {
             .encode_state_as_update_v1(&StateVector::default())
     }
 
+    fn awareness_update(client: u64, clock: u32, json: &str) -> Vec<u8> {
+        AwarenessUpdate {
+            clients: [(
+                ClientID::new(client),
+                AwarenessUpdateEntry {
+                    clock,
+                    json: json.into(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        }
+        .encode_v1()
+    }
+
+    #[tokio::test]
+    async fn awareness_is_connection_owned_snapshotted_and_removed() {
+        let (actor, directory, _) = test_actor("").await;
+        actor
+            .apply_awareness(
+                awareness_update(7, 1, r#"{"user":{"name":"Ada"}}"#),
+                "ada".into(),
+                10,
+            )
+            .await
+            .expect("apply awareness");
+
+        let snapshot =
+            AwarenessUpdate::decode_v1(&actor.awareness_snapshot().await).expect("decode snapshot");
+        assert_eq!(snapshot.clients[&ClientID::new(7)].clock, 1);
+        assert!(
+            actor
+                .apply_awareness(
+                    awareness_update(7, 2, r#"{"user":{"name":"Mallory"}}"#),
+                    "mallory".into(),
+                    11,
+                )
+                .await
+                .is_err()
+        );
+
+        let mut events = actor.subscribe_events();
+        actor.remove_awareness_owner(&"ada".into(), 10).await;
+        let DocEvent::AwarenessUpdate { payload, .. } = events.recv().await.expect("leave event")
+        else {
+            panic!("expected awareness leave update");
+        };
+        let leave = AwarenessUpdate::decode_v1(&payload).expect("decode leave");
+        assert_eq!(leave.clients[&ClientID::new(7)].json.as_ref(), "null");
+        assert!(
+            AwarenessUpdate::decode_v1(&actor.awareness_snapshot().await)
+                .expect("decode empty snapshot")
+                .clients
+                .is_empty()
+        );
+
+        tokio::fs::remove_dir_all(directory).await.expect("cleanup");
+    }
+
     #[tokio::test]
     async fn lifecycle_snapshot_tracks_revision_and_save() {
         let (actor, directory, path) = test_actor("").await;
@@ -843,6 +1008,51 @@ mod tests {
             .expect("apply empty update");
         assert_eq!(actor.generation(), 1);
 
+        tokio::fs::remove_dir_all(directory).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn deletion_only_update_advances_revision_and_is_broadcast() {
+        let (actor, directory, _path) = test_actor("selected text").await;
+        let client = yrs::Doc::new();
+        client
+            .transact_mut()
+            .apply_update(
+                Update::decode_v1(&actor.state_as_update(&StateVector::default()).await)
+                    .expect("decode initial state"),
+            )
+            .expect("apply initial state");
+        let updates = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+        let captured = updates.clone();
+        let _subscription = client.observe_update_v1(move |_, event| {
+            captured
+                .lock()
+                .expect("lock updates")
+                .push(event.update.clone());
+        });
+        {
+            let mut txn = client.transact_mut();
+            let text = txn.get_text("content").expect("content text");
+            text.remove_range(&mut txn, 0, 8);
+        }
+        let update = updates
+            .lock()
+            .expect("lock updates")
+            .pop()
+            .expect("delete update");
+        let mut events = actor.subscribe_events();
+
+        actor
+            .apply_remote_update(&update, "client".into())
+            .await
+            .expect("apply deletion");
+
+        assert_eq!(actor.generation(), 1);
+        assert_eq!(actor.content_snapshot().await, " text");
+        assert!(matches!(
+            events.recv().await.expect("update event"),
+            DocEvent::Update { .. }
+        ));
         tokio::fs::remove_dir_all(directory).await.expect("cleanup");
     }
 

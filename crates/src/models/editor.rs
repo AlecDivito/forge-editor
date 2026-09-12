@@ -149,7 +149,7 @@ pub enum DocEvent {
         update: Vec<u8>,
         origin: ClientId,
     },
-    Awareness {
+    AwarenessUpdate {
         payload: Vec<u8>,
         origin: ClientId,
     },
@@ -233,7 +233,7 @@ pub enum ClientMessage {
     },
 
     // presence - cursors, selections, "who's here"
-    Awareness {
+    AwarenessUpdate {
         workspace_id: WorkspaceId,
         file_id: FileId,
         payload: Vec<u8>,
@@ -326,13 +326,13 @@ impl std::fmt::Display for ClientMessage {
                 request_id,
             } => write!(f, "DocSave({workspace_id}, {file_id}, {request_id})"),
 
-            ClientMessage::Awareness {
+            ClientMessage::AwarenessUpdate {
                 workspace_id,
                 file_id,
                 payload,
             } => write!(
                 f,
-                "Awareness({workspace_id}, {file_id}, {} bytes)",
+                "AwarenessUpdate({workspace_id}, {file_id}, {} bytes)",
                 payload.len()
             ),
 
@@ -440,16 +440,16 @@ pub enum ServerMessage {
         origin: ClientId,
     },
 
-    Awareness {
+    AwarenessUpdate {
         workspace_id: WorkspaceId,
         file_id: FileId,
         client_id: ClientId,
         payload: Vec<u8>,
     },
-    Awarenessleave {
+    AwarenessSnapshot {
         workspace_id: WorkspaceId,
         file_id: FileId,
-        client_id: ClientId,
+        payload: Vec<u8>,
     },
 
     TerminalOutput {

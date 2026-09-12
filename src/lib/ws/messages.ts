@@ -121,7 +121,7 @@ export type ClientMessage =
     request_id: string;
   }
   | {
-    kind: "Awareness";
+    kind: "AwarenessUpdate";
     workspace_id: WorkspaceId;
     file_id: FileId;
     payload: number[];
@@ -228,17 +228,17 @@ export type ServerMessage =
     origin: ClientId;
   }
   | {
-    kind: "Awareness";
+    kind: "AwarenessUpdate";
     workspace_id: WorkspaceId;
     file_id: FileId;
     client_id: ClientId;
     payload: number[];
   }
   | {
-    kind: "Awarenessleave";
+    kind: "AwarenessSnapshot";
     workspace_id: WorkspaceId;
     file_id: FileId;
-    client_id: ClientId;
+    payload: number[];
   }
   | {
     kind: "TerminalOutput";

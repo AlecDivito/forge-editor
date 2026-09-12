@@ -488,14 +488,26 @@ async fn dispatch(
             }
         }
 
-        ClientMessage::Awareness {
+        ClientMessage::AwarenessUpdate {
             workspace_id,
             file_id,
             payload,
         } => {
-            if let Some(doc) = state.open_files.get(&(workspace_id, file_id)) {
-                doc.value().apply_awareness(payload, client_id);
-            }
+            let key = (workspace_id.clone(), file_id.clone());
+            let subscribed = state.clients.get(&client_id).is_some_and(|handle| {
+                handle.connection_id == connection_id && handle.subscribed_documents.contains(&key)
+            });
+            anyhow::ensure!(
+                subscribed,
+                "awareness update requires an active document subscription"
+            );
+            let doc = state
+                .open_files
+                .get(&key)
+                .map(|entry| entry.value().clone())
+                .ok_or_else(|| anyhow::anyhow!("document is not open"))?;
+            doc.apply_awareness(payload, client_id, connection_id)
+                .await?;
             Ok(())
         }
 
@@ -739,6 +751,9 @@ async fn cleanup_connection_resources(
         .collect();
     for key in subscriptions {
         if let Some(document) = state.open_files.get(&key).map(|e| e.value().clone()) {
+            document
+                .remove_awareness_owner(client_id, handle.connection_id)
+                .await;
             document.unsubscribe(state.clone(), key).await;
         }
     }
@@ -871,6 +886,7 @@ fn register_client_subscription(
     let mut rx = doc.subscribe_events();
     let forwarder_doc = doc.clone();
     let workspace_id_cloned = workspace_id.clone();
+    let forwarder_file_id = file_id.clone();
     let forwarder = tokio::spawn(async move {
         loop {
             match rx.recv().await {
@@ -886,10 +902,10 @@ fn register_client_subscription(
                         .await
                         .ok();
                 }
-                Ok(DocEvent::Awareness { payload, origin }) => {
+                Ok(DocEvent::AwarenessUpdate { payload, origin }) => {
                     let file_id = forwarder_doc.file_id().await;
                     document_tx
-                        .send(ServerMessage::Awareness {
+                        .send(ServerMessage::AwarenessUpdate {
                             workspace_id: workspace_id_cloned.clone(),
                             file_id,
                             client_id: origin,
@@ -930,7 +946,7 @@ fn register_client_subscription(
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(
-                        "client lagged {n} doc events on {file_id:?}; forcing document sync"
+                        "client lagged {n} doc events on {forwarder_file_id:?}; forcing document sync"
                     );
                     let full = forwarder_doc.state_as_update(&StateVector::default()).await;
                     send_doc_sync_step2(
@@ -947,6 +963,23 @@ fn register_client_subscription(
         }
     });
     handle.doc_forwarders.insert(key, forwarder);
+    let snapshot_doc = doc.clone();
+    let snapshot_tx = handle.document_tx.clone();
+    let snapshot_workspace = workspace_id;
+    let snapshot_file = file_id;
+    tokio::spawn(async move {
+        let payload = snapshot_doc.awareness_snapshot().await;
+        if payload.len() > 1 {
+            snapshot_tx
+                .send(ServerMessage::AwarenessSnapshot {
+                    workspace_id: snapshot_workspace,
+                    file_id: snapshot_file,
+                    payload,
+                })
+                .await
+                .ok();
+        }
+    });
     true
 }
 
@@ -970,6 +1003,7 @@ async fn unsubscribe_doc(
     }
 
     if let Some(doc) = state.open_files.get(&key).map(|e| e.value().clone()) {
+        doc.remove_awareness_owner(&client_id, connection_id).await;
         doc.unsubscribe(state.clone(), key).await;
     }
 }

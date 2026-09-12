@@ -2,6 +2,7 @@ import { socket } from '../ws/connection';
 import { FileId, FsEntryType, PersistencePhase, ServerMessage, WorkspaceId } from '../ws/messages';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
+import { applyRemoteAwareness, clearRemoteAwareness, installAwarenessTransport } from './awareness';
 
 // -----------------------------------------------------------------------------
 // Public types
@@ -39,6 +40,7 @@ export interface DocEntry {
     awareness: Awareness;
     refCount: number;
     unsubscribeSocket?: () => void;
+    unsubscribeAwareness?: () => void;
     synchronized: boolean;
     syncingGeneration?: number;
     revision?: number;
@@ -258,6 +260,8 @@ function maybeDispose(entry: DocEntry): void {
     const key = keyOfEntry(entry);
     if (documents.get(key) !== entry) return;
     socket.send({ kind: 'DocUnsubscribe', workspace_id: entry.workspaceId, file_id: entry.fileId });
+    if (entry.awareness.getLocalState() !== null) entry.awareness.setLocalState(null);
+    entry.unsubscribeAwareness?.();
     entry.unsubscribeSocket?.();
     entry.ydoc.destroy();
     documents.delete(key);
@@ -431,7 +435,10 @@ function installConnectionSubscription() {
     if (connectionSubscriptionInstalled) return;
     connectionSubscriptionInstalled = true;
     socket.subscribeConnection((generation) => {
-        documents.forEach((entry) => syncEntry(entry, generation));
+        documents.forEach((entry) => {
+            clearRemoteAwareness(entry.awareness);
+            syncEntry(entry, generation);
+        });
     });
 }
 
@@ -466,6 +473,10 @@ export function acquireDocument(workspaceId: WorkspaceId, fileId: FileId): DocEn
             },
         };
         documents.set(key, entry);
+        entry.unsubscribeAwareness = installAwarenessTransport(awareness, () => ({
+            workspaceId: entry!.workspaceId,
+            fileId: entry!.fileId,
+        }));
         notify(entry);
 
         const documentEntry = entry;
@@ -502,6 +513,8 @@ export function acquireDocument(workspaceId: WorkspaceId, fileId: FileId): DocEn
                             documentEntry.synchronized = true;
                             documentEntry.syncingGeneration = socket.generation;
                             reconcileServerState(documentEntry);
+                            const localPresence = documentEntry.awareness.getLocalState();
+                            if (localPresence !== null) documentEntry.awareness.setLocalState(localPresence);
                         }
                     } catch {
                         documentEntry.syncingGeneration = undefined;
@@ -517,6 +530,12 @@ export function acquireDocument(workspaceId: WorkspaceId, fileId: FileId): DocEn
             }
             if (msg.kind === 'DocState' && msg.workspace_id === documentEntry.workspaceId && msg.file_id === documentEntry.fileId) {
                 applyDocumentState(documentEntry, msg.revision, msg.persisted_revision, msg.phase, msg.error);
+            }
+            if ((msg.kind === 'AwarenessUpdate' || msg.kind === 'AwarenessSnapshot') &&
+                msg.workspace_id === documentEntry.workspaceId && msg.file_id === documentEntry.fileId &&
+                (msg.kind === 'AwarenessSnapshot' || msg.client_id !== socket.clientId)) {
+                applyRemoteAwareness(documentEntry.awareness, msg.payload);
+                notify(documentEntry);
             }
         });
 
