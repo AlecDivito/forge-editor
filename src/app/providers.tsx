@@ -38,10 +38,20 @@ function WorkspaceAwareProviders({ children }: Pick<Props, "children">) {
 
     useEffect(() => {
       const unsubscribe = socket.subscribe((message) => {
-      if (message.kind === "Hello" && snapshot && (message.environment_id !== snapshot.environment.id || message.schema_version !== snapshot.schema_version)) void refresh()
+        if (message.kind === "Hello" && snapshot && (message.environment_id !== snapshot.environment.id || message.schema_version !== snapshot.schema_version)) void refresh()
+        if (message.kind === "FsChanged") {
+          // Native watchers commonly emit several events for one shell command.
+          // React Query coalesces these invalidations and refetches active trees.
+          void queryClient.invalidateQueries({
+            predicate: (query) => {
+              const key = query.queryKey[0] as { _id?: string, query?: { workspace_id?: string } }
+              return key._id === "listFiles" && key.query?.workspace_id === message.workspace_id
+            }
+          })
+        }
       })
       return () => { unsubscribe() }
-    }, [refresh, snapshot])
+    }, [queryClient, refresh, snapshot])
 
     if (status === "idle" || status === "loading") return <main className="grid h-screen place-items-center">Loading workspaces…</main>
     if (status === "error") return <main className="grid h-screen place-items-center">Workspace configuration error: {error}</main>

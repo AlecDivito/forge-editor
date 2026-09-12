@@ -516,6 +516,12 @@ pub enum ServerMessage {
         path: String,
         entry_type: FsEntryType,
     },
+    /// A change observed outside Forge's mutation API (for example from a
+    /// terminal command). Consumers should refresh cached directory listings.
+    FsChanged {
+        workspace_id: WorkspaceId,
+        paths: Vec<FileId>,
+    },
     DocUpdate {
         workspace_id: WorkspaceId,
         file_id: FileId,

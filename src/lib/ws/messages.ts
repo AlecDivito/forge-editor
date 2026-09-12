@@ -273,6 +273,11 @@ export type ServerMessage =
       entry_type: FsEntryType;
     }
   | {
+      kind: "FsChanged";
+      workspace_id: WorkspaceId;
+      paths: FileId[];
+    }
+  | {
       kind: "DocUpdate";
       workspace_id: WorkspaceId;
       file_id: FileId;

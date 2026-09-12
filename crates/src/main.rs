@@ -39,6 +39,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await
         .unwrap();
     let state = AppState::new(config);
+    // Watchers are intentionally retained in main: dropping a notify watcher
+    // immediately unregisters its operating-system subscriptions.
+    let _workspace_watchers = services::workspace_watcher::start(state.clone())?;
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::exact(HeaderValue::from_static(
