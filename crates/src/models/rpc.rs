@@ -24,6 +24,7 @@ pub enum JsonRpcMessage {
     Request {
         id: i64,
         method: String,
+        params: serde_json::Value,
     },
 }
 
@@ -44,7 +45,11 @@ impl JsonRpcMessage {
                 method,
                 params: value.get("params").cloned().unwrap_or_default(),
             }),
-            (Some(id), Some(method)) => Some(Self::Request { id, method }),
+            (Some(id), Some(method)) => Some(Self::Request {
+                id,
+                method,
+                params: value.get("params").cloned().unwrap_or_default(),
+            }),
             (Some(id), None) => {
                 let result = if let Some(err) = value.get("error") {
                     Err(serde_json::from_value(err.clone()).ok()?)

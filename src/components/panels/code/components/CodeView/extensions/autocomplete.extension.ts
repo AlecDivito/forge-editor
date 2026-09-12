@@ -1,7 +1,7 @@
 import { CompletionItemKind, CompletionTriggerKind, MarkedString, MarkupContent } from "vscode-languageserver-protocol";
 import { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { DocumentFileId, DocumentWorkspaceId } from "./state.extension";
-import { sendLspRequest } from "@/lib/ws/lsp-client";
+import { sendDocumentLspRequest } from "@/lib/ws/lsp-client";
 
 const CompletionItemKindMap = Object.fromEntries(
     Object.entries(CompletionItemKind).map(([key, value]) => [value, key]),
@@ -45,7 +45,7 @@ export const autoCompletionOverride = async (context: CompletionContext): Promis
 
     let response;
     try {
-        response = await sendLspRequest(workspaceId, fileId, "textDocument/completion", {
+        response = await sendDocumentLspRequest(workspaceId, fileId, "textDocument/completion", {
             position: {
                 line: line.number - 1, // LSP lines are 0-indexed; CodeMirror's are 1-indexed
                 character: pos - line.from,

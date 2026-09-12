@@ -57,7 +57,10 @@ export const useEditorSessionStore = create<EditorSessionState>((set, get) => ({
       const panel = state.panelsById[id];
       return panel?.kind === "code" && panel.workspace === workspace && panel.fileId === fileId;
     });
-    if (existingId) return existingId;
+    if (existingId) {
+      set({ activePanelId: existingId });
+      return existingId;
+    }
 
     const panel: PanelDescriptor = {
       id: crypto.randomUUID(),
@@ -68,6 +71,7 @@ export const useEditorSessionStore = create<EditorSessionState>((set, get) => ({
     set((current) => ({
       panelsById: { ...current.panelsById, [panel.id]: panel },
       panelOrder: [...current.panelOrder, panel.id],
+      activePanelId: panel.id,
     }));
     return panel.id;
   },

@@ -1,28 +1,27 @@
 import { useEffect, useState } from "react";
-import type { SymbolInformation } from "vscode-languageserver-protocol";
 import { workspaceSymbols } from "@/lib/ws/lsp-actions";
-import type { FileId, WorkspaceId } from "@/lib/ws/messages";
+import type { CanonicalSymbol, WorkspaceId } from "@/lib/ws/messages";
 
 export function useWorkspaceSymbolPicks(
   query: string,
   workspaceId: WorkspaceId | null,
-  fileId: FileId | null,
   enabled: boolean,
 ) {
-  const [picks, setPicks] = useState<SymbolInformation[]>([]);
+  const [picks, setPicks] = useState<CanonicalSymbol[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!enabled || workspaceId === null || fileId === null || query.length === 0) {
+    if (!enabled || workspaceId === null) {
       setPicks([]);
       setLoading(false);
       return;
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     const handle = setTimeout(() => {
       setLoading(true);
-      workspaceSymbols(workspaceId, fileId, query)
+      workspaceSymbols(workspaceId, query, controller.signal)
         .then((result) => {
           if (!cancelled) setPicks(result ?? []);
         })
@@ -36,9 +35,10 @@ export function useWorkspaceSymbolPicks(
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(handle);
     };
-  }, [enabled, fileId, query, workspaceId]);
+  }, [enabled, query, workspaceId]);
 
   return { picks, loading };
 }

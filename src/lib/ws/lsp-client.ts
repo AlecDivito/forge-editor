@@ -1,5 +1,5 @@
 import { socket } from "@/lib/ws/connection";
-import { WorkspaceId, FileId, LspMethodMap } from "@/lib/ws/messages";
+import { WorkspaceId, FileId, LanguageId, LspMethodMap, LspScope } from "@/lib/ws/messages";
 
 interface Pending {
   resolve: (value: any) => void;
@@ -42,39 +42,68 @@ const TIMEOUT_MS = 10_000;
 
 export function sendLspRequest<K extends keyof LspMethodMap>(
   workspaceId: WorkspaceId,
-  fileId: FileId,
+  scope: LspScope,
   method: K,
   params: LspMethodMap[K]["params"],
+  signal?: AbortSignal,
 ): Promise<LspMethodMap[K]["result"]> {
   ensureListening();
   const requestId = crypto.randomUUID();
 
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
       pending.delete(requestId);
-      reject(new Error(`LSP request '${method}' timed out on the frontend`));
+      if (timeout !== undefined) clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = () => {
+      socket.send({ kind: "LspCancel", request_id: requestId });
+      finish(() => reject(signal?.reason instanceof Error ? signal.reason : new DOMException("LSP request aborted", "AbortError")));
+    };
+    if (signal?.aborted) return abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    timeout = setTimeout(() => {
+      socket.send({ kind: "LspCancel", request_id: requestId });
+      finish(() => reject(new Error(`LSP request '${method}' timed out on the frontend`)));
     }, TIMEOUT_MS);
 
     pending.set(requestId, {
-      resolve: (v) => { clearTimeout(timeout); resolve(v); },
-      reject: (e) => { clearTimeout(timeout); reject(e); },
+      resolve: (v) => finish(() => resolve(v)),
+      reject: (e) => finish(() => reject(e)),
     });
 
     const sent = socket.send({
       kind: "LspRequest",
       workspace_id: workspaceId,
-      file_id: fileId,
+      scope,
       request_id: requestId,
       method,
       params,
-    } as any); // `as any`: TS can't narrow a generic M against the ClientMessage
-               // union here — the real type safety is enforced at call sites,
-               // since callers pick a literal method and get matching params/result.
+    });
     if (!sent) {
-      pending.delete(requestId);
-      reject(new Error("WebSocket is not connected"));
+      finish(() => reject(new Error("WebSocket is not connected")));
     }
   });
+}
+
+export function sendDocumentLspRequest<K extends Exclude<keyof LspMethodMap, "workspace/symbol">>(
+  workspaceId: WorkspaceId, fileId: FileId, method: K,
+  params: LspMethodMap[K]["params"], signal?: AbortSignal,
+) {
+  return sendLspRequest(workspaceId, { kind: "document", file_id: fileId }, method, params, signal);
+}
+
+export function sendWorkspaceLspRequest(
+  workspaceId: WorkspaceId, method: "workspace/symbol",
+  params: LspMethodMap["workspace/symbol"]["params"], signal?: AbortSignal,
+  languageId?: LanguageId,
+) {
+  return sendLspRequest(workspaceId, { kind: "workspace", language_id: languageId }, method, params, signal);
 }
 
 export function sendLspNotification(workspaceId: WorkspaceId, fileId: FileId, method: string, params: unknown) {

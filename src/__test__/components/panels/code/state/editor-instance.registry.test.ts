@@ -1,6 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 import { getActiveDocument, getActiveEditor } from "@/components/panels/code/state/active-editor";
-import { getEditorInstance, registerEditorInstance } from "@/components/panels/code/state/editor-instance.registry";
+import { getEditorInstance, registerEditorInstance, waitForEditorInstance } from "@/components/panels/code/state/editor-instance.registry";
 import { CodePanelDescriptor, useEditorSessionStore } from "@/components/panels/code/state/editor-session.store";
 import { FileId, WorkspaceId } from "@/lib/ws/messages";
 
@@ -48,5 +48,17 @@ describe("editor instance registry", () => {
 
     unregisterReplacement();
     expect(getEditorInstance(panel.id)).toBeUndefined();
+  });
+
+  it("waits for the requested panel and supports cancellation", async () => {
+    const view = {} as EditorView;
+    const waiting = waitForEditorInstance(panel.id);
+    registerEditorInstance(panel.id, view);
+    await expect(waiting).resolves.toBe(view);
+
+    const controller = new AbortController();
+    const cancelled = waitForEditorInstance("missing", { signal: controller.signal });
+    controller.abort();
+    await expect(cancelled).rejects.toHaveProperty("name", "AbortError");
   });
 });

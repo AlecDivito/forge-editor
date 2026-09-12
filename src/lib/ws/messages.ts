@@ -1,10 +1,27 @@
-import { CodeAction, CodeActionParams, CompletionItem, CompletionList, CompletionParams, DefinitionParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams, Hover, HoverParams, LocationLink, ReferenceParams, RenameParams, SymbolInformation, TextEdit, WorkspaceEdit, WorkspaceSymbolParams } from "vscode-languageserver-protocol";
+import { CodeAction, CodeActionParams, CompletionItem, CompletionList, CompletionParams, DefinitionParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams, Hover, HoverParams, Location, LocationLink, ReferenceParams, RenameParams, SymbolInformation, TextEdit, WorkspaceEdit, WorkspaceSymbolParams, Range } from "vscode-languageserver-protocol";
 
 export type WorkspaceId = string & { readonly __brand: 'WorkspaceId' };
 export type FileId = string & { readonly __brand: 'FileId' };
 export type ClientId = string & { readonly __brand: 'ClientId' };
 export type TerminalId = string & { readonly __brand: 'TerminalId' };
 export type LanguageId = string & { readonly __brand: 'LanguageId' };
+
+export type LspScope =
+  | { kind: "document"; file_id: FileId }
+  | { kind: "workspace"; language_id?: LanguageId };
+
+export interface CanonicalLocation {
+  workspace_id: WorkspaceId;
+  file_id: FileId;
+  range: Range;
+  selection_range?: Range;
+}
+export interface CanonicalSymbol {
+  name: string;
+  kind: number;
+  container_name?: string;
+  location: CanonicalLocation;
+}
 
 export interface ClientParams {
   id?: string;
@@ -66,7 +83,7 @@ export interface LspMethodMap {
   // "always scoped to a file" shape the wire format currently assumes.
   "workspace/symbol": {
     params: WorkspaceSymbolParams;
-    result: SymbolInformation[] | null;
+    result: CanonicalSymbol[] | null;
   };
   "textDocument/codeAction": {
     params: Omit<CodeActionParams, "textDocument">;
@@ -151,11 +168,12 @@ export type ClientMessage =
   | {
     kind: "LspRequest";
     workspace_id: WorkspaceId;
-    file_id: FileId;
+    scope: LspScope;
     request_id: string;
     method: string;
     params: unknown;
   }
+  | { kind: "LspCancel"; request_id: string }
   | {
     kind: "LspNotification";
     workspace_id: WorkspaceId;
@@ -258,7 +276,17 @@ export type ServerMessage =
   | {
     kind: "LspError";
     request_id: string;
+    code?: number;
     message: string;
+    data?: unknown;
+  }
+  | {
+    kind: "LspServerEvent";
+    workspace_id: WorkspaceId;
+    language_id: LanguageId;
+    file_id?: FileId;
+    method: string;
+    params: unknown;
   }
   | {
     kind: "Diagnostics";

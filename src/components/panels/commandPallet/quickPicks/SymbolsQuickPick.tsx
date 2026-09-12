@@ -1,8 +1,8 @@
 import { CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
-import type { FileId } from "@/lib/ws/messages";
 import { selectActivePanel, useEditorSessionStore } from "../../code/state/editor-session.store";
 import { useCommandRunner } from "../hooks/use-command-runner";
 import { useWorkspaceSymbolPicks } from "../hooks/use-workspace-symbol-picks";
+import { openEditorLocation } from "../../code/state/editor-navigation";
 
 type Props = {
   query: string;
@@ -11,11 +11,9 @@ type Props = {
 
 export default function SymbolsQuickPick({ query, close }: Props) {
   const activePanel = useEditorSessionStore(selectActivePanel);
-  const fileId = activePanel?.kind === "code" ? (activePanel.fileId ?? null) : null;
   const workspaceId = activePanel?.kind === "code" ? activePanel.workspace : null;
-  const openFile = useEditorSessionStore((state) => state.openFile);
   const runCommand = useCommandRunner(close);
-  const { picks, loading } = useWorkspaceSymbolPicks(query, workspaceId, fileId, true);
+  const { picks, loading } = useWorkspaceSymbolPicks(query, workspaceId, true);
 
   return (
     <>
@@ -23,21 +21,22 @@ export default function SymbolsQuickPick({ query, close }: Props) {
       <CommandGroup heading="Symbols in Workspace">
         {picks.map((symbol, index) => (
           <CommandItem
-            key={`${symbol.location.uri}:${index}`}
+            key={`${symbol.location.workspace_id}:${symbol.location.file_id}:${symbol.location.range.start.line}:${symbol.location.range.start.character}:${index}`}
             value={`#${symbol.name}`}
             disabled={workspaceId === null}
             onSelect={() => {
               if (workspaceId !== null) {
                 runCommand(() => {
-                  const symbolFileId = symbol.location.uri.startsWith("file://")
-                    ? decodeURIComponent(symbol.location.uri.slice("file://".length))
-                    : symbol.location.uri;
-                  openFile(workspaceId, symbolFileId as FileId);
+                  return openEditorLocation({
+                    workspaceId: symbol.location.workspace_id,
+                    fileId: symbol.location.file_id,
+                    range: symbol.location.selection_range ?? symbol.location.range,
+                  });
                 });
               }
             }}>
             {symbol.name}
-            {symbol.containerName && <span className="ml-2 text-muted-foreground">{symbol.containerName}</span>}
+            {symbol.container_name && <span className="ml-2 text-muted-foreground">{symbol.container_name}</span>}
           </CommandItem>
         ))}
       </CommandGroup>

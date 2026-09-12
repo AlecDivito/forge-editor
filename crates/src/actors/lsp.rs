@@ -32,6 +32,7 @@ pub struct LspServerActor {
     stdin: Mutex<ChildStdin>,
     child: Mutex<tokio::process::Child>,
     pending: DashMap<i64, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>,
+    browser_requests: DashMap<uuid::Uuid, i64>,
     next_id: AtomicI64,
     app_state: Arc<AppState>,
 }
@@ -73,6 +74,7 @@ impl LspServerActor {
             stdin: Mutex::new(stdin),
             child: Mutex::new(child),
             pending: DashMap::new(),
+            browser_requests: DashMap::new(),
             next_id: AtomicI64::new(1),
             app_state,
         });
@@ -229,6 +231,47 @@ impl LspServerActor {
         }
     }
 
+    pub async fn browser_request(
+        &self,
+        browser_id: uuid::Uuid,
+        method: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let id = self.next_id.fetch_add(1, Ordering::AcqRel);
+        let (tx, rx) = oneshot::channel();
+        self.pending.insert(id, tx);
+        self.browser_requests.insert(browser_id, id);
+        let frame =
+            serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        if let Err(error) = self.write_frame(&frame).await {
+            self.pending.remove(&id);
+            self.browser_requests.remove(&browser_id);
+            return Err(error);
+        }
+        let outcome = tokio::time::timeout(Duration::from_secs(10), rx).await;
+        self.browser_requests.remove(&browser_id);
+        match outcome {
+            Ok(Ok(Ok(result))) => Ok(result),
+            Ok(Ok(Err(error))) => Err(error.into()),
+            Ok(Err(_)) => anyhow::bail!("lsp server dropped request '{method}' without responding"),
+            Err(_) => {
+                self.pending.remove(&id);
+                anyhow::bail!("lsp request '{method}' timed out")
+            }
+        }
+    }
+
+    pub async fn cancel_browser_request(&self, browser_id: uuid::Uuid) -> bool {
+        let Some((_, id)) = self.browser_requests.remove(&browser_id) else {
+            return false;
+        };
+        self.pending.remove(&id);
+        let _ = self
+            .notify("$/cancelRequest", serde_json::json!({ "id": id }))
+            .await;
+        true
+    }
+
     pub async fn notify(&self, method: &str, params: serde_json::Value) -> anyhow::Result<()> {
         self.write_frame(
             &serde_json::json!({ "jsonrpc": "2.0", "method": method, "params": params }),
@@ -259,16 +302,8 @@ impl LspServerActor {
                     JsonRpcMessage::Notification { method, params } => {
                         actor.handle_notification(&method, params).await;
                     }
-                    JsonRpcMessage::Request { id, method } => {
-                        // server->client requests (workspace/configuration, etc.)
-                        // aren't implemented yet — answer so the server doesn't hang.
-                        debug!("unhandled server->client LSP request: {method}");
-                        let _ = actor
-                            .write_frame(&serde_json::json!({
-                                "jsonrpc": "2.0", "id": id,
-                                "error": { "code": -32601, "message": "not implemented" }
-                            }))
-                            .await;
+                    JsonRpcMessage::Request { id, method, params } => {
+                        actor.handle_server_request(id, &method, params).await;
                     }
                 }
             }
@@ -285,6 +320,9 @@ impl LspServerActor {
                 .app_state
                 .lsp_servers
                 .remove(&(actor.workspace_id.clone(), actor.language_id));
+            actor
+                .broadcast_event("forge/serverExited", serde_json::json!({}))
+                .await;
 
             let pending_ids: Vec<i64> = actor.pending.iter().map(|e| *e.key()).collect();
             for id in pending_ids {
@@ -314,7 +352,8 @@ impl LspServerActor {
 
     async fn handle_notification(&self, method: &str, params: serde_json::Value) {
         if method != "textDocument/publishDiagnostics" {
-            return; // logMessage, progress, etc. — not handled yet
+            self.broadcast_event(method, params).await;
+            return;
         }
         let Some(uri) = params.get("uri").and_then(|v| v.as_str()) else {
             return;
@@ -338,6 +377,63 @@ impl LspServerActor {
             .map(|e| e.value().clone());
         if let Some(doc) = doc {
             doc.set_diagnostics(diagnostics).await;
+        }
+    }
+
+    async fn broadcast_event(&self, method: &str, params: serde_json::Value) {
+        let clients: Vec<_> = self
+            .app_state
+            .clients
+            .iter()
+            .filter(|entry| {
+                entry
+                    .value()
+                    .authorized_workspaces
+                    .contains(&self.workspace_id)
+            })
+            .map(|entry| entry.value().document_tx.clone())
+            .collect();
+        for client in clients {
+            let _ = client
+                .send(crate::models::ServerMessage::LspServerEvent {
+                    workspace_id: self.workspace_id.clone(),
+                    language_id: self.language_id,
+                    file_id: None,
+                    method: method.to_string(),
+                    params: params.clone(),
+                })
+                .await;
+        }
+    }
+
+    async fn handle_server_request(&self, id: i64, method: &str, params: serde_json::Value) {
+        let response = match method {
+            "workspace/configuration" => {
+                let count = params
+                    .get("items")
+                    .and_then(|value| value.as_array())
+                    .map_or(0, Vec::len);
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": vec![serde_json::Value::Null; count] })
+            }
+            "workspace/workspaceFolders" => {
+                let result = self.app_state.workspace(&self.workspace_id).ok().map(|workspace| vec![serde_json::json!({
+                    "uri": format!("file://{}", self.app_state.workspace_root(&self.workspace_id).unwrap_or_default().display()),
+                    "name": workspace.name.clone(),
+                })]).unwrap_or_default();
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result })
+            }
+            "client/registerCapability"
+            | "client/unregisterCapability"
+            | "window/workDoneProgress/create" => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null })
+            }
+            _ => serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": { "code": -32601, "message": format!("unsupported server request: {method}") }
+            }),
+        };
+        if let Err(error) = self.write_frame(&response).await {
+            warn!("failed to answer LSP server request {method}: {error}");
         }
     }
 

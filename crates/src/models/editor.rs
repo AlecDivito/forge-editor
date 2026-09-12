@@ -9,7 +9,10 @@ pub type ClientId = String;
 pub type WorkspaceId = String;
 pub type TerminalId = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum LanguageId {
     Rust,
     TypeScript,
@@ -198,6 +201,18 @@ pub enum FsEntryType {
     Symlink,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LspScope {
+    Document {
+        file_id: FileId,
+    },
+    Workspace {
+        #[serde(default)]
+        language_id: Option<LanguageId>,
+    },
+}
+
 #[derive(JsonSchema, Serialize, Deserialize, Clone)]
 #[serde(tag = "kind")]
 pub enum ClientMessage {
@@ -260,10 +275,13 @@ pub enum ClientMessage {
 
     LspRequest {
         workspace_id: WorkspaceId,
-        file_id: FileId,
+        scope: LspScope,
         request_id: uuid::Uuid,
         method: String,
         params: serde_json::Value,
+    },
+    LspCancel {
+        request_id: uuid::Uuid,
     },
     LspNotification {
         workspace_id: WorkspaceId,
@@ -359,14 +377,15 @@ impl std::fmt::Display for ClientMessage {
 
             ClientMessage::LspRequest {
                 workspace_id,
-                file_id,
+                scope,
                 request_id,
                 method,
                 params,
             } => write!(
                 f,
-                "LspRequest({workspace_id}, {file_id}, {request_id}, {method}, {params})"
+                "LspRequest({workspace_id}, {scope:?}, {request_id}, {method}, {params})"
             ),
+            ClientMessage::LspCancel { request_id } => write!(f, "LspCancel({request_id})"),
 
             ClientMessage::LspNotification {
                 workspace_id,
@@ -467,7 +486,19 @@ pub enum ServerMessage {
     },
     LspError {
         request_id: uuid::Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<i64>,
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
+    },
+    LspServerEvent {
+        workspace_id: WorkspaceId,
+        language_id: LanguageId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_id: Option<FileId>,
+        method: String,
+        params: serde_json::Value,
     },
     Diagnostics {
         workspace_id: WorkspaceId,
@@ -491,6 +522,30 @@ If you want to skip JSON overhead for the hot doc-update / terminal-byte paths, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lsp_request_scopes_and_cancellation_round_trip() {
+        let document: ClientMessage = serde_json::from_value(serde_json::json!({
+            "kind": "LspRequest", "workspace_id": "one",
+            "scope": { "kind": "document", "file_id": "/src/main.rs" },
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "method": "textDocument/hover", "params": { "position": { "line": 0, "character": 0 } }
+        }))
+        .unwrap();
+        assert!(matches!(
+            document,
+            ClientMessage::LspRequest {
+                scope: LspScope::Document { .. },
+                ..
+            }
+        ));
+
+        let cancel: ClientMessage = serde_json::from_value(serde_json::json!({
+            "kind": "LspCancel", "request_id": "00000000-0000-0000-0000-000000000001"
+        }))
+        .unwrap();
+        assert!(matches!(cancel, ClientMessage::LspCancel { .. }));
+    }
 
     #[test]
     fn lifecycle_client_messages_use_json_number_arrays() {

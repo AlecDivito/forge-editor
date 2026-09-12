@@ -1,15 +1,15 @@
 "use client";
 
 import FileViewerController from "@/components/panels/filesystem/filesystem";
-import { useSendRequest } from "@/hooks/use-send-message";
-import { DockviewApi, DockviewReadyEvent, GridviewApi, GridviewComponent, Orientation } from "dockview";
+import { Orientation } from "dockview";
 import Chat from "./chat";
 import Terminal from "./terminal";
 import CommandPallet from "./panels/commandPallet/CommandPallet";
 
 import { GridviewReact, GridviewReadyEvent } from "dockview-react"
 import CodeViewerController from "./panels/code/CodeViewerController";
-import { useEffect, useRef, useState } from "react";
+import { useLspEventRouter } from "@/lib/ws/use-lsp-event-router";
+import { LspNotifications } from "./notifications/LspNotifications";
 
 const components = {
   filesystem: FileViewerController,
@@ -19,6 +19,7 @@ const components = {
 };
 
 const VSCodeLayout = () => {
+  useLspEventRouter();
   // const ws = useWebSocket();
   // const sender = useSendRequest();
   // const { handleNotification: handleFileTreeNotification } = useFileStore();
@@ -134,6 +135,7 @@ const VSCodeLayout = () => {
   return (
     <div className="flex h-screen">
       <CommandPallet />
+      <LspNotifications />
       <GridviewReact components={components} onReady={onReady} orientation={Orientation.VERTICAL} />
     </div>
   );

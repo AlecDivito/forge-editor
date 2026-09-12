@@ -7,7 +7,7 @@ import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import { MarkedString, MarkupContent } from "vscode-languageserver-protocol";
 import { DocumentFileId, DocumentWorkspaceId } from "./state.extension";
-import { sendLspRequest } from "@/lib/ws/lsp-client";
+import { sendDocumentLspRequest } from "@/lib/ws/lsp-client";
 
 const emit = (elem: Element) => (text: string, classes: string) => {
     let node: Text | HTMLSpanElement = document.createTextNode(text);
@@ -183,7 +183,7 @@ export const requestHoverToolTip = async (view: EditorView, pos: number /* side:
     const line = view.state.doc.lineAt(pos);
 
     // TODO: (Alec) Send document changes
-    const result = await sendLspRequest(
+    const result = await sendDocumentLspRequest(
         workspaceId,
         fileId,
         'textDocument/hover',

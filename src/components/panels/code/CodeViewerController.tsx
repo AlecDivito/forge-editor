@@ -18,6 +18,7 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
     const openPanels = useEditorSessionStore(useShallow(selectPanels));
     const requestClose = useEditorSessionStore((s) => s.requestClose);
     const setActivePanel = useEditorSessionStore((s) => s.setActivePanel);
+    const activePanelId = useEditorSessionStore((s) => s.activePanelId);
     const knownIds = useRef(new Set<string>());
     const suppressNativeRemoval = useRef(new Set<string>());
 
@@ -81,6 +82,11 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
             handle.update({ params: panel });
         }
     }, [view, openPanels]);
+
+    useEffect(() => {
+        if (!view || !activePanelId) return;
+        view.getPanel(activePanelId)?.api.setActive();
+    }, [activePanelId, view, openPanels]);
 
     // catches closes Dockview performs on its own (drag-out, its native
     // close affordance if a panel ever lacks our custom tab, etc.) and

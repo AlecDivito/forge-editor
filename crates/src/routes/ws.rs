@@ -1,7 +1,7 @@
 use crate::{
     actors::{DocumentActor, LspServerActor, TerminalActor},
     models::{
-        ClientId, ClientMessage, ClientParams, DocEvent, ErrorCode, FileId, LanguageId,
+        ClientId, ClientMessage, ClientParams, DocEvent, ErrorCode, FileId, LanguageId, LspScope,
         ServerMessage, WorkspaceId,
     },
     services::workspace_mutations,
@@ -571,22 +571,51 @@ async fn dispatch(
 
         ClientMessage::LspRequest {
             workspace_id,
-            file_id,
+            scope,
             request_id,
             method,
             mut params,
         } => {
             authorize(state, &client_id, &workspace_id).await?;
-            let lsp = match get_or_spawn_lsp(state, &workspace_id, &file_id).await {
+            let document_file = match &scope {
+                LspScope::Document { file_id } => Some(file_id.clone()),
+                _ => None,
+            };
+            let lsp_result = match &scope {
+                LspScope::Document { file_id } => {
+                    get_or_spawn_lsp(state, &workspace_id, file_id).await
+                }
+                LspScope::Workspace { language_id } => {
+                    get_workspace_lsp(state, &workspace_id, *language_id).await
+                }
+            };
+            if !method_allowed_for_scope(&method, &scope) {
+                document_tx
+                    .send(ServerMessage::LspError {
+                        request_id,
+                        code: Some(-32601),
+                        message: format!("unsupported LSP method or scope: {method}"),
+                        data: None,
+                    })
+                    .await
+                    .ok();
+                return Ok(());
+            }
+            let lsp = match lsp_result {
                 Ok(Some(lsp)) => lsp,
                 Ok(None) => {
                     document_tx
                         .send(ServerMessage::LspError {
                             request_id,
+                            code: None,
                             message: format!(
                                 "no LSP configured for {:?}",
-                                state.resolve_file_path(&workspace_id, &file_id)?
+                                document_file
+                                    .as_ref()
+                                    .map(|file_id| state.resolve_file_path(&workspace_id, file_id))
+                                    .transpose()?
                             ),
+                            data: None,
                         })
                         .await
                         .ok();
@@ -596,31 +625,61 @@ async fn dispatch(
                     document_tx
                         .send(ServerMessage::LspError {
                             request_id,
+                            code: None,
                             message: e.to_string(),
+                            data: None,
                         })
                         .await
                         .ok();
                     return Ok(());
                 }
             };
-            let doc = state
-                .open_files
-                .get(&(workspace_id.clone(), file_id.clone()))
-                .map(|e| e.value().clone());
+            let doc = document_file.as_ref().and_then(|file_id| {
+                state
+                    .open_files
+                    .get(&(workspace_id.clone(), file_id.clone()))
+                    .map(|e| e.value().clone())
+            });
             if let Some(doc) = &doc {
                 doc.ensure_lsp_open(&lsp).await.ok();
-                let uri = doc_uri(state, &workspace_id, &file_id)?;
+                let uri = doc_uri(
+                    state,
+                    &workspace_id,
+                    document_file.as_ref().expect("document scope"),
+                )?;
                 if let Some(obj) = params.as_object_mut() {
                     let response = serde_json::json!({ "uri": uri });
                     obj.insert("textDocument".into(), response);
                 }
+            } else if document_file.is_some() {
+                document_tx
+                    .send(ServerMessage::LspError {
+                        request_id,
+                        code: None,
+                        message: "document must be open and synchronized before an LSP request"
+                            .into(),
+                        data: None,
+                    })
+                    .await
+                    .ok();
+                return Ok(());
             }
 
             // fire-and-forget: the response is routed back asynchronously,
             // don't block the dispatch loop on a 10s LSP timeout.
+            let response_state = state.clone();
+            let response_workspace = workspace_id.clone();
+            let response_method = method.clone();
             tokio::spawn(async move {
-                match lsp.request(&method, params).await {
-                    Ok(result) => {
+                match lsp.browser_request(request_id, &method, params).await {
+                    Ok(mut result) => {
+                        if response_method == "workspace/symbol" {
+                            result = normalize_workspace_symbols(
+                                &response_state,
+                                &response_workspace,
+                                result,
+                            );
+                        }
                         document_tx
                             .send(ServerMessage::LspResponse { request_id, result })
                             .await
@@ -630,13 +689,29 @@ async fn dispatch(
                         document_tx
                             .send(ServerMessage::LspError {
                                 request_id,
+                                code: None,
                                 message: e.to_string(),
+                                data: None,
                             })
                             .await
                             .ok();
                     }
                 }
             });
+            Ok(())
+        }
+
+        ClientMessage::LspCancel { request_id } => {
+            for actor in state
+                .lsp_servers
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect::<Vec<_>>()
+            {
+                if actor.cancel_browser_request(request_id).await {
+                    break;
+                }
+            }
             Ok(())
         }
 
@@ -1059,6 +1134,41 @@ async fn get_lsp_if_running(
         .map(|e| e.value().clone()))
 }
 
+async fn get_workspace_lsp(
+    state: &AppState,
+    workspace_id: &WorkspaceId,
+    language_id: Option<LanguageId>,
+) -> anyhow::Result<Option<Arc<LspServerActor>>> {
+    if let Some(language_id) = language_id {
+        return Ok(state
+            .lsp_servers
+            .get(&(workspace_id.clone(), language_id))
+            .map(|entry| entry.value().clone()));
+    }
+    Ok(state
+        .lsp_servers
+        .iter()
+        .find(|entry| entry.key().0 == *workspace_id)
+        .map(|entry| entry.value().clone()))
+}
+
+fn method_allowed_for_scope(method: &str, scope: &LspScope) -> bool {
+    match scope {
+        LspScope::Workspace { .. } => matches!(method, "workspace/symbol"),
+        LspScope::Document { .. } => matches!(
+            method,
+            "textDocument/hover"
+                | "textDocument/completion"
+                | "textDocument/definition"
+                | "textDocument/references"
+                | "textDocument/documentSymbol"
+                | "textDocument/codeAction"
+                | "textDocument/rename"
+                | "textDocument/formatting"
+        ),
+    }
+}
+
 fn doc_uri(
     state: &AppState,
     workspace_id: &WorkspaceId,
@@ -1068,4 +1178,39 @@ fn doc_uri(
         "file://{}",
         state.resolve_file_path(workspace_id, file_id)?.display()
     ))
+}
+
+fn normalize_workspace_symbols(
+    state: &AppState,
+    workspace_id: &WorkspaceId,
+    result: serde_json::Value,
+) -> serde_json::Value {
+    let Some(symbols) = result.as_array() else {
+        return serde_json::Value::Array(Vec::new());
+    };
+    let normalized = symbols
+        .iter()
+        .filter_map(|symbol| {
+            let location = symbol.get("location")?;
+            let uri = location.get("uri")?.as_str()?;
+            let path = uri.strip_prefix("file://")?;
+            let decoded = percent_encoding::percent_decode_str(path)
+                .decode_utf8()
+                .ok()?;
+            let file_id = state
+                .reverse_resolve_file_path(workspace_id, std::path::Path::new(decoded.as_ref()))
+                .ok()?;
+            Some(serde_json::json!({
+                "name": symbol.get("name")?.as_str()?,
+                "kind": symbol.get("kind")?.as_u64()?,
+                "container_name": symbol.get("containerName").and_then(|value| value.as_str()),
+                "location": {
+                    "workspace_id": workspace_id,
+                    "file_id": file_id,
+                    "range": location.get("range")?.clone()
+                }
+            }))
+        })
+        .collect();
+    serde_json::Value::Array(normalized)
 }
