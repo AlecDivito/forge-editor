@@ -20,23 +20,26 @@ import { useFileTree } from "../fileTree/providers/FileTreeProvider";
 import { FsSearchQuery } from "@/lib/generated";
 import SearchViewSummary from "./components/SearchViewSummary";
 import useSearchReplaceFiles from "./hooks/use-search-replace-files.hook";
+import { useEditorSessionStore } from "@/components/panels/code/state/editor-session.store";
+import { FileId } from "@/lib/ws/messages";
 
 export default function FileSearchView() {
-    const { open, setOpen } = useFileTree();
-    const { setSearchState, clearData, refetch, data, query } = useSearchFiles();
-    const { mutateAsync: searchAndReplace } = useSearchReplaceFiles();
+    const { open, setOpen, workspaceId } = useFileTree();
+    const { setSearchState, clearData, refetch, data, query } = useSearchFiles(workspaceId);
+    const { mutateAsync: searchAndReplace } = useSearchReplaceFiles(workspaceId);
     const [view, setView] = useState<ViewMode>('list')
+    const openFile = useEditorSessionStore((state) => state.openFile)
 
     const toggleView = useCallback(() => setView(view === 'list' ? 'tree' : 'list'), [view])
     const isRefreshDisabled = useMemo(() => query === undefined, [query])
 
     const search = useCallback((query: FsSearchQuery) => {
-        setSearchState(query)
+        setSearchState({ ...query, workspace_id: workspaceId })
         setOpen(true)
     }, [setOpen, setSearchState])
 
     const replace = useCallback(async (query: FsSearchQuery) => {
-        await searchAndReplace({ body: query })
+        await searchAndReplace({ query: { workspace_id: workspaceId }, body: query })
         setSearchState(query)
         setOpen(true)
     }, [])
@@ -102,7 +105,7 @@ export default function FileSearchView() {
                     onOpenInEditor={console.log}
                     onChangeViewMode={setView}
                 />}
-                {data?.results && <SearchViewResults response={data} view={view} />}
+                {data?.results && <SearchViewResults response={data} view={view} onLineClick={(result) => openFile(workspaceId, result.file.path as FileId)} />}
             </SearchViewForm>
         </div>
     );

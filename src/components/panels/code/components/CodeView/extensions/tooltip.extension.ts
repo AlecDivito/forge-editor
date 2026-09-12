@@ -172,6 +172,7 @@ async function formatContents(
 export const requestHoverToolTip = async (view: EditorView, pos: number /* side:  -1 | 1 */) => {
     const workspaceId = view.state.facet(DocumentWorkspaceId);
     const fileId = view.state.facet(DocumentFileId);
+    if (!workspaceId || !fileId) return null;
     // const capabilities = view.state.facet(Capabilities);
 
 

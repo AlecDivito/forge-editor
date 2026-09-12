@@ -9,8 +9,16 @@ export type CreateFile = {
     ty: FsFileType;
 };
 
+export type EnvironmentSnapshot = {
+    default_workspace_id: string;
+    environment: PublicEnvironment;
+    schema_version: number;
+    workspaces: Array<PublicWorkspace>;
+};
+
 export type FileNameSearchQuery = {
     search: string;
+    workspace_id?: string | null;
 };
 
 export type FilePath = {
@@ -45,6 +53,58 @@ export type FsListDirectory = {
 export type FsMoveFileResult = {
     from: FsFile;
     to: FsFile;
+};
+
+export type FsSearchHttpQuery = {
+    /**
+     * Glob patterns for files to exclude.
+     */
+    exclude?: string | null;
+    /**
+     * Glob patterns for files to include.
+     *
+     * Examples:
+     * *.rs
+     * src**
+     * ***.test.ts
+     */
+    include?: string | null;
+    /**
+     * Case-sensitive matching. Defaults to false.
+     */
+    match_case?: boolean;
+    /**
+     * Require the search text to be a whole word. Defaults to false.
+     */
+    match_whole_word?: boolean;
+    /**
+     * Only search files currently open in the editor.
+     */
+    open_files_only?: boolean;
+    preserve_case?: boolean;
+    /**
+     * Treat `search` as a regular expression. Defaults to false.
+     */
+    regex?: boolean;
+    /**
+     * String to use during replace operation
+     */
+    replace: string;
+    /**
+     * Text to search for.
+     */
+    search: string;
+    /**
+     * Whether filesystem ignore files such as .gitignore should be
+     * respected.
+     *
+     * Currently this can default to false and be enabled later.
+     */
+    use_ignore_files?: boolean;
+    /**
+     * Optional workspace filter. Omit to search every configured workspace.
+     */
+    workspace_id?: string | null;
 };
 
 export type FsSearchLine = {
@@ -109,11 +169,17 @@ export type FsSearchResponse = {
 export type FsSearchResult = {
     file: FsFile;
     matches: Array<FsSearchLine>;
+    workspace_id: string;
 };
 
 export type MovePath = {
     from: string;
     to: string;
+};
+
+export type MoveWorkspaceQuery = {
+    destination_workspace_id?: string | null;
+    source_workspace_id: string;
 };
 
 export type PaginationParams = {
@@ -122,15 +188,50 @@ export type PaginationParams = {
     size?: number | null;
 };
 
+export type PublicEnvironment = {
+    id: string;
+    name: string;
+};
+
+export type PublicWorkspace = {
+    id: string;
+    name: string;
+};
+
 export type SaveFile = {
     contents: Array<number>;
     path: string;
 };
 
+export type SearchWorkspaceQuery = {
+    /**
+     * Optional workspace filter. Omit to search every configured workspace.
+     */
+    workspace_id?: string | null;
+};
+
+export type WorkspaceQuery = {
+    workspace_id: string;
+};
+
+export type GetEnvironmentData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/environment';
+};
+
+export type GetEnvironmentResponses = {
+    200: EnvironmentSnapshot;
+};
+
+export type GetEnvironmentResponse = GetEnvironmentResponses[keyof GetEnvironmentResponses];
+
 export type ListFilesData = {
     body?: never;
     path?: never;
     query: {
+        workspace_id: string;
         path: string;
         page?: number | null;
         read_all?: boolean | null;
@@ -158,7 +259,9 @@ export type ListFilesResponse = ListFilesResponses[keyof ListFilesResponses];
 export type SaveFileData = {
     body: SaveFile;
     path?: never;
-    query?: never;
+    query: {
+        workspace_id: string;
+    };
     url: '/api/fs/save';
 };
 
@@ -181,7 +284,9 @@ export type SaveFileResponse = SaveFileResponses[keyof SaveFileResponses];
 export type CreateFileData = {
     body: CreateFile;
     path?: never;
-    query?: never;
+    query: {
+        workspace_id: string;
+    };
     url: '/api/fs/create';
 };
 
@@ -204,7 +309,10 @@ export type CreateFileResponse = CreateFileResponses[keyof CreateFileResponses];
 export type RenameFileData = {
     body: MovePath;
     path?: never;
-    query?: never;
+    query: {
+        destination_workspace_id?: string | null;
+        source_workspace_id: string;
+    };
     url: '/api/fs/rename';
 };
 
@@ -227,7 +335,9 @@ export type RenameFileResponse = RenameFileResponses[keyof RenameFileResponses];
 export type DeleteFileData = {
     body: FilePath;
     path?: never;
-    query?: never;
+    query: {
+        workspace_id: string;
+    };
     url: '/api/fs/delete';
 };
 
@@ -296,6 +406,10 @@ export type SearchFilesData = {
          * Currently this can default to false and be enabled later.
          */
         use_ignore_files?: boolean;
+        /**
+         * Optional workspace filter. Omit to search every configured workspace.
+         */
+        workspace_id?: string | null;
     };
     url: '/api/fs/search';
 };
@@ -321,6 +435,7 @@ export type SearchFileNamesData = {
     path?: never;
     query: {
         search: string;
+        workspace_id?: string | null;
     };
     url: '/api/fs/files/search';
 };
@@ -328,7 +443,12 @@ export type SearchFileNamesData = {
 export type SearchAndReplaceFilesData = {
     body: FsSearchQuery;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Optional workspace filter. Omit to search every configured workspace.
+         */
+        workspace_id?: string | null;
+    };
     url: '/api/fs/replace';
 };
 

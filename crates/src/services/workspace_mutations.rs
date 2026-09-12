@@ -37,7 +37,8 @@ pub async fn get_or_load_document(
     workspace_id: &WorkspaceId,
     file_id: &FileId,
 ) -> anyhow::Result<Arc<DocumentActor>> {
-    let _mutation = state.fs_mutation_lock.lock().await;
+    let workspace = state.workspace(workspace_id)?;
+    let _mutation = workspace.fs_mutation_lock.lock().await;
     let key = (workspace_id.clone(), file_id.clone());
     if let Some(existing) = state.open_files.get(&key) {
         return Ok(existing.value().clone());
@@ -53,9 +54,14 @@ pub async fn get_or_load_document(
 
 /// The legacy HTTP save endpoint may only write documents that are not
 /// currently owned by a `DocumentActor`.
-pub async fn save_legacy(state: &AppState, body: &SaveFile) -> Result<(), AppError> {
-    let _mutation = state.fs_mutation_lock.lock().await;
-    let local_path = state.to_absolute_path(&body.path)?;
+pub async fn save_legacy(
+    state: &AppState,
+    workspace_id: &WorkspaceId,
+    body: &SaveFile,
+) -> Result<(), AppError> {
+    let workspace = state.workspace(workspace_id)?;
+    let _mutation = workspace.fs_mutation_lock.lock().await;
+    let local_path = state.resolve_file_path(workspace_id, &body.path)?;
     let open_documents: Vec<_> = state
         .open_files
         .iter()
@@ -79,9 +85,14 @@ pub async fn save_legacy(state: &AppState, body: &SaveFile) -> Result<(), AppErr
     Ok(())
 }
 
-pub async fn create(state: &AppState, body: &CreateFile) -> Result<(), AppError> {
-    let _mutation = state.fs_mutation_lock.lock().await;
-    let local_path = state.to_absolute_path(&body.path)?;
+pub async fn create(
+    state: &AppState,
+    workspace_id: &WorkspaceId,
+    body: &CreateFile,
+) -> Result<(), AppError> {
+    let workspace = state.workspace(workspace_id)?;
+    let _mutation = workspace.fs_mutation_lock.lock().await;
+    let local_path = state.resolve_file_path(workspace_id, &body.path)?;
     match body.ty {
         FsFileType::Directory => tokio::fs::create_dir(local_path).await?,
         FsFileType::File => tokio::fs::write(local_path, "").await?,
@@ -232,10 +243,15 @@ pub async fn rename(
             "source and destination are identical".into(),
         ));
     }
-    let root = state.workspace_root(workspace_id);
+    let workspace = state
+        .workspace(workspace_id)
+        .map_err(|error| MutationError::BadPath(error.to_string()))?;
+    let root = state
+        .workspace_root(workspace_id)
+        .map_err(|error| MutationError::BadPath(error.to_string()))?;
     let from_path = root.join(&from);
     let to_path = root.join(&to);
-    let _mutation = state.fs_mutation_lock.lock().await;
+    let _mutation = workspace.fs_mutation_lock.lock().await;
     ensure_parent_inside(&root, &from_path).await?;
     ensure_parent_inside(&root, &to_path).await?;
     let ty = entry_type(&from_path).await.map_err(|error| match error {
@@ -357,9 +373,14 @@ pub async fn delete(
     raw: &str,
 ) -> Result<DeleteCommit, MutationError> {
     let path = normalize_workspace_relative(raw)?;
-    let root = state.workspace_root(workspace_id);
+    let workspace = state
+        .workspace(workspace_id)
+        .map_err(|error| MutationError::BadPath(error.to_string()))?;
+    let root = state
+        .workspace_root(workspace_id)
+        .map_err(|error| MutationError::BadPath(error.to_string()))?;
     let absolute = root.join(&path);
-    let _mutation = state.fs_mutation_lock.lock().await;
+    let _mutation = workspace.fs_mutation_lock.lock().await;
     ensure_parent_inside(&root, &absolute).await?;
     let ty = entry_type(&absolute).await.map_err(|error| match error {
         MutationError::Io(ref io) if io.kind() == std::io::ErrorKind::NotFound => {
@@ -448,7 +469,10 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actors::DocumentActor, config::Config};
+    use crate::{
+        actors::DocumentActor,
+        config::{Config, EnvironmentConfig, WorkspaceConfig},
+    };
     use std::{
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
@@ -474,7 +498,16 @@ mod tests {
         (
             AppState::new(Config {
                 port: 0,
-                base_dir: root.clone(),
+                environment: EnvironmentConfig {
+                    id: "test".into(),
+                    name: "Test".into(),
+                },
+                workspaces: vec![WorkspaceConfig {
+                    id: "workspace".into(),
+                    name: "Workspace".into(),
+                    root: root.clone(),
+                }],
+                default_workspace_id: "workspace".into(),
             }),
             root,
         )

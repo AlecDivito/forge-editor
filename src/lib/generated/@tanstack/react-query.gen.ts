@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { createFile, deleteFile, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles } from '../sdk.gen';
-import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFilesData, SearchFilesResponse } from '../types.gen';
+import { createFile, deleteFile, getEnvironment, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles } from '../sdk.gen';
+import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, GetEnvironmentData, GetEnvironmentResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFilesData, SearchFilesResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -39,6 +39,21 @@ const createQueryKey = <TOptions extends Options>(id: string, options?: TOptions
     }
     return [params];
 };
+
+export const getEnvironmentQueryKey = (options?: Options<GetEnvironmentData>) => createQueryKey('getEnvironment', options);
+
+export const getEnvironmentOptions = (options?: Options<GetEnvironmentData>) => queryOptions<GetEnvironmentResponse, AxiosError<DefaultError>, GetEnvironmentResponse, ReturnType<typeof getEnvironmentQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getEnvironment({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getEnvironmentQueryKey(options)
+});
 
 export const listFilesQueryKey = (options: Options<ListFilesData>) => createQueryKey('listFiles', options);
 

@@ -1,3 +1,4 @@
+mod environment;
 mod file_search;
 mod file_system;
 mod ws;
@@ -9,6 +10,7 @@ use rovo::{
 
 use crate::{
     routes::{
+        environment::get_environment,
         file_search::{search_and_replace_files, search_file_names, search_files},
         file_system::{create_file, delete_file, rename_file, save_file},
         ws::ws,
@@ -20,6 +22,7 @@ use file_system::list_files;
 
 pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
     Router::new()
+        .route("/environment", get(get_environment))
         .route("/fs/list", get(list_files))
         // .route("/fs/open", post(open_file))
         // .route("/fs/close", post(close_file))

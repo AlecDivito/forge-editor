@@ -10,6 +10,7 @@ pub struct FsSearchResponse {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct FsSearchResult {
+    pub workspace_id: String,
     pub file: FsFile,
     pub matches: Vec<FsSearchLine>,
 }
@@ -68,13 +69,29 @@ pub struct FsSearchQuery {
     pub use_ignore_files: bool,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct FsSearchHttpQuery {
+    #[serde(flatten)]
+    pub search: FsSearchQuery,
+    /// Optional workspace filter. Omit to search every configured workspace.
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SearchWorkspaceQuery {
+    /// Optional workspace filter. Omit to search every configured workspace.
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct FileNameSearchQuery {
     pub search: String,
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct FileNameSearchResult {
+    pub workspace_id: String,
     pub path: String,
     pub name: String,
 }

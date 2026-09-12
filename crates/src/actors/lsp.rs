@@ -55,7 +55,7 @@ impl LspServerActor {
     ) -> anyhow::Result<Arc<Self>> {
         debug!("Spawning LSP {:?}", language.server_binary_path());
         let mut child = Command::new(language.server_binary_path())
-            .arg("--stdio")
+            .args(language.server_args())
             .current_dir(workspace_root)
             .kill_on_drop(true) // don't orphan the process if we crash/restart
             .stdin(Stdio::piped())

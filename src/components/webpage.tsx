@@ -37,7 +37,10 @@ export default function WebPageInitializer({ }: Props) {
       // every directory listing because a directory move/delete changes both
       // the old and new parent, including listings not currently mounted.
       void queryClient.invalidateQueries({
-        predicate: (query) => (query.queryKey[0] as { _id?: string } | undefined)?._id === "listFiles",
+        predicate: (query) => {
+          const key = query.queryKey[0] as { _id?: string, query?: { workspace_id?: string } } | undefined
+          return key?._id === "listFiles" && key.query?.workspace_id === event.workspace_id
+        },
       })
     })
     return () => { unsubscribe(); unsubscribeFilesystem(); }

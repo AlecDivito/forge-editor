@@ -43,6 +43,23 @@ npm i -g typescript-language-server vscode-json-languageserver npm install vscod
 
 ## Setup
 
+Configure the Rust server with one or more project workspaces. Paths in the
+JSON manifest are relative to `FORGE_WORKSPACES_ROOT`; physical roots are never
+sent to the browser. Copy `.env.example` and adjust it for your machine:
+
+```dotenv
+PORT=8080
+FORGE_ENVIRONMENT_ID=local
+FORGE_ENVIRONMENT_NAME="Local projects"
+FORGE_WORKSPACES_ROOT=/workspaces
+FORGE_WORKSPACES_JSON='[{"id":"forge-editor","name":"Forge Editor","path":"forge-editor"}]'
+FORGE_DEFAULT_WORKSPACE=forge-editor
+```
+
+Multiple workspaces require `FORGE_DEFAULT_WORKSPACE`. Configuration is read
+once at startup. `BASE_DIRECTORY` remains available temporarily and creates a
+single workspace named `default`.
+
 Install the packages
 
 ```bash

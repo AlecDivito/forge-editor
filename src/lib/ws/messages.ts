@@ -128,6 +128,7 @@ export type ClientMessage =
   }
   | {
     kind: "TerminalOpen";
+    workspace_id: WorkspaceId;
     term_id: TerminalId;
     cols: number;
     rows: number;
@@ -170,6 +171,8 @@ export type ServerMessage =
   | {
     kind: "Hello";
     client_id: ClientId;
+    environment_id: string;
+    schema_version: number;
   }
   | {
     kind: "DocSync";

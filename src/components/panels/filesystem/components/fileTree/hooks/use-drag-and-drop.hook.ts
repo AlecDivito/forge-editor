@@ -42,8 +42,8 @@ export function useDragSource(file: FsFile) {
  * useRenameFile (a move is just a rename to a new parent path).
  */
 export function useDropTarget(file: FsFile, options?: { onHoverExpand?: () => void }) {
-  const { draggedPath, setDraggedPath } = useFileTree();
-  const { mutateAsync: renameFileOp } = useRenameFile(file);
+  const { draggedPath, setDraggedPath, workspaceId } = useFileTree();
+  const { mutateAsync: renameFileOp } = useRenameFile(workspaceId, file);
   const [isDragOver, setIsDragOver] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -105,7 +105,7 @@ export function useDropTarget(file: FsFile, options?: { onHoverExpand?: () => vo
 
       if (to === sourcePath) return; // dropped into its own parent, no-op
 
-      renameFileOp({ body: { from: sourcePath!, to } });
+      renameFileOp({ query: { source_workspace_id: workspaceId, destination_workspace_id: workspaceId }, body: { from: sourcePath!, to } });
     },
     [canDrop, draggedPath, file.path, renameFileOp, setDraggedPath]
   );

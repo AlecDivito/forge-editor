@@ -24,6 +24,7 @@ const KNOWN_TRIGGER_CHARACTERS = new Set([".", "\"", "'", "/", "@", "<"]);
 export const autoCompletionOverride = async (context: CompletionContext): Promise<CompletionResult | null> => {
     const workspaceId = context.state.facet(DocumentWorkspaceId);
     const fileId = context.state.facet(DocumentFileId);
+    if (!workspaceId || !fileId) return null;
     // TODO: Add in actual capabilities check for how to handle this.
 
     const { state, pos, explicit } = context;

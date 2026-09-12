@@ -8,6 +8,7 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 import { FileTreeProvider } from "./components/fileTree/providers/FileTreeProvider";
 import FsTreeAccordionItem from "./components/fileTree/Tree";
 import FileSearchView from "./components/fileSearch/SearchView";
+import { selectedWorkspace, useWorkspaceStore } from "@/lib/workspaces";
 
 type Props = Record<string, string>;
 
@@ -15,6 +16,10 @@ type ViewType = 'file' | 'search'
 
 const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
   const [view, setView] = useState<ViewType>('file')
+  const workspace = useWorkspaceStore(selectedWorkspace)
+  const selectWorkspace = useWorkspaceStore((state) => state.selectWorkspace)
+  const workspaces = useWorkspaceStore((state) => state.snapshot?.workspaces ?? [])
+  if (!workspace) throw new Error("Explorer requires a selected workspace")
 
   useKeyboard({
     keys: {
@@ -24,10 +29,16 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 
   const viewComponent: Record<ViewType, ReactNode> = {
     'file': (
-      <Accordion type="multiple" defaultValue={["file-system"]} className="w-full h-full bg-background">
-        <FileTreeProvider>
-          <FsTreeAccordionItem />
-        </FileTreeProvider>
+      <Accordion
+        type="multiple"
+        defaultValue={workspaces.map(({ id }) => `workspace-${id}`)}
+        className="w-full h-full bg-background"
+      >
+        {workspaces.map((item) => (
+          <FileTreeProvider key={item.id} workspaceId={item.id}>
+            <FsTreeAccordionItem workspaceName={item.name} />
+          </FileTreeProvider>
+        ))}
         <AccordionItem value="outline">
           <AccordionTrigger header="Outline"></AccordionTrigger>
           <AccordionContent>hi</AccordionContent>
@@ -35,7 +46,7 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
       </Accordion>
     ),
     'search': (
-      <FileTreeProvider>
+      <FileTreeProvider workspaceId={workspace.id}>
         <FileSearchView />
       </FileTreeProvider>
     )
@@ -117,7 +128,14 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 </div>
 
 
-      {viewComponent[view]}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {view === "search" && (
+          <select className="m-2 bg-background text-sm" value={workspace.id} onChange={(event) => selectWorkspace(event.target.value as typeof workspace.id)} aria-label="Search workspace">
+            {workspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        )}
+        {viewComponent[view]}
+      </div>
     </div>
   );
 };

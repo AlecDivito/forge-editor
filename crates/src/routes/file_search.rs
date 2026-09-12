@@ -17,8 +17,8 @@ use tracing::debug;
 use crate::{
     error::AppError,
     models::{
-        FileNameSearchQuery, FileNameSearchResponse, FileNameSearchResult, FsFile, FsSearchLine,
-        FsSearchQuery, FsSearchResult,
+        FileNameSearchQuery, FileNameSearchResponse, FileNameSearchResult, FsFile,
+        FsSearchHttpQuery, FsSearchLine, FsSearchQuery, FsSearchResult, SearchWorkspaceQuery,
     },
     state::AppState,
 };
@@ -42,15 +42,23 @@ async fn search_file_names_impl(
     state: AppState,
     query: FileNameSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
-    let base_dir = state.config.base_dir.clone();
-    let response =
-        tokio::task::spawn_blocking(move || search_file_names_blocking(&base_dir, query))
-            .await
-            .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
+    let workspaces = workspace_roots(&state, query.workspace_id.as_deref())?;
+    let response = tokio::task::spawn_blocking(move || {
+        let mut results = Vec::new();
+        for (workspace_id, root) in workspaces {
+            results
+                .extend(search_file_names_blocking(&workspace_id, &root, query.clone())?.results);
+        }
+        results.truncate(100);
+        Ok::<_, AppError>(FileNameSearchResponse { results })
+    })
+    .await
+    .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
     Ok(Json(response))
 }
 
 fn search_file_names_blocking(
+    workspace_id: &str,
     base_dir: &Path,
     query: FileNameSearchQuery,
 ) -> Result<FileNameSearchResponse, AppError> {
@@ -89,7 +97,14 @@ fn search_file_names_blocking(
             .unwrap_or_else(|| path.clone());
         let score = fuzzy_score(&path.to_lowercase(), &name.to_lowercase(), &query);
         if let Some(score) = score {
-            results.push((score, FileNameSearchResult { path, name }));
+            results.push((
+                score,
+                FileNameSearchResult {
+                    workspace_id: workspace_id.to_owned(),
+                    path,
+                    name,
+                },
+            ));
         }
     }
 
@@ -132,20 +147,30 @@ fn fuzzy_score(path: &str, name: &str, query: &str) -> Option<usize> {
 #[rovo]
 pub async fn search_files(
     State(state): State<AppState>,
-    Query(query): Query<FsSearchQuery>,
+    Query(query): Query<FsSearchHttpQuery>,
 ) -> impl IntoApiResponse {
     search_files_impl(state, query).await.into_response()
 }
 
 async fn search_files_impl(
     state: AppState,
-    query: FsSearchQuery,
+    query: FsSearchHttpQuery,
 ) -> Result<impl IntoResponse, AppError> {
-    let base_dir = state.config.base_dir.clone();
-    let open_files = open_file_paths(&state, query.open_files_only);
+    let workspaces = workspace_roots(&state, query.workspace_id.as_deref())?;
+    let query = query.search;
+    let open_files = workspaces
+        .iter()
+        .map(|(id, _)| open_file_paths(&state, id, query.open_files_only))
+        .collect::<Vec<_>>();
 
     let response = tokio::task::spawn_blocking(move || {
-        search_files_blocking(&base_dir, query, open_files.as_ref())
+        let mut results = Vec::new();
+        for ((workspace_id, root), open) in workspaces.into_iter().zip(open_files) {
+            results.extend(
+                search_files_blocking(&workspace_id, &root, query.clone(), open.as_ref())?.results,
+            );
+        }
+        Ok::<_, AppError>(FsSearchResponse { results })
     })
     .await
     .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
@@ -154,6 +179,7 @@ async fn search_files_impl(
 }
 
 fn search_files_blocking(
+    workspace_id: &str,
     base_dir: &Path,
     query: FsSearchQuery,
     open_files: Option<&HashSet<PathBuf>>,
@@ -233,7 +259,11 @@ fn search_files_blocking(
         debug!(action = "searching", result = "files found", paths = ?matches);
 
         if let Some(file) = FsFile::from_base_path(base_dir, relative_path)? {
-            results.push(FsSearchResult { file, matches });
+            results.push(FsSearchResult {
+                workspace_id: workspace_id.to_owned(),
+                file,
+                matches,
+            });
         }
     }
 
@@ -255,19 +285,24 @@ fn search_files_blocking(
 #[rovo]
 pub async fn search_and_replace_files(
     State(state): State<AppState>,
+    Query(workspace): Query<SearchWorkspaceQuery>,
     Json(query): Json<FsSearchQuery>,
 ) -> impl IntoApiResponse {
-    search_and_replace_files_impl(state, query)
+    search_and_replace_files_impl(state, workspace.workspace_id, query)
         .await
         .into_response()
 }
 
 async fn search_and_replace_files_impl(
     state: AppState,
+    workspace_id: Option<String>,
     query: FsSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
-    let base_dir = state.config.base_dir.clone();
-    let open_files = open_file_paths(&state, query.open_files_only);
+    let workspaces = workspace_roots(&state, workspace_id.as_deref())?;
+    let open_files = workspaces
+        .iter()
+        .map(|(id, _)| open_file_paths(&state, id, query.open_files_only))
+        .collect::<Vec<_>>();
 
     let pattern = if query.regex {
         query.search.clone()
@@ -282,14 +317,22 @@ async fn search_and_replace_files_impl(
     };
 
     let response = tokio::task::spawn_blocking(move || -> Result<FsSearchResponse, AppError> {
-        let response = search_files_blocking(&base_dir, query.clone(), open_files.as_ref())?;
+        let mut response = FsSearchResponse {
+            results: Vec::new(),
+        };
+        for ((workspace_id, base_dir), open) in workspaces.into_iter().zip(open_files) {
+            response.results.extend(
+                search_files_blocking(&workspace_id, &base_dir, query.clone(), open.as_ref())?
+                    .results,
+            );
+        }
         let is_regex = query.regex;
         let replace = query.replace;
         let case_insensitive = !query.regex && !query.match_case;
         let state = state.clone();
         for result in &response.results {
             replace_matches(
-                &state.to_absolute_path(&result.file.path)?,
+                &state.resolve_file_path(&result.workspace_id, &result.file.path)?,
                 &pattern,
                 case_insensitive,
                 &replace,
@@ -305,11 +348,31 @@ async fn search_and_replace_files_impl(
     Ok(Json(response))
 }
 
-fn open_file_paths(state: &AppState, only_open_files: bool) -> Option<HashSet<PathBuf>> {
+fn workspace_roots(
+    state: &AppState,
+    filter: Option<&str>,
+) -> Result<Vec<(String, PathBuf)>, AppError> {
+    match filter {
+        Some(id) => Ok(vec![(id.to_owned(), state.workspace_root(&id.to_owned())?)]),
+        None => state
+            .config
+            .workspaces
+            .iter()
+            .map(|workspace| Ok((workspace.id.clone(), state.workspace_root(&workspace.id)?)))
+            .collect(),
+    }
+}
+
+fn open_file_paths(
+    state: &AppState,
+    workspace_id: &str,
+    only_open_files: bool,
+) -> Option<HashSet<PathBuf>> {
     only_open_files.then(|| {
         state
             .open_files
             .iter()
+            .filter(|entry| entry.key().0 == workspace_id)
             .map(|entry| relative_file_id(&entry.key().1))
             .collect()
     })

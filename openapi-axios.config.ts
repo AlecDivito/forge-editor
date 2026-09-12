@@ -1,7 +1,7 @@
 import axios, { type AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 // import { Token } from './src/lib/generated';
 import { CreateClientConfig } from './src/lib/generated/client';
-import { env } from '@/env/env.client';
+import { apiOrigin } from '@/lib/transport';
 
 // type RefreshableRequestConfig = InternalAxiosRequestConfig & {
 //   _retry?: boolean;
@@ -137,5 +137,5 @@ const createAxiosInstance = () => {
 export const createClientConfig: CreateClientConfig = (config) => ({
   ...config,
   axios: createAxiosInstance(),
-  baseURL: env.NEXT_PUBLIC_API_HOST,
+  baseURL: apiOrigin(),
 });

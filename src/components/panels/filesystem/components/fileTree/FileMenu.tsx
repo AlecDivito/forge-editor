@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/context-menu";
 import { FsFile, FsFileType } from "@/lib/generated";
 import useDeleteFile from "./hooks/use-delete-file.hook";
-import { cn } from "@/lib/utils";
+import { useFileTree } from "./providers/FileTreeProvider";
 
 interface Props {
   children: ReactNode;
@@ -20,7 +20,8 @@ interface Props {
 
 export default function FileMenu({ file, children, className, onRename, onNewFile }: Props) {
   const [open, setOpen] = useState(false)
-  const { mutateAsync: deleteFileOp } = useDeleteFile(file);
+  const { workspaceId } = useFileTree()
+  const { mutateAsync: deleteFileOp } = useDeleteFile(workspaceId, file);
 
   const newFile: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
     e.preventDefault()
@@ -50,7 +51,7 @@ export default function FileMenu({ file, children, className, onRename, onNewFil
 
   const deleteFile: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
     e.stopPropagation()
-    await deleteFileOp({ body: { path: file.path } })
+    await deleteFileOp({ query: { workspace_id: workspaceId }, body: { path: file.path } })
   }, [deleteFileOp, file.path])
 
   return (

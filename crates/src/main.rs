@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    dotenvy::dotenv()?;
+    let _ = dotenvy::dotenv();
     let config = Config::new()?;
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", config.port))
         .await

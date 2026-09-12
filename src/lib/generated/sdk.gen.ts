@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
+import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetEnvironmentData, GetEnvironmentResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -17,6 +17,12 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
      */
     meta?: Record<string, unknown>;
 };
+
+export const getEnvironment = <ThrowOnError extends boolean = false>(options?: Options<GetEnvironmentData, ThrowOnError>) => (options?.client ?? client).get<GetEnvironmentResponses, unknown, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/environment',
+    ...options
+});
 
 /**
  * Get list of files for directory

@@ -142,7 +142,11 @@ async fn dispatch(
     match msg {
         ClientMessage::Hello => {
             document_tx
-                .send(ServerMessage::Hello { client_id })
+                .send(ServerMessage::Hello {
+                    client_id,
+                    environment_id: state.config.environment.id.clone(),
+                    schema_version: 1,
+                })
                 .await
                 .ok();
             Ok(())
@@ -507,7 +511,7 @@ async fn dispatch(
                 anyhow::bail!("terminal {term_id} already exists");
             }
 
-            let resolved_cwd = state.workspace_root(&workspace_id);
+            let resolved_cwd = state.workspace_root(&workspace_id)?;
             let (actor, _reader_handle) =
                 TerminalActor::spawn(term_id.clone(), resolved_cwd, cols, rows)?;
             actor.subscribe(client_id.clone(), terminal_tx.clone());
@@ -988,7 +992,7 @@ async fn get_or_spawn_lsp(
         return Ok(Some(existing.value().clone()));
     }
 
-    let root = state.workspace_root(workspace_id);
+    let root = state.workspace_root(workspace_id)?;
     let actor = LspServerActor::spawn(
         Arc::new(state.clone()),
         &root,

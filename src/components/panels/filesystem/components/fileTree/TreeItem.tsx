@@ -29,10 +29,11 @@ export const TreeItem = ({ file, onSelect, level, path = '/' }: Props) => {
 }
 
 const TreeFileItem = ({ file, onSelect, level }: Props) => {
+  const { workspaceId } = useFileTree();
   const [isEditing, setIsEditing] = useState(false);
   const [newFileType, setNewFileType] = useState<FsFileType | undefined>(undefined);
-  const { mutateAsync: renameFileOp } = useRenameFile(file)
-  const { mutateAsync: createFileOp } = useCreateFile(file)
+  const { mutateAsync: renameFileOp } = useRenameFile(workspaceId, file)
+  const { mutateAsync: createFileOp } = useCreateFile(workspaceId, file)
 
   // Files are drag sources only — they can't accept drops.
   const dragSource = useDragSource(file);
@@ -43,13 +44,13 @@ const TreeFileItem = ({ file, onSelect, level }: Props) => {
 
   const createFile = useCallback((path: string) => {
     if (newFileType) {
-      createFileOp({ body: { path, ty: newFileType } })
+      createFileOp({ query: { workspace_id: workspaceId }, body: { path, ty: newFileType } })
       disableNewFile()
     }
   }, [newFileType])
 
   const renameFile = useCallback((newPath: string) => {
-    renameFileOp({ body: { from: file.path, to: newPath } })
+    renameFileOp({ query: { source_workspace_id: workspaceId, destination_workspace_id: workspaceId }, body: { from: file.path, to: newPath } })
     disableRenameFile()
   }, [])
 
@@ -59,7 +60,10 @@ const TreeFileItem = ({ file, onSelect, level }: Props) => {
         <FileMenu file={file} onRename={enableRenameFile} onNewFile={setNewFileType}>
           <div
             {...dragSource}
-            onClick={() => onSelect?.(file.path)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect?.(file.path);
+            }}
             className={`space-x-2 cursor-pointer`}
             style={{ paddingLeft: level === 0 ? `6px` : `30px` }}
           >
@@ -80,14 +84,14 @@ const TreeFileItem = ({ file, onSelect, level }: Props) => {
 };
 
 const TreeFolderItem = ({ file, onSelect, path = '/', level }: Props) => {
-  const { open: globalOpen, setOpen: setGlobalOpen } = useFileTree();
+  const { open: globalOpen, setOpen: setGlobalOpen, workspaceId } = useFileTree();
   const [open, setOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const { data, isLoading } = useListFiles({ path, enabled: open })
+  const { data, isLoading } = useListFiles({ workspaceId, path, enabled: open })
 
   const [newFileType, setNewFileType] = useState<FsFileType | undefined>(undefined);
-  const { mutateAsync: renameFileOp } = useRenameFile(file)
-  const { mutateAsync: createFileOp } = useCreateFile(file, true)
+  const { mutateAsync: renameFileOp } = useRenameFile(workspaceId, file)
+  const { mutateAsync: createFileOp } = useCreateFile(workspaceId, file, true)
 
   // Folders are both drag sources (can be moved) and drop targets
   // (can receive other files/folders). Hovering with a drag auto-expands.
@@ -106,13 +110,13 @@ const TreeFolderItem = ({ file, onSelect, path = '/', level }: Props) => {
 
   const createFile = useCallback((path: string) => {
     if (newFileType) {
-      createFileOp({ body: { path, ty: newFileType } })
+      createFileOp({ query: { workspace_id: workspaceId }, body: { path, ty: newFileType } })
       disableNewFile()
     }
   }, [newFileType])
 
   const renameFile = useCallback((newPath: string) => {
-    renameFileOp({ body: { from: file.path, to: newPath } })
+    renameFileOp({ query: { source_workspace_id: workspaceId, destination_workspace_id: workspaceId }, body: { from: file.path, to: newPath } })
     disableRenameFile()
   }, [])
 

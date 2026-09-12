@@ -15,14 +15,15 @@ import { FileId, WorkspaceId } from "@/lib/ws/messages";
 
 interface Props {
   path?: string;
+  workspaceName: string;
 }
 
-const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
-  const { data } = useListFiles({ path })
-  const { open, setOpen } = useFileTree();
+const FsTreeAccordionItem: FC<Props> = ({ path = "/", workspaceName }) => {
+  const { open, setOpen, workspaceId } = useFileTree();
+  const { data } = useListFiles({ workspaceId, path })
   const openFile = useEditorSessionStore((s) => s.openFile);
-  const refreshFileSystem = useInvalidateAllFileLists()
-  const { mutateAsync: createFileOp } = useCreateFile()
+  const refreshFileSystem = useInvalidateAllFileLists(workspaceId)
+  const { mutateAsync: createFileOp } = useCreateFile(workspaceId)
   const [newFile, setNewFile] = useState(false)
   const [newFolder, setNewFolder] = useState(false)
   const genericFile = { path: "/", parent: "/" }
@@ -36,13 +37,14 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   });
 
   const loadAndOpenFile = useCallback((path: string) => {
-    openFile("" as WorkspaceId, path as FileId);
-  }, [openFile]);
+    openFile(workspaceId, path as FileId);
+  }, [openFile, workspaceId]);
 
   const createFile = useCallback((file: FsFile, path: string) => {
     setNewFile(false)
     setNewFolder(false)
     createFileOp({
+      query: { workspace_id: workspaceId },
       body: {
         path,
         ty: file.ty
@@ -79,8 +81,8 @@ const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   ], [open, setOpen, refreshFileSystem])
 
   return (
-    <AccordionItem value="file-system">
-      <AccordionTrigger header="File System">
+    <AccordionItem value={`workspace-${workspaceId}`}>
+      <AccordionTrigger header={workspaceName}>
         <div>
           {options.map(({ Icon, title, onClick }) =>
             <HoverCard key={title}>

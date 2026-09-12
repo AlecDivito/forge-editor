@@ -50,6 +50,23 @@ impl LanguageId {
         }
     }
 
+    /// Command-line arguments required to run the language server over stdio.
+    pub fn server_args(&self) -> &'static [&'static str] {
+        match self {
+            // gopls serves LSP over stdin/stdout by default and rejects
+            // the --stdio flag used by several Node-based language servers.
+            Self::Go => &["serve"],
+            Self::Rust
+            | Self::TypeScript
+            | Self::JavaScript
+            | Self::Python
+            | Self::Json
+            | Self::Yaml
+            | Self::Shell
+            | Self::Dockerfile => &["--stdio"],
+        }
+    }
+
     /// Whether this language currently has an LSP server configured.
     pub fn has_lsp_support(&self) -> bool {
         !self.server_binary_path().is_empty()
@@ -371,6 +388,8 @@ impl std::fmt::Display for ClientMessage {
 pub enum ServerMessage {
     Hello {
         client_id: ClientId,
+        environment_id: String,
+        schema_version: u32,
     },
     DocSync {
         workspace_id: WorkspaceId,

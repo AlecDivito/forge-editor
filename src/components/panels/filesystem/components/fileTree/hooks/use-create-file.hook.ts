@@ -2,8 +2,9 @@ import { FsFile } from "@/lib/generated"
 import { listFilesQueryKey, createFileMutation } from "@/lib/generated/@tanstack/react-query.gen"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { DEFAULT_LIST_FILE_PAGINATION } from "./use-list-files.hook"
+import { WorkspaceId } from "@/lib/ws/messages"
 
-export default function useCreateFile(file?: FsFile, usePath: boolean = false) {
+export default function useCreateFile(workspaceId: WorkspaceId, file?: FsFile, usePath: boolean = false) {
     const queryClient = useQueryClient()
 
     return useMutation({
@@ -12,6 +13,7 @@ export default function useCreateFile(file?: FsFile, usePath: boolean = false) {
             queryClient.invalidateQueries({
                 queryKey: listFilesQueryKey({
                     query: {
+                        workspace_id: workspaceId,
                         path: (usePath ? file?.path : file?.parent) || '/',
                         ...DEFAULT_LIST_FILE_PAGINATION
                     }

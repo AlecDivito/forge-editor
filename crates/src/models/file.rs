@@ -7,7 +7,10 @@ use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::fs::DirEntry;
 
-use crate::{models::PaginationParams, state::AppState};
+use crate::{
+    models::{PaginationParams, WorkspaceId},
+    state::AppState,
+};
 
 #[derive(Serialize, JsonSchema)]
 pub struct FsListDirectory {
@@ -91,8 +94,12 @@ impl FsFile {
         })
     }
 
-    pub fn from_app_state(state: &AppState, relative: &Path) -> anyhow::Result<Option<Self>> {
-        return Self::from_base_path(&state.config.base_dir, relative);
+    pub fn from_app_state(
+        state: &AppState,
+        workspace_id: &WorkspaceId,
+        relative: &Path,
+    ) -> anyhow::Result<Option<Self>> {
+        return Self::from_base_path(&state.workspace_root(workspace_id)?, relative);
     }
 
     pub fn from_base_path(base: &Path, relative: &Path) -> anyhow::Result<Option<Self>> {

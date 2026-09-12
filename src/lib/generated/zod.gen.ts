@@ -5,7 +5,8 @@ import * as z from 'zod';
 import { FsFileType } from './types.gen';
 
 export const zFileNameSearchQuery = z.object({
-    search: z.string()
+    search: z.string(),
+    workspace_id: z.string().nullish()
 });
 
 export const zFilePath = z.object({
@@ -36,6 +37,20 @@ export const zFsMoveFileResult = z.object({
     to: zFsFile
 });
 
+export const zFsSearchHttpQuery = z.object({
+    exclude: z.string().nullish(),
+    include: z.string().nullish(),
+    match_case: z.boolean().optional().default(false),
+    match_whole_word: z.boolean().optional().default(false),
+    open_files_only: z.boolean().optional().default(false),
+    preserve_case: z.boolean().optional().default(false),
+    regex: z.boolean().optional().default(false),
+    replace: z.string(),
+    search: z.string(),
+    use_ignore_files: z.boolean().optional().default(false),
+    workspace_id: z.string().nullish()
+});
+
 export const zFsSearchLine = z.object({
     end: z.int().gte(0),
     line: z.int().gte(0),
@@ -58,7 +73,8 @@ export const zFsSearchQuery = z.object({
 
 export const zFsSearchResult = z.object({
     file: zFsFile,
-    matches: z.array(zFsSearchLine)
+    matches: z.array(zFsSearchLine),
+    workspace_id: z.string()
 });
 
 export const zFsSearchResponse = z.object({
@@ -68,6 +84,11 @@ export const zFsSearchResponse = z.object({
 export const zMovePath = z.object({
     from: z.string(),
     to: z.string()
+});
+
+export const zMoveWorkspaceQuery = z.object({
+    destination_workspace_id: z.string().nullish(),
+    source_workspace_id: z.string()
 });
 
 export const zPaginationParams = z.object({
@@ -83,12 +104,40 @@ export const zFsListDirectory = z.object({
     parent: z.string()
 });
 
+export const zPublicEnvironment = z.object({
+    id: z.string(),
+    name: z.string()
+});
+
+export const zPublicWorkspace = z.object({
+    id: z.string(),
+    name: z.string()
+});
+
+export const zEnvironmentSnapshot = z.object({
+    default_workspace_id: z.string(),
+    environment: zPublicEnvironment,
+    schema_version: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+    workspaces: z.array(zPublicWorkspace)
+});
+
 export const zSaveFile = z.object({
     contents: z.array(z.int().gte(0).lte(255)),
     path: z.string()
 });
 
+export const zSearchWorkspaceQuery = z.object({
+    workspace_id: z.string().nullish()
+});
+
+export const zWorkspaceQuery = z.object({
+    workspace_id: z.string()
+});
+
+export const zGetEnvironmentResponse = zEnvironmentSnapshot;
+
 export const zListFilesQuery = z.object({
+    workspace_id: z.string(),
     path: z.string(),
     page: z.int().gte(0).nullish(),
     read_all: z.boolean().nullish(),
@@ -102,12 +151,20 @@ export const zListFilesResponse = zFsListDirectory;
 
 export const zSaveFileBody = zSaveFile;
 
+export const zSaveFileQuery = z.object({
+    workspace_id: z.string()
+});
+
 /**
  * Successfully created file/folder
  */
 export const zSaveFileResponse = zFsFileOperation;
 
 export const zCreateFileBody = zCreateFile;
+
+export const zCreateFileQuery = z.object({
+    workspace_id: z.string()
+});
 
 /**
  * Successfully created file/folder
@@ -116,12 +173,21 @@ export const zCreateFileResponse = zCreateFile;
 
 export const zRenameFileBody = zMovePath;
 
+export const zRenameFileQuery = z.object({
+    destination_workspace_id: z.string().nullish(),
+    source_workspace_id: z.string()
+});
+
 /**
  * Successfully moved file or directory
  */
 export const zRenameFileResponse = zFsMoveFileResult;
 
 export const zDeleteFileBody = zFilePath;
+
+export const zDeleteFileQuery = z.object({
+    workspace_id: z.string()
+});
 
 /**
  * Successfully deleted file or directory
@@ -138,7 +204,8 @@ export const zSearchFilesQuery = z.object({
     regex: z.boolean().optional().default(false),
     replace: z.string(),
     search: z.string(),
-    use_ignore_files: z.boolean().optional().default(false)
+    use_ignore_files: z.boolean().optional().default(false),
+    workspace_id: z.string().nullish()
 });
 
 /**
@@ -147,10 +214,15 @@ export const zSearchFilesQuery = z.object({
 export const zSearchFilesResponse = zFsSearchResponse;
 
 export const zSearchFileNamesQuery = z.object({
-    search: z.string()
+    search: z.string(),
+    workspace_id: z.string().nullish()
 });
 
 export const zSearchAndReplaceFilesBody = zFsSearchQuery;
+
+export const zSearchAndReplaceFilesQuery = z.object({
+    workspace_id: z.string().nullish()
+});
 
 /**
  * Files successfully edited and text replaced

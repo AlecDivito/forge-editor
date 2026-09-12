@@ -2,8 +2,9 @@ import { FsFile } from "@/lib/generated"
 import { listFilesQueryKey, renameFileMutation } from "@/lib/generated/@tanstack/react-query.gen"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { DEFAULT_LIST_FILE_PAGINATION } from "./use-list-files.hook"
+import { WorkspaceId } from "@/lib/ws/messages"
 
-export default function useRenameFile(file: FsFile) {
+export default function useRenameFile(workspaceId: WorkspaceId, file: FsFile) {
     const queryClient = useQueryClient()
 
     return useMutation({
@@ -12,6 +13,7 @@ export default function useRenameFile(file: FsFile) {
             queryClient.invalidateQueries({
                 queryKey: listFilesQueryKey({
                     query: {
+                        workspace_id: workspaceId,
                         path: data.from.parent,
                         ...DEFAULT_LIST_FILE_PAGINATION
                     }
@@ -20,6 +22,7 @@ export default function useRenameFile(file: FsFile) {
             queryClient.invalidateQueries({
                 queryKey: listFilesQueryKey({
                     query: {
+                        workspace_id: workspaceId,
                         path: data.to.parent,
                         ...DEFAULT_LIST_FILE_PAGINATION
                     }

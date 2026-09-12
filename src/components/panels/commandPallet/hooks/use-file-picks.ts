@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
 import { searchFileNames } from "@/lib/generated";
+import { WorkspaceId } from "@/lib/ws/messages";
+import { PublicWorkspace } from "@/lib/workspaces";
 
-export type FilePick = { path: string; name: string };
+export type FilePick = {
+  path: string;
+  name: string;
+  workspaceId: WorkspaceId;
+  workspaceName: string;
+};
 
-export function useFilePicks(query: string, enabled: boolean) {
+export function useFilePicks(workspaces: PublicWorkspace[], query: string, enabled: boolean) {
   const [picks, setPicks] = useState<FilePick[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -23,8 +30,15 @@ export function useFilePicks(query: string, enabled: boolean) {
           responseType: "json",
           throwOnError: true,
         });
-        const result = response.data as { results?: FilePick[] };
-        if (!cancelled) setPicks(result.results ?? []);
+        const names = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
+        const result = response.data as { results?: Array<{ path: string; name: string; workspace_id: WorkspaceId }> };
+        const picks = (result.results ?? []).map((file) => ({
+          path: file.path,
+          name: file.name,
+          workspaceId: file.workspace_id,
+          workspaceName: names.get(file.workspace_id) ?? file.workspace_id,
+        }));
+        if (!cancelled) setPicks(picks);
       } catch {
         if (!cancelled) setPicks([]);
       } finally {
@@ -36,7 +50,7 @@ export function useFilePicks(query: string, enabled: boolean) {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [enabled, query]);
+  }, [enabled, query, workspaces]);
 
   return { picks, loading };
 }

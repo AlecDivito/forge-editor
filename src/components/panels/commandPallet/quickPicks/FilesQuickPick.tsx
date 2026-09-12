@@ -1,8 +1,9 @@
 import { CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import type { FileId } from "@/lib/ws/messages";
-import { selectActivePanel, useEditorSessionStore } from "../../code/state/editor-session.store";
+import { useEditorSessionStore } from "../../code/state/editor-session.store";
 import { useCommandRunner } from "../hooks/use-command-runner";
 import { useFilePicks } from "../hooks/use-file-picks";
+import { useWorkspaceStore } from "@/lib/workspaces";
 
 type Props = {
   query: string;
@@ -10,11 +11,10 @@ type Props = {
 };
 
 export default function FilesQuickPick({ query, close }: Props) {
-  const activePanel = useEditorSessionStore(selectActivePanel);
-  const workspaceId = activePanel?.kind === "code" ? activePanel.workspace : null;
   const openFile = useEditorSessionStore((state) => state.openFile);
   const runCommand = useCommandRunner(close);
-  const { picks, loading } = useFilePicks(query, true);
+  const workspaces = useWorkspaceStore((state) => state.snapshot?.workspaces ?? []);
+  const { picks, loading } = useFilePicks(workspaces, query, true);
 
   return (
     <>
@@ -22,18 +22,14 @@ export default function FilesQuickPick({ query, close }: Props) {
       <CommandGroup heading="Files">
         {picks.map((file) => (
           <CommandItem
-            key={file.path}
-            value={`${file.name} ${file.path}`}
-            disabled={workspaceId === null}
+            key={`${file.workspaceId}:${file.path}`}
+            value={`${file.name} ${file.path} ${file.workspaceName}`}
             onSelect={() => {
-              if (workspaceId !== null) {
-                runCommand(() => {
-                  openFile(workspaceId, file.path as FileId);
-                });
-              }
+              runCommand(() => { openFile(file.workspaceId, file.path as FileId); });
             }}>
             <span>{file.name}</span>
             <span className="ml-2 text-muted-foreground">{file.path}</span>
+            <span className="ml-auto text-muted-foreground">{file.workspaceName}</span>
           </CommandItem>
         ))}
       </CommandGroup>
