@@ -17,8 +17,27 @@ export type EnvironmentSnapshot = {
 };
 
 export type FileNameSearchQuery = {
+    /**
+     * Maximum number of matching files to return. Omit to return all matches.
+     */
+    max_results?: number | null;
     search: string;
+    /**
+     * Respect workspace, Git, and global ignore files. Defaults to true.
+     */
+    use_ignore_files?: boolean;
     workspace_id?: string | null;
+};
+
+export type FileNameSearchResponse = {
+    results: Array<FileNameSearchResult>;
+    truncated: boolean;
+};
+
+export type FileNameSearchResult = {
+    name: string;
+    path: string;
+    workspace_id: string;
 };
 
 export type FilePath = {
@@ -78,6 +97,12 @@ export type FsSearchHttpQuery = {
      */
     match_whole_word?: boolean;
     /**
+     * Maximum number of matching files to return. Omit to return all matches.
+     * This is a result limit rather than filesystem pagination, since a stable
+     * filesystem snapshot cannot be guaranteed between requests.
+     */
+    max_results?: number | null;
+    /**
      * Only search files currently open in the editor.
      */
     open_files_only?: boolean;
@@ -97,8 +122,6 @@ export type FsSearchHttpQuery = {
     /**
      * Whether filesystem ignore files such as .gitignore should be
      * respected.
-     *
-     * Currently this can default to false and be enabled later.
      */
     use_ignore_files?: boolean;
     /**
@@ -137,6 +160,12 @@ export type FsSearchQuery = {
      */
     match_whole_word?: boolean;
     /**
+     * Maximum number of matching files to return. Omit to return all matches.
+     * This is a result limit rather than filesystem pagination, since a stable
+     * filesystem snapshot cannot be guaranteed between requests.
+     */
+    max_results?: number | null;
+    /**
      * Only search files currently open in the editor.
      */
     open_files_only?: boolean;
@@ -156,14 +185,17 @@ export type FsSearchQuery = {
     /**
      * Whether filesystem ignore files such as .gitignore should be
      * respected.
-     *
-     * Currently this can default to false and be enabled later.
      */
     use_ignore_files?: boolean;
 };
 
 export type FsSearchResponse = {
     results: Array<FsSearchResult>;
+    /**
+     * True when `max_results` stopped the search before every matching file
+     * could be returned.
+     */
+    truncated: boolean;
 };
 
 export type FsSearchResult = {
@@ -383,6 +415,12 @@ export type SearchFilesData = {
          */
         match_whole_word?: boolean;
         /**
+         * Maximum number of matching files to return. Omit to return all matches.
+         * This is a result limit rather than filesystem pagination, since a stable
+         * filesystem snapshot cannot be guaranteed between requests.
+         */
+        max_results?: number | null;
+        /**
          * Only search files currently open in the editor.
          */
         open_files_only?: boolean;
@@ -402,8 +440,6 @@ export type SearchFilesData = {
         /**
          * Whether filesystem ignore files such as .gitignore should be
          * respected.
-         *
-         * Currently this can default to false and be enabled later.
          */
         use_ignore_files?: boolean;
         /**
@@ -434,11 +470,35 @@ export type SearchFileNamesData = {
     body?: never;
     path?: never;
     query: {
+        /**
+         * Maximum number of matching files to return. Omit to return all matches.
+         */
+        max_results?: number | null;
         search: string;
+        /**
+         * Respect workspace, Git, and global ignore files. Defaults to true.
+         */
+        use_ignore_files?: boolean;
         workspace_id?: string | null;
     };
     url: '/api/fs/files/search';
 };
+
+export type SearchFileNamesErrors = {
+    /**
+     * Failed to search file names
+     */
+    400: unknown;
+};
+
+export type SearchFileNamesResponses = {
+    /**
+     * Successfully searched file names
+     */
+    200: FileNameSearchResponse;
+};
+
+export type SearchFileNamesResponse = SearchFileNamesResponses[keyof SearchFileNamesResponses];
 
 export type SearchAndReplaceFilesData = {
     body: FsSearchQuery;

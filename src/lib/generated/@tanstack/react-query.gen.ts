@@ -5,7 +5,7 @@ import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
 import { createFile, deleteFile, getEnvironment, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles } from '../sdk.gen';
-import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, GetEnvironmentData, GetEnvironmentResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFilesData, SearchFilesResponse } from '../types.gen';
+import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, GetEnvironmentData, GetEnvironmentResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -226,7 +226,7 @@ export const searchFileNamesQueryKey = (options: Options<SearchFileNamesData>) =
  * file contents, while the command palette needs cheap file candidates as the
  * user types.
  */
-export const searchFileNamesOptions = (options: Options<SearchFileNamesData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof searchFileNamesQueryKey>>({
+export const searchFileNamesOptions = (options: Options<SearchFileNamesData>) => queryOptions<SearchFileNamesResponse, AxiosError<DefaultError>, SearchFileNamesResponse, ReturnType<typeof searchFileNamesQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await searchFileNames({
             ...options,

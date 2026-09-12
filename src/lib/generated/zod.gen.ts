@@ -5,8 +5,21 @@ import * as z from 'zod';
 import { FsFileType } from './types.gen';
 
 export const zFileNameSearchQuery = z.object({
+    max_results: z.int().gte(0).nullish(),
     search: z.string(),
+    use_ignore_files: z.boolean().optional().default(true),
     workspace_id: z.string().nullish()
+});
+
+export const zFileNameSearchResult = z.object({
+    name: z.string(),
+    path: z.string(),
+    workspace_id: z.string()
+});
+
+export const zFileNameSearchResponse = z.object({
+    results: z.array(zFileNameSearchResult),
+    truncated: z.boolean()
 });
 
 export const zFilePath = z.object({
@@ -42,12 +55,13 @@ export const zFsSearchHttpQuery = z.object({
     include: z.string().nullish(),
     match_case: z.boolean().optional().default(false),
     match_whole_word: z.boolean().optional().default(false),
+    max_results: z.int().gte(0).nullish(),
     open_files_only: z.boolean().optional().default(false),
     preserve_case: z.boolean().optional().default(false),
     regex: z.boolean().optional().default(false),
     replace: z.string(),
     search: z.string(),
-    use_ignore_files: z.boolean().optional().default(false),
+    use_ignore_files: z.boolean().optional().default(true),
     workspace_id: z.string().nullish()
 });
 
@@ -63,12 +77,13 @@ export const zFsSearchQuery = z.object({
     include: z.string().nullish(),
     match_case: z.boolean().optional().default(false),
     match_whole_word: z.boolean().optional().default(false),
+    max_results: z.int().gte(0).nullish(),
     open_files_only: z.boolean().optional().default(false),
     preserve_case: z.boolean().optional().default(false),
     regex: z.boolean().optional().default(false),
     replace: z.string(),
     search: z.string(),
-    use_ignore_files: z.boolean().optional().default(false)
+    use_ignore_files: z.boolean().optional().default(true)
 });
 
 export const zFsSearchResult = z.object({
@@ -78,7 +93,8 @@ export const zFsSearchResult = z.object({
 });
 
 export const zFsSearchResponse = z.object({
-    results: z.array(zFsSearchResult)
+    results: z.array(zFsSearchResult),
+    truncated: z.boolean()
 });
 
 export const zMovePath = z.object({
@@ -199,12 +215,13 @@ export const zSearchFilesQuery = z.object({
     include: z.string().nullish(),
     match_case: z.boolean().optional().default(false),
     match_whole_word: z.boolean().optional().default(false),
+    max_results: z.int().gte(0).nullish(),
     open_files_only: z.boolean().optional().default(false),
     preserve_case: z.boolean().optional().default(false),
     regex: z.boolean().optional().default(false),
     replace: z.string(),
     search: z.string(),
-    use_ignore_files: z.boolean().optional().default(false),
+    use_ignore_files: z.boolean().optional().default(true),
     workspace_id: z.string().nullish()
 });
 
@@ -214,9 +231,16 @@ export const zSearchFilesQuery = z.object({
 export const zSearchFilesResponse = zFsSearchResponse;
 
 export const zSearchFileNamesQuery = z.object({
+    max_results: z.int().gte(0).nullish(),
     search: z.string(),
+    use_ignore_files: z.boolean().optional().default(true),
     workspace_id: z.string().nullish()
 });
+
+/**
+ * Successfully searched file names
+ */
+export const zSearchFileNamesResponse = zFileNameSearchResponse;
 
 export const zSearchAndReplaceFilesBody = zFsSearchQuery;
 

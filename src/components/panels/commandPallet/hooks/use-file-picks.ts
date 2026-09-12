@@ -22,21 +22,22 @@ export function useFilePicks(workspaces: PublicWorkspace[], query: string, enabl
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     const handle = setTimeout(async () => {
       setLoading(true);
       try {
         const response = await searchFileNames({
-          query: { search: query },
+          query: { search: query, max_results: 1000 },
           responseType: "json",
+          signal: controller.signal,
           throwOnError: true,
         });
         const names = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
-        const result = response.data as { results?: Array<{ path: string; name: string; workspace_id: WorkspaceId }> };
-        const picks = (result.results ?? []).map((file) => ({
+        const picks = response.data.results.map((file) => ({
           path: file.path,
           name: file.name,
-          workspaceId: file.workspace_id,
-          workspaceName: names.get(file.workspace_id) ?? file.workspace_id,
+          workspaceId: file.workspace_id as WorkspaceId,
+          workspaceName: names.get(file.workspace_id as WorkspaceId) ?? file.workspace_id,
         }));
         if (!cancelled) setPicks(picks);
       } catch {
@@ -48,6 +49,7 @@ export function useFilePicks(workspaces: PublicWorkspace[], query: string, enabl
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(handle);
     };
   }, [enabled, query, workspaces]);

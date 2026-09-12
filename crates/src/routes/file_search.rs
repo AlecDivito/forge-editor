@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use axum::{
@@ -8,9 +9,6 @@ use axum::{
     extract::{Query, State},
     response::IntoResponse,
 };
-use globset::{Glob, GlobSet, GlobSetBuilder};
-use grep_matcher::Matcher;
-use grep_regex::RegexMatcher;
 use rovo::{axum::IntoApiResponse, rovo};
 use tracing::debug;
 
@@ -18,9 +16,13 @@ use crate::{
     error::AppError,
     models::{
         FileNameSearchQuery, FileNameSearchResponse, FileNameSearchResult, FsFile,
-        FsSearchHttpQuery, FsSearchLine, FsSearchQuery, FsSearchResult, SearchWorkspaceQuery,
+        FsSearchHttpQuery, FsSearchQuery, FsSearchResult, SearchCancellation, SearchWorkspaceQuery,
     },
     state::AppState,
+    utils::file_search::{
+        apply_case_pattern, build_glob_set, ensure_searchable_workspace, fuzzy_score, match_file,
+        matches_exclude, matches_include, relative_file_id, truncate_results,
+    },
 };
 
 use crate::models::FsSearchResponse;
@@ -30,6 +32,15 @@ use crate::models::FsSearchResponse;
 /// This is deliberately separate from `search_files`: that endpoint searches
 /// file contents, while the command palette needs cheap file candidates as the
 /// user types.
+///
+/// # Responses
+///
+/// 200: Json<FileNameSearchResponse> - Successfully searched file names
+/// 400: () - Failed to search file names
+///
+/// # Metadata
+///
+/// @tag fs
 #[rovo]
 pub async fn search_file_names(
     State(state): State<AppState>,
@@ -43,45 +54,65 @@ async fn search_file_names_impl(
     query: FileNameSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let workspaces = workspace_roots(&state, query.workspace_id.as_deref())?;
+    let mut cancellation = SearchCancellation::new();
+    let cancelled = cancellation.flag();
     let response = tokio::task::spawn_blocking(move || {
         let mut results = Vec::new();
         for (workspace_id, root) in workspaces {
-            results
-                .extend(search_file_names_blocking(&workspace_id, &root, query.clone())?.results);
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+            results.extend(search_file_names_blocking(
+                &workspace_id,
+                &root,
+                &query,
+                &cancelled,
+            )?);
         }
-        results.truncate(100);
-        Ok::<_, AppError>(FileNameSearchResponse { results })
+        results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)));
+        let truncated = truncate_results(&mut results, query.max_results);
+        Ok::<_, AppError>(FileNameSearchResponse {
+            results: results.into_iter().map(|(_, file)| file).collect(),
+            truncated,
+        })
     })
     .await
     .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
+    cancellation.disarm();
     Ok(Json(response))
 }
 
 fn search_file_names_blocking(
     workspace_id: &str,
     base_dir: &Path,
-    query: FileNameSearchQuery,
-) -> Result<FileNameSearchResponse, AppError> {
-    let query = query.search.trim().to_lowercase();
-    if query.is_empty() {
-        return Ok(FileNameSearchResponse {
-            results: Vec::new(),
-        });
+    query: &FileNameSearchQuery,
+    cancelled: &AtomicBool,
+) -> Result<Vec<(usize, FileNameSearchResult)>, AppError> {
+    ensure_searchable_workspace(base_dir)?;
+    let normalized_query = query.search.trim().to_lowercase();
+    if normalized_query.is_empty() {
+        return Ok(Vec::new());
     }
 
     let walker = ignore::WalkBuilder::new(base_dir)
         .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
+        .ignore(query.use_ignore_files)
+        .git_ignore(query.use_ignore_files)
+        .git_global(query.use_ignore_files)
+        .git_exclude(query.use_ignore_files)
         .build();
     let mut results = Vec::new();
 
     for entry in walker {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        let entry = entry.map_err(|err| {
+            AppError::String(format!(
+                "failed walking workspace {}: {err}",
+                base_dir.display()
+            ))
+        })?;
         if !entry.file_type().is_some_and(|ty| ty.is_file()) {
             continue;
         }
@@ -95,7 +126,11 @@ fn search_file_names_blocking(
             .file_name()
             .map(|value| value.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
-        let score = fuzzy_score(&path.to_lowercase(), &name.to_lowercase(), &query);
+        let score = fuzzy_score(
+            &path.to_lowercase(),
+            &name.to_lowercase(),
+            &normalized_query,
+        );
         if let Some(score) = score {
             results.push((
                 score,
@@ -108,30 +143,7 @@ fn search_file_names_blocking(
         }
     }
 
-    results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)));
-    results.truncate(100);
-    Ok(FileNameSearchResponse {
-        results: results.into_iter().map(|(_, file)| file).collect(),
-    })
-}
-
-fn fuzzy_score(path: &str, name: &str, query: &str) -> Option<usize> {
-    fn score(candidate: &str, query: &str) -> Option<usize> {
-        let mut cursor = 0;
-        let mut previous_end = None;
-        let mut total = 0;
-        for character in query.chars() {
-            let index = candidate[cursor..].find(character)? + cursor;
-            total += index + if previous_end == Some(index) { 0 } else { 2 };
-            cursor = index + character.len_utf8();
-            previous_end = Some(cursor);
-        }
-        Some(total)
-    }
-
-    let path_score = score(path, query)?;
-    let name_score = score(name, query).map(|value| value.saturating_sub(20));
-    Some(name_score.unwrap_or(path_score).min(path_score))
+    Ok(results)
 }
 
 /// Search files
@@ -163,17 +175,37 @@ async fn search_files_impl(
         .map(|(id, _)| open_file_paths(&state, id, query.open_files_only))
         .collect::<Vec<_>>();
 
+    let mut cancellation = SearchCancellation::new();
+    let cancelled = cancellation.flag();
     let response = tokio::task::spawn_blocking(move || {
         let mut results = Vec::new();
+        let mut truncated = false;
         for ((workspace_id, root), open) in workspaces.into_iter().zip(open_files) {
-            results.extend(
-                search_files_blocking(&workspace_id, &root, query.clone(), open.as_ref())?.results,
-            );
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+            let remaining = query
+                .max_results
+                .map(|limit| limit.saturating_sub(results.len()));
+            let response = search_files_blocking(
+                &workspace_id,
+                &root,
+                &query,
+                open.as_ref(),
+                remaining,
+                &cancelled,
+            )?;
+            results.extend(response.results);
+            truncated |= response.truncated;
+            if truncated {
+                break;
+            }
         }
-        Ok::<_, AppError>(FsSearchResponse { results })
+        Ok::<_, AppError>(FsSearchResponse { results, truncated })
     })
     .await
     .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
+    cancellation.disarm();
 
     Ok(Json(response))
 }
@@ -181,9 +213,18 @@ async fn search_files_impl(
 fn search_files_blocking(
     workspace_id: &str,
     base_dir: &Path,
-    query: FsSearchQuery,
+    query: &FsSearchQuery,
     open_files: Option<&HashSet<PathBuf>>,
+    max_results: Option<usize>,
+    cancelled: &AtomicBool,
 ) -> Result<FsSearchResponse, AppError> {
+    ensure_searchable_workspace(base_dir)?;
+    if query.search.is_empty() {
+        return Ok(FsSearchResponse {
+            results: Vec::new(),
+            truncated: false,
+        });
+    }
     let pattern = if query.regex {
         query.search.clone()
     } else {
@@ -206,18 +247,25 @@ fn search_files_blocking(
 
     let walker = ignore::WalkBuilder::new(base_dir)
         .hidden(false)
+        .ignore(query.use_ignore_files)
         .git_ignore(query.use_ignore_files)
         .git_global(query.use_ignore_files)
         .git_exclude(query.use_ignore_files)
         .build();
 
     let mut results = Vec::new();
+    let mut truncated = false;
 
     for entry in walker {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        let entry = entry.map_err(|err| {
+            AppError::String(format!(
+                "failed walking workspace {}: {err}",
+                base_dir.display()
+            ))
+        })?;
 
         let path = entry.path();
         debug!(action = "searching", path = ?path.to_string_lossy());
@@ -249,7 +297,7 @@ fn search_files_blocking(
             continue;
         }
 
-        let matches = match_file(path, &matcher)?;
+        let matches = match_file(path, &matcher, cancelled)?;
 
         if matches.is_empty() {
             debug!(action = "searching", result = "no matches found");
@@ -264,12 +312,19 @@ fn search_files_blocking(
                 file,
                 matches,
             });
+            if let Some(limit) = max_results {
+                if results.len() > limit {
+                    results.truncate(limit);
+                    truncated = true;
+                    break;
+                }
+            }
         }
     }
 
     results.sort_by(|a, b| a.file.path.cmp(&b.file.path));
 
-    Ok(FsSearchResponse { results })
+    Ok(FsSearchResponse { results, truncated })
 }
 
 /// Search files and replace occurrences of text found
@@ -319,11 +374,20 @@ async fn search_and_replace_files_impl(
     let response = tokio::task::spawn_blocking(move || -> Result<FsSearchResponse, AppError> {
         let mut response = FsSearchResponse {
             results: Vec::new(),
+            truncated: false,
         };
+        let never_cancelled = AtomicBool::new(false);
         for ((workspace_id, base_dir), open) in workspaces.into_iter().zip(open_files) {
             response.results.extend(
-                search_files_blocking(&workspace_id, &base_dir, query.clone(), open.as_ref())?
-                    .results,
+                search_files_blocking(
+                    &workspace_id,
+                    &base_dir,
+                    &query,
+                    open.as_ref(),
+                    None,
+                    &never_cancelled,
+                )?
+                .results,
             );
         }
         let is_regex = query.regex;
@@ -378,42 +442,6 @@ fn open_file_paths(
     })
 }
 
-fn relative_file_id(file_id: &str) -> PathBuf {
-    let path = Path::new(file_id);
-    path.strip_prefix("/").unwrap_or(path).to_path_buf()
-}
-
-fn apply_case_pattern(matched: &str, replacement: &str) -> String {
-    if matched
-        .chars()
-        .all(|c| !c.is_alphabetic() || c.is_uppercase())
-    {
-        replacement.to_uppercase()
-    } else if matched
-        .chars()
-        .all(|c| !c.is_alphabetic() || c.is_lowercase())
-    {
-        replacement.to_lowercase()
-    } else if matched.chars().next().is_some_and(|c| c.is_uppercase())
-        && matched
-            .chars()
-            .skip(1)
-            .all(|c| !c.is_alphabetic() || c.is_lowercase())
-    {
-        // Title case: capitalize first char, lowercase the rest
-        let mut chars = replacement.chars();
-        match chars.next() {
-            Some(first) => {
-                first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
-            }
-            None => String::new(),
-        }
-    } else {
-        // Mixed case, e.g. "camelCase" or "SCREAMING_SNAKE" partials — leave as-is
-        replacement.to_owned()
-    }
-}
-
 fn replace_matches(
     path: &Path,
     pattern: &str,
@@ -465,90 +493,57 @@ fn replace_matches(
     Ok(())
 }
 
-fn build_glob_set(patterns: Option<&str>) -> Result<Option<GlobSet>, AppError> {
-    let Some(patterns) = patterns else {
-        return Ok(None);
-    };
-
-    if patterns.is_empty() {
-        return Ok(None);
-    }
-
-    let mut builder = GlobSetBuilder::new();
-
-    for pattern in patterns
-        .split(',')
-        .map(str::trim)
-        .filter(|pattern| !pattern.is_empty())
-    {
-        let glob = Glob::new(pattern)
-            .map_err(|err| AppError::String(format!("invalid glob `{pattern}`: {err}")))?;
-
-        builder.add(glob);
-    }
-
-    let set = builder
-        .build()
-        .map_err(|err| AppError::String(format!("invalid glob set: {err}")))?;
-
-    Ok(Some(set))
-}
-
-fn matches_include(path: &Path, include: &Option<GlobSet>) -> bool {
-    let Some(include) = include else {
-        return true;
-    };
-
-    include.is_match(path)
-        || path
-            .file_name()
-            .is_some_and(|name| include.is_match(Path::new(name)))
-}
-
-fn matches_exclude(path: &Path, exclude: &Option<GlobSet>) -> bool {
-    let Some(exclude) = exclude else {
-        return false;
-    };
-
-    exclude.is_match(path)
-        || path
-            .file_name()
-            .is_some_and(|name| exclude.is_match(Path::new(name)))
-}
-
-fn match_file(path: &Path, matcher: &RegexMatcher) -> Result<Vec<FsSearchLine>, AppError> {
-    let mut matches = Vec::new();
-
-    let mut searcher = grep_searcher::SearcherBuilder::new()
-        .line_number(true)
-        .build();
-
-    searcher
-        .search_path(
-            matcher,
-            path,
-            grep_searcher::sinks::UTF8(|line_number, line| {
-                let matching = matcher.find(line.as_bytes())?.unwrap();
-                matches.push(FsSearchLine {
-                    line: line_number as usize,
-                    text: line.trim_end_matches('\n').to_owned(),
-                    start: matching.start(),
-                    end: matching.end(),
-                });
-
-                Ok(true)
-            }),
-        )
-        .map_err(|err| AppError::String(format!("failed searching file: {err}")))?;
-
-    Ok(matches)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        path::{Path, PathBuf},
+        sync::atomic::AtomicBool,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use super::{fuzzy_score, relative_file_id};
+    use super::search_file_names_blocking;
+    use crate::{
+        models::FileNameSearchQuery,
+        utils::file_search::{fuzzy_score, relative_file_id, truncate_results},
+    };
+
+    struct TestWorkspace(PathBuf);
+
+    impl TestWorkspace {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "forge-file-search-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn write(&self, relative: &str, contents: &str) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+    }
+
+    impl Drop for TestWorkspace {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn file_name_query(search: &str) -> FileNameSearchQuery {
+        FileNameSearchQuery {
+            search: search.into(),
+            workspace_id: None,
+            max_results: None,
+            use_ignore_files: true,
+        }
+    }
 
     #[test]
     fn fuzzy_score_handles_a_match_at_the_start_of_a_file_name() {
@@ -563,9 +558,94 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_score_prefers_shallower_paths_for_equal_file_names() {
+        let shallow = fuzzy_score("/main.rs", "main.rs", "main").unwrap();
+        let nested = fuzzy_score("/deep/nested/main.rs", "main.rs", "main").unwrap();
+        assert!(shallow < nested);
+    }
+
+    #[test]
+    fn result_limit_only_reports_actual_truncation() {
+        let mut exact = vec![1, 2];
+        assert!(!truncate_results(&mut exact, Some(2)));
+        let mut too_many = vec![1, 2, 3];
+        assert!(truncate_results(&mut too_many, Some(2)));
+        assert_eq!(too_many, vec![1, 2]);
+    }
+
+    #[test]
     fn open_file_ids_match_walked_relative_paths() {
         let open_file = relative_file_id("/src/main.rs");
         assert_eq!(open_file, Path::new("src/main.rs"));
         assert_ne!(open_file, Path::new("src/lib.rs"));
+    }
+
+    #[test]
+    fn file_name_search_handles_nested_and_unicode_paths() {
+        let workspace = TestWorkspace::new();
+        workspace.write("deep/nested/résumé.rs", "");
+        workspace.write("resume.txt", "");
+        let results = search_file_names_blocking(
+            "test",
+            &workspace.0,
+            &file_name_query("rés"),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.path, "/deep/nested/résumé.rs");
+    }
+
+    #[test]
+    fn file_name_search_empty_query_returns_no_files() {
+        let workspace = TestWorkspace::new();
+        workspace.write("visible.rs", "");
+        let results = search_file_names_blocking(
+            "test",
+            &workspace.0,
+            &file_name_query("  "),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn file_name_search_respects_workspace_ignore_rules() {
+        let workspace = TestWorkspace::new();
+        workspace.write(".ignore", "ignored/\n");
+        workspace.write("ignored/secret.rs", "");
+        workspace.write("visible/secret.rs", "");
+
+        let respected = search_file_names_blocking(
+            "test",
+            &workspace.0,
+            &file_name_query("secret"),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(respected.len(), 1);
+        assert_eq!(respected[0].1.path, "/visible/secret.rs");
+
+        let mut query = file_name_query("secret");
+        query.use_ignore_files = false;
+        let disabled =
+            search_file_names_blocking("test", &workspace.0, &query, &AtomicBool::new(false))
+                .unwrap();
+        assert_eq!(disabled.len(), 2);
+    }
+
+    #[test]
+    fn file_name_search_stops_when_cancelled() {
+        let workspace = TestWorkspace::new();
+        workspace.write("match.rs", "");
+        let results = search_file_names_blocking(
+            "test",
+            &workspace.0,
+            &file_name_query("match"),
+            &AtomicBool::new(true),
+        )
+        .unwrap();
+        assert!(results.is_empty());
     }
 }
