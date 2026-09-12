@@ -78,9 +78,6 @@ export type FsSearchQuery = {
     match_whole_word?: boolean;
     /**
      * Only search files currently open in the editor.
-     *
-     * The plumbing is here, but the implementation can initially
-     * ignore this option.
      */
     open_files_only?: boolean;
     preserve_case?: boolean;
@@ -277,9 +274,6 @@ export type SearchFilesData = {
         match_whole_word?: boolean;
         /**
          * Only search files currently open in the editor.
-         *
-         * The plumbing is here, but the implementation can initially
-         * ignore this option.
          */
         open_files_only?: boolean;
         preserve_case?: boolean;

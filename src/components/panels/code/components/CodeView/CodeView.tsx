@@ -1,5 +1,5 @@
 import useDocument from "@/hooks/use-document.hook";
-import { DocumentKeyParts } from "@/lib/documents/registry";
+import { useDocumentLifecycle } from "@/hooks/use-document-lifecycle.hook";
 import { css } from "@codemirror/lang-css";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";
@@ -10,7 +10,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
-import { EditorState, EditorView, Extension, hoverTooltip } from "@uiw/react-codemirror";
+import { Compartment, EditorState, EditorView, Extension, hoverTooltip } from "@uiw/react-codemirror";
 import { basicSetup } from "codemirror";
 import { IDockviewPanelProps } from "dockview";
 import { FC, useEffect, useRef, useState } from "react";
@@ -22,6 +22,8 @@ import { requestHoverToolTip } from "./extensions/tooltip.extension";
 import { DocumentFileId, DocumentWorkspaceId } from "./extensions/state.extension";
 import { autocompletion } from "@codemirror/autocomplete";
 import { autoCompletionOverride } from "./extensions/autocomplete.extension";
+import { CodePanelDescriptor } from "../../state/editor-session.store";
+import { registerEditorInstance } from "../../state/editor-instance.registry";
 
 function languageForFile(fileId?: string): Extension[] {
     const ext = fileId?.split('.').pop()?.toLowerCase();
@@ -45,11 +47,15 @@ function languageForFile(fileId?: string): Extension[] {
     }
 }
 
-const CodeView: FC<IDockviewPanelProps<DocumentKeyParts>> = (props) => {
-    const { workspace, fileId } = props.params
+const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
+    const { id: panelId, workspace, fileId } = props.params
     const document = useDocument(workspace, fileId)
+    const lifecycle = useDocumentLifecycle(workspace, fileId)
     const editorRef = useRef<HTMLDivElement>(null)
     const [view, setView] = useState<EditorView | null>(null)
+    const identityCompartment = useRef(new Compartment())
+    const languageCompartment = useRef(new Compartment())
+    const readOnlyCompartment = useRef(new Compartment())
 
     useDocumentDiagnosticsSync(view, workspace, fileId);
 
@@ -70,10 +76,16 @@ const CodeView: FC<IDockviewPanelProps<DocumentKeyParts>> = (props) => {
                 doc: ytext.toString(),
                 extensions: [
                     basicSetup,
-                    DocumentWorkspaceId.of(workspace),
-                    DocumentFileId.of(fileId),
+                    identityCompartment.current.of([
+                        DocumentWorkspaceId.of(workspace),
+                        DocumentFileId.of(fileId),
+                    ]),
                     yCollab(ytext, document.awareness),
-                    ...languageForFile(fileId),
+                    readOnlyCompartment.current.of([
+                        EditorState.readOnly.of(lifecycle.phase === 'deleted'),
+                        EditorView.editable.of(lifecycle.phase !== 'deleted'),
+                    ]),
+                    languageCompartment.current.of(languageForFile(fileId)),
                     tooltipExtension,
                     autocompletion({
                         activateOnTyping: true,
@@ -105,14 +117,42 @@ const CodeView: FC<IDockviewPanelProps<DocumentKeyParts>> = (props) => {
                 ],
             }),
         });
+        const unregisterEditor = registerEditorInstance(panelId, view);
         setView(view);
         return () => {
+            unregisterEditor();
             view.destroy();
             setView(null)
         }
-    }, [document]);
+    }, [document, panelId]);
 
-    return <div ref={editorRef} className="h-full" />;
+    // A filesystem rename updates Dockview params while retaining this
+    // EditorView. Reconfigure only path-sensitive facets/extensions so the
+    // Yjs model, cursor, and undo history remain untouched.
+    useEffect(() => {
+        if (!view) return;
+        view.dispatch({
+            effects: [
+                identityCompartment.current.reconfigure([
+                    DocumentWorkspaceId.of(workspace),
+                    DocumentFileId.of(fileId),
+                ]),
+                languageCompartment.current.reconfigure(languageForFile(fileId)),
+            ],
+        });
+    }, [fileId, view, workspace]);
+
+    useEffect(() => {
+        if (!view) return;
+        view.dispatch({
+            effects: readOnlyCompartment.current.reconfigure([
+                EditorState.readOnly.of(lifecycle.phase === 'deleted'),
+                EditorView.editable.of(lifecycle.phase !== 'deleted'),
+            ]),
+        });
+    }, [lifecycle.phase, view]);
+
+    return <div ref={editorRef} className="code-view h-full min-h-0 min-w-0 overflow-hidden" />;
 }
 
 export default CodeView

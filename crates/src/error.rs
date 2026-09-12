@@ -26,6 +26,7 @@ where
 #[derive(Debug)]
 pub enum AppError {
     String(String),
+    Conflict(String),
     GenericError(anyhow::Error),
 }
 
@@ -51,6 +52,7 @@ impl IntoResponse for AppError {
 
         let (status, message) = match &self {
             AppError::String(error) => (StatusCode::BAD_REQUEST, format!("{}", error)),
+            AppError::Conflict(error) => (StatusCode::CONFLICT, format!("{}", error)),
             AppError::GenericError(error) => (StatusCode::BAD_REQUEST, format!("{}", error)),
         };
         let response = (status, AppJson(ErrorResponse { message })).into_response();

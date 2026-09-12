@@ -3,6 +3,7 @@
 dump.rdb
 .workspace-cache
 demo
+/plans/
 
 # dependencies
 /node_modules

@@ -4,6 +4,7 @@ use crate::{
         ClientId, ClientMessage, ClientParams, DocEvent, ErrorCode, FileId, LanguageId,
         ServerMessage, WorkspaceId,
     },
+    services::workspace_mutations,
     state::{AppState, ClientConnectionHandle},
 };
 use axum::{
@@ -21,9 +22,9 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, error, warn, info};
+use tracing::{debug, error, info, warn};
 use yrs::StateVector;
-use yrs::updates::decoder::Decode;
+use yrs::updates::{decoder::Decode, encoder::Encode};
 
 pub async fn ws(
     Query(client): Query<ClientParams>,
@@ -39,35 +40,21 @@ pub async fn ws(
     ws.on_upgrade(move |socket| handle_socket(state, socket, client, addr))
 }
 
-async fn handle_socket(
-    state: AppState,
-    socket: WebSocket,
-    client: ClientParams,
-    who: SocketAddr,
-) {
-    // send a ping (unsupported by some browsers) just to kick things off and get a response
-    // if socket
-    //     .send(Message::Ping(Bytes::from_static(&[1, 2, 3])))
-    //     .await
-    //     .is_ok()
-    // {
-    //     info!("Pinged {who}");
-    // } else {
-    //     info!("Could not send ping to {who}!");
-    //     // no Error here since the only thing we can do is to close the connection.
-    //     // If we can not send messages, there is no way to salvage the statemachine anyway.
-    //     return;
-    // }
-
+async fn handle_socket(state: AppState, socket: WebSocket, client: ClientParams, who: SocketAddr) {
     // By splitting socket we can send and receive at the same time.
     let (mut sender, mut receiver) = socket.split();
     let (terminal_tx, mut terminal_rx) = mpsc::channel::<ServerMessage>(64);
     let (document_tx, mut document_rx) = mpsc::channel::<ServerMessage>(256);
 
-    state.clients.insert(
-        client.get_client_id(),
-        ClientConnectionHandle::new(document_tx.clone()),
-    );
+    let client_id = client.get_client_id();
+    let replacement = state.new_client_connection(document_tx.clone());
+    let connection_id = replacement.connection_id;
+    if let Some(superseded) = state.clients.insert(client_id.clone(), replacement) {
+        // A reconnect can arrive before the old socket finishes its close
+        // path. Release the old connection's forwarders/refcounts now; its
+        // eventual cleanup is identity-checked and cannot touch the new one.
+        cleanup_connection_resources(&state, &client_id, superseded).await;
+    }
 
     // Handle any messages that are meant to be sent. This is normally the backend
     // system communicating with the client server.
@@ -97,6 +84,7 @@ async fn handle_socket(
                 &msg,
                 who,
                 client_id.clone(),
+                connection_id,
                 &cloned_state,
                 document_tx.clone(),
                 terminal_tx.clone(),
@@ -127,29 +115,10 @@ async fn handle_socket(
     }
 
     // Clean up connection
-    let client_id = client.get_client_id();
-    if let Some((_, client_connection_handle)) = state.clients.remove(&client_id) {
-        for entry in client_connection_handle.doc_forwarders.iter() {
-            entry.value().abort();
-        }
-        for entry in client_connection_handle.subscribed_documents.iter() {
-            if let Some(document) = state.open_files.get(entry.key()).map(|e| e.value().clone()) {
-                let key = entry.key().clone();
-                let app_state = state.clone();
-                document.unsubscribe(app_state, key).await;
-            }
-        }
-        for entry in client_connection_handle.open_terminals.iter() {
-            if let Some(terminal) = state.terminals.get(entry.key()).map(|e| e.value().clone()) {
-                // disconnect ≠ explicit close: default policy here is
-                // ephemeral (kill on last leave) — flip this if you want
-                // tmux-like persistence across reconnects.
-                if terminal.unsubscribe(&client_id) {
-                    terminal.kill().await.ok();
-                    state.terminals.remove(entry.key());
-                }
-            }
-        }
+    if let Some((_, client_connection_handle)) = state.clients.remove_if(&client_id, |_, handle| {
+        handle.connection_id == connection_id
+    }) {
+        cleanup_connection_resources(&state, &client_id, client_connection_handle).await;
     }
 
     info!("Websocket context {who} destroyed.")
@@ -160,12 +129,16 @@ fn encode(msg: ServerMessage) -> axum::extract::ws::Message {
 }
 
 async fn dispatch(
+    connection_id: u64,
     client_id: ClientId,
     msg: ClientMessage,
     state: &AppState,
     document_tx: mpsc::Sender<ServerMessage>,
     terminal_tx: mpsc::Sender<ServerMessage>,
 ) -> anyhow::Result<()> {
+    if !is_current_connection(state, &client_id, connection_id) {
+        anyhow::bail!("websocket connection superseded");
+    }
     match msg {
         ClientMessage::Hello => {
             document_tx
@@ -185,11 +158,25 @@ async fn dispatch(
             file_id,
         } => {
             authorize(state, &client_id, &workspace_id).await?;
-            let doc = get_or_load_doc(state, &workspace_id, &file_id).await?;
-            doc.subscribe().await;
-            
-            let lsp = get_or_spawn_lsp(state, &workspace_id, &file_id).await?;
-            doc.ensure_lsp_open(&lsp).await?;
+            let doc =
+                workspace_mutations::get_or_load_document(state, &workspace_id, &file_id).await?;
+
+            let first_subscription = register_client_subscription(
+                state,
+                client_id.clone(),
+                connection_id,
+                workspace_id.clone(),
+                file_id.clone(),
+                &doc,
+                document_tx.clone(),
+            );
+            if first_subscription {
+                doc.subscribe().await;
+            }
+
+            if let Some(lsp) = get_or_spawn_lsp(state, &workspace_id, &file_id).await? {
+                doc.ensure_lsp_open(&lsp).await?;
+            }
 
             // full state (sync step 2) — first time this client has seen the doc
             let full = doc.state_as_update(&StateVector::default()).await;
@@ -201,6 +188,7 @@ async fn dispatch(
                 })
                 .await
                 .ok();
+            send_doc_state(&document_tx, &workspace_id, &file_id, &doc).await;
 
             let diags = doc.latest_diagnostics().await;
             if !diags.is_empty() {
@@ -214,14 +202,6 @@ async fn dispatch(
                     .ok();
             }
 
-            register_client_subscription(
-                state,
-                client_id,
-                workspace_id,
-                file_id,
-                &doc,
-                document_tx.clone(),
-            );
             Ok(())
         }
 
@@ -231,20 +211,33 @@ async fn dispatch(
             state_vector,
         } => {
             authorize(state, &client_id, &workspace_id).await?;
-            let doc = get_or_load_doc(state, &workspace_id, &file_id).await?;
-            doc.subscribe().await;
-
+            // Validate the client's vector before touching subscription
+            // bookkeeping; malformed reconnect input must not leak a refcount.
             let sv = StateVector::decode_v1(&state_vector)
                 .map_err(|e| anyhow::anyhow!("bad state vector: {e}"))?;
+            let doc =
+                workspace_mutations::get_or_load_document(state, &workspace_id, &file_id).await?;
+
+            if let Some(lsp) = get_or_spawn_lsp(state, &workspace_id, &file_id).await? {
+                doc.ensure_lsp_open(&lsp).await?;
+            }
+
+            let first_subscription = register_client_subscription(
+                state,
+                client_id.clone(),
+                connection_id,
+                workspace_id.clone(),
+                file_id.clone(),
+                &doc,
+                document_tx.clone(),
+            );
+            if first_subscription {
+                doc.subscribe().await;
+            }
+
             let diff = doc.state_as_update(&sv).await;
-            document_tx
-                .send(ServerMessage::DocSync {
-                    workspace_id: workspace_id.clone(),
-                    file_id: file_id.clone(),
-                    update: diff,
-                })
-                .await
-                .ok();
+            send_doc_sync_step2(&document_tx, &workspace_id, &file_id, &doc, diff).await;
+            send_doc_state(&document_tx, &workspace_id, &file_id, &doc).await;
 
             let diags = doc.latest_diagnostics().await;
             if !diags.is_empty() {
@@ -258,14 +251,170 @@ async fn dispatch(
                     .ok();
             }
 
-            register_client_subscription(
+            Ok(())
+        }
+
+        // Reconnect state exchange is intentionally staged separately. Keep
+        // this message non-fatal so newer clients can connect during rollout.
+        ClientMessage::DocSyncStep2 {
+            workspace_id,
+            file_id,
+            update,
+        } => {
+            authorize(state, &client_id, &workspace_id).await?;
+            let doc =
+                workspace_mutations::get_or_load_document(state, &workspace_id, &file_id).await?;
+            let first_subscription = register_client_subscription(
                 state,
-                client_id,
-                workspace_id,
-                file_id,
+                client_id.clone(),
+                connection_id,
+                workspace_id.clone(),
+                file_id.clone(),
                 &doc,
                 document_tx.clone(),
             );
+            if first_subscription {
+                doc.subscribe().await;
+            }
+            if !update.is_empty() {
+                if let Err(error) = doc.apply_remote_update(&update, client_id).await {
+                    document_tx
+                        .send(ServerMessage::Error {
+                            context: Some("DocSyncStep2".into()),
+                            code: ErrorCode::ReadOnly,
+                            message: error.to_string(),
+                        })
+                        .await
+                        .ok();
+                }
+            }
+            // Even an empty delta is meaningful: it confirms the current
+            // lifecycle state after the client has completed its handshake.
+            send_doc_state(&document_tx, &workspace_id, &file_id, &doc).await;
+            Ok(())
+        }
+
+        ClientMessage::DocSave {
+            workspace_id,
+            file_id,
+            request_id,
+        } => {
+            info!(
+                workspace_id = %workspace_id,
+                file_id = %file_id,
+                request_id = %request_id,
+                connection_id,
+                "document save requested"
+            );
+            // Save errors are document-level failures, not protocol failures:
+            // always correlate them to the caller so one failed write cannot
+            // tear down the websocket or strand a client promise.
+            if let Err(error) = authorize(state, &client_id, &workspace_id).await {
+                warn!(
+                    workspace_id = %workspace_id,
+                    file_id = %file_id,
+                    request_id = %request_id,
+                    connection_id,
+                    error = %error,
+                    "document save rejected: authorization failed"
+                );
+                send_save_result(
+                    &document_tx,
+                    workspace_id,
+                    file_id,
+                    request_id,
+                    0,
+                    0,
+                    Some(error.to_string()),
+                )
+                .await;
+                return Ok(());
+            }
+
+            let key = (workspace_id.clone(), file_id.clone());
+            let Some(doc) = state
+                .open_files
+                .get(&key)
+                .map(|entry| entry.value().clone())
+            else {
+                warn!(
+                    workspace_id = %workspace_id,
+                    file_id = %file_id,
+                    request_id = %request_id,
+                    connection_id,
+                    "document save rejected: document is not open"
+                );
+                send_save_result(
+                    &document_tx,
+                    workspace_id,
+                    file_id,
+                    request_id,
+                    0,
+                    0,
+                    Some("document is not open".into()),
+                )
+                .await;
+                return Ok(());
+            };
+
+            match doc.save().await {
+                Ok(result) => {
+                    send_save_result(
+                        &document_tx,
+                        workspace_id.clone(),
+                        file_id.clone(),
+                        request_id,
+                        result.saved_revision,
+                        result.current_revision,
+                        None,
+                    )
+                    .await;
+                    info!(
+                        workspace_id = %workspace_id,
+                        file_id = %file_id,
+                        request_id = %request_id,
+                        connection_id,
+                        saved_revision = result.saved_revision,
+                        current_revision = result.current_revision,
+                        "document save acknowledged"
+                    );
+
+                    // didSave is advisory and must not turn a successful disk
+                    // write into a failed save acknowledgement.
+                    match get_lsp_if_running(state, workspace_id, file_id).await {
+                        Ok(Some(lsp)) => {
+                            if let Err(error) = doc.notify_lsp_did_save(&lsp).await {
+                                warn!("failed to send didSave notification: {error}");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => warn!("failed to find LSP for saved document: {error}"),
+                    }
+                }
+                Err(error) => {
+                    let lifecycle = doc.lifecycle_snapshot().await;
+                    warn!(
+                        workspace_id = %workspace_id,
+                        file_id = %file_id,
+                        request_id = %request_id,
+                        connection_id,
+                        revision = lifecycle.revision,
+                        persisted_revision = lifecycle.persisted_revision,
+                        error = %error,
+                        "document save failed"
+                    );
+                    send_save_result(
+                        &document_tx,
+                        workspace_id,
+                        file_id,
+                        request_id,
+                        lifecycle.persisted_revision,
+                        lifecycle.revision,
+                        Some(error.to_string()),
+                    )
+                    .await;
+                }
+            }
             Ok(())
         }
 
@@ -273,7 +422,7 @@ async fn dispatch(
             workspace_id,
             file_id,
         } => {
-            unsubscribe_doc(state, client_id, workspace_id, file_id).await;
+            unsubscribe_doc(state, client_id, connection_id, workspace_id, file_id).await;
             Ok(())
         }
 
@@ -299,18 +448,28 @@ async fn dispatch(
                         if doc.generation() != generation {
                             return; // a later edit landed — that window owns the sync now
                         }
-                        match get_lsp_if_running(&state, workspace_id_copy.clone(), file_id_copy.clone()).await {
+                        match get_lsp_if_running(
+                            &state,
+                            workspace_id_copy.clone(),
+                            file_id_copy.clone(),
+                        )
+                        .await
+                        {
                             Ok(Some(lsp)) => {
                                 if let Err(e) = doc.sync_to_lsp(&lsp).await {
-                                    warn!("failed to sync {workspace_id_copy}/{file_id_copy} to lsp: {e}");
+                                    warn!(
+                                        "failed to sync {workspace_id_copy}/{file_id_copy} to lsp: {e}"
+                                    );
                                 }
                             }
                             Ok(None) => {} // unsupported language, or server not attached yet
-                            Err(e) => warn!("lsp lookup failed for {workspace_id_copy}/{file_id_copy}: {e}"),
+                            Err(e) => warn!(
+                                "lsp lookup failed for {workspace_id_copy}/{file_id_copy}: {e}"
+                            ),
                         }
                     });
                     Ok(())
-                },
+                }
                 Err(e) => {
                     document_tx
                         .send(ServerMessage::Error {
@@ -403,7 +562,20 @@ async fn dispatch(
         } => {
             authorize(state, &client_id, &workspace_id).await?;
             let lsp = match get_or_spawn_lsp(state, &workspace_id, &file_id).await {
-                Ok(lsp) => lsp,
+                Ok(Some(lsp)) => lsp,
+                Ok(None) => {
+                    document_tx
+                        .send(ServerMessage::LspError {
+                            request_id,
+                            message: format!(
+                                "no LSP configured for {:?}",
+                                state.resolve_file_path(&workspace_id, &file_id)?
+                            ),
+                        })
+                        .await
+                        .ok();
+                    return Ok(());
+                }
                 Err(e) => {
                     document_tx
                         .send(ServerMessage::LspError {
@@ -472,17 +644,28 @@ async fn process_message(
     msg: &Message,
     who: SocketAddr,
     client_id: ClientId,
+    connection_id: u64,
     state: &AppState,
     document_tx: mpsc::Sender<ServerMessage>,
     terminal_tx: mpsc::Sender<ServerMessage>,
 ) -> ControlFlow<(), ()> {
+    if !is_current_connection(state, &client_id, connection_id) {
+        return ControlFlow::Break(());
+    }
     match msg {
         Message::Text(t) => {
             debug!(">>> {who} sent str: {t:?}");
             match serde_json::from_str::<ClientMessage>(t) {
                 Ok(message) => {
-                    if let Err(err) =
-                        dispatch(client_id, message.clone(), state, document_tx, terminal_tx).await
+                    if let Err(err) = dispatch(
+                        connection_id,
+                        client_id,
+                        message.clone(),
+                        state,
+                        document_tx,
+                        terminal_tx,
+                    )
+                    .await
                     {
                         error!(">>> {who} message {message} dispatch failed: {err}");
                     }
@@ -495,8 +678,15 @@ async fn process_message(
         Message::Binary(d) => {
             debug!(">>> {who} sent {} bytes", d.len());
             if let Ok(message) = serde_json::from_slice::<ClientMessage>(d) {
-                if let Err(err) =
-                    dispatch(client_id, message.clone(), state, document_tx, terminal_tx).await
+                if let Err(err) = dispatch(
+                    connection_id,
+                    client_id,
+                    message.clone(),
+                    state,
+                    document_tx,
+                    terminal_tx,
+                )
+                .await
                 {
                     error!(">>> {who} message {message} dispatch failed: {err}");
                 }
@@ -522,6 +712,50 @@ TO REVIEW:
 AI generated code
 */
 
+fn is_current_connection(state: &AppState, client_id: &ClientId, connection_id: u64) -> bool {
+    state
+        .clients
+        .get(client_id)
+        .is_some_and(|handle| handle.connection_id == connection_id)
+}
+
+async fn cleanup_connection_resources(
+    state: &AppState,
+    client_id: &ClientId,
+    handle: ClientConnectionHandle,
+) {
+    for entry in handle.doc_forwarders.iter() {
+        entry.value().abort();
+    }
+
+    let subscriptions: Vec<_> = handle
+        .subscribed_documents
+        .iter()
+        .map(|entry| entry.key().clone())
+        .collect();
+    for key in subscriptions {
+        if let Some(document) = state.open_files.get(&key).map(|e| e.value().clone()) {
+            document.unsubscribe(state.clone(), key).await;
+        }
+    }
+
+    let terminals: Vec<_> = handle
+        .open_terminals
+        .iter()
+        .map(|entry| entry.key().clone())
+        .collect();
+    for term_id in terminals {
+        if let Some(terminal) = state.terminals.get(&term_id).map(|e| e.value().clone()) {
+            // Disconnect is ephemeral for terminals; an explicitly closed
+            // connection should not leave the process running.
+            if terminal.unsubscribe(client_id) {
+                terminal.kill().await.ok();
+                state.terminals.remove(&term_id);
+            }
+        }
+    }
+}
+
 async fn authorize(
     state: &AppState,
     client_id: &ClientId,
@@ -542,29 +776,68 @@ async fn authorize(
     Ok(())
 }
 
-async fn get_or_load_doc(
-    state: &AppState,
+async fn send_doc_state(
+    document_tx: &mpsc::Sender<ServerMessage>,
     workspace_id: &WorkspaceId,
     file_id: &FileId,
-) -> anyhow::Result<Arc<DocumentActor>> {
-    let key = (workspace_id.clone(), file_id.clone());
-    if let Some(existing) = state.open_files.get(&key) {
-        debug!("File {} {} already open", workspace_id, file_id);
-        return Ok(existing.value().clone());
-    }
+    doc: &Arc<DocumentActor>,
+) {
+    let state = doc.lifecycle_snapshot().await;
+    document_tx
+        .send(ServerMessage::DocState {
+            workspace_id: workspace_id.clone(),
+            file_id: file_id.clone(),
+            revision: state.revision,
+            persisted_revision: state.persisted_revision,
+            phase: state.phase,
+            error: state.error,
+        })
+        .await
+        .ok();
+}
 
-    // resolve + load happens outside any DashMap guard (it's async and can
-    // be slow — reading a file — so never do this while holding a shard lock)
-    let path = state.resolve_file_path(workspace_id, file_id)?;
-    debug!("Openning file {:?}", path);
-    let doc = DocumentActor::load(workspace_id, file_id, path).await?;
+async fn send_doc_sync_step2(
+    document_tx: &mpsc::Sender<ServerMessage>,
+    workspace_id: &WorkspaceId,
+    file_id: &FileId,
+    doc: &Arc<DocumentActor>,
+    update: Vec<u8>,
+) {
+    let state_vector = doc.state_vector().await;
+    let lifecycle = doc.lifecycle_snapshot().await;
+    document_tx
+        .send(ServerMessage::DocSyncStep2 {
+            workspace_id: workspace_id.clone(),
+            file_id: file_id.clone(),
+            update,
+            state_vector: state_vector.encode_v1(),
+            revision: lifecycle.revision,
+            persisted_revision: lifecycle.persisted_revision,
+        })
+        .await
+        .ok();
+}
 
-    // race: two clients could both miss the cache and both load. Use entry
-    // API to make the insert atomic and discard the loser.
-    match state.open_files.entry(key) {
-        Entry::Occupied(e) => Ok(e.get().clone()),
-        Entry::Vacant(e) => Ok(e.insert(doc).clone()),
-    }
+async fn send_save_result(
+    document_tx: &mpsc::Sender<ServerMessage>,
+    workspace_id: WorkspaceId,
+    file_id: FileId,
+    request_id: uuid::Uuid,
+    saved_revision: u64,
+    current_revision: u64,
+    error: Option<String>,
+) {
+    document_tx
+        .send(ServerMessage::DocSaveResult {
+            workspace_id,
+            file_id,
+            request_id,
+            saved_revision,
+            current_revision,
+            error,
+        })
+        .await
+        .ok();
 }
 
 /// Spawns a task forwarding this doc's broadcast events to one client's
@@ -572,33 +845,37 @@ async fn get_or_load_doc(
 fn register_client_subscription(
     state: &AppState,
     client_id: ClientId,
+    connection_id: u64,
     workspace_id: WorkspaceId,
     file_id: FileId,
     doc: &Arc<DocumentActor>,
     document_tx: mpsc::Sender<ServerMessage>,
-) {
+) -> bool {
     let Some(client_handle) = state.clients.get(&client_id) else {
-        return;
+        return false;
     };
+    if client_handle.connection_id != connection_id {
+        return false;
+    }
     let key = (workspace_id.clone(), file_id.clone());
     let handle = client_handle.value();
 
-    if handle.subscribed_documents.contains(&key) {
-        return; // already subscribed — e.g. duplicate DocSubscribe from a retry
+    if !handle.subscribed_documents.insert(key.clone()) {
+        return false; // already subscribed — e.g. duplicate sync from a retry
     }
-    handle.subscribed_documents.insert(key.clone());
 
     let mut rx = doc.subscribe_events();
+    let forwarder_doc = doc.clone();
     let workspace_id_cloned = workspace_id.clone();
-    let file_id_cloned = file_id.clone();
     let forwarder = tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(DocEvent::Update { update, origin }) => {
+                    let file_id = forwarder_doc.file_id().await;
                     document_tx
                         .send(ServerMessage::DocUpdate {
                             workspace_id: workspace_id_cloned.clone(),
-                            file_id: file_id_cloned.clone(),
+                            file_id,
                             update,
                             origin,
                         })
@@ -606,10 +883,11 @@ fn register_client_subscription(
                         .ok();
                 }
                 Ok(DocEvent::Awareness { payload, origin }) => {
+                    let file_id = forwarder_doc.file_id().await;
                     document_tx
                         .send(ServerMessage::Awareness {
                             workspace_id: workspace_id_cloned.clone(),
-                            file_id: file_id_cloned.clone(),
+                            file_id,
                             client_id: origin,
                             payload,
                         })
@@ -617,32 +895,67 @@ fn register_client_subscription(
                         .ok();
                 }
                 Ok(DocEvent::Diagnostics { diagnostics }) => {
+                    let file_id = forwarder_doc.file_id().await;
                     document_tx
                         .send(ServerMessage::Diagnostics {
                             workspace_id: workspace_id_cloned.clone(),
-                            file_id: file_id_cloned.clone(),
+                            file_id,
                             diagnostics,
                         })
                         .await
                         .ok();
                 }
+                Ok(DocEvent::State {
+                    revision,
+                    persisted_revision,
+                    phase,
+                    error,
+                }) => {
+                    let file_id = forwarder_doc.file_id().await;
+                    document_tx
+                        .send(ServerMessage::DocState {
+                            workspace_id: workspace_id_cloned.clone(),
+                            file_id,
+                            revision,
+                            persisted_revision,
+                            phase,
+                            error,
+                        })
+                        .await
+                        .ok();
+                }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("client lagged {n} doc events on {file_id:?}, continuing");
-                    continue;
+                    tracing::warn!(
+                        "client lagged {n} doc events on {file_id:?}; forcing document sync"
+                    );
+                    let full = forwarder_doc.state_as_update(&StateVector::default()).await;
+                    send_doc_sync_step2(
+                        &document_tx,
+                        &workspace_id_cloned,
+                        &forwarder_doc.file_id().await,
+                        &forwarder_doc,
+                        full,
+                    )
+                    .await;
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
     handle.doc_forwarders.insert(key, forwarder);
+    true
 }
 
 async fn unsubscribe_doc(
     state: &AppState,
     client_id: ClientId,
+    connection_id: u64,
     workspace_id: WorkspaceId,
     file_id: FileId,
 ) {
+    if !is_current_connection(state, &client_id, connection_id) {
+        return;
+    }
     let key = (workspace_id.clone(), file_id.clone());
     if let Some(client_handle) = state.clients.get(&client_id) {
         let handle = client_handle.value();
@@ -661,15 +974,18 @@ async fn get_or_spawn_lsp(
     state: &AppState,
     workspace_id: &WorkspaceId,
     file_id: &FileId,
-) -> anyhow::Result<Arc<LspServerActor>> {
+) -> anyhow::Result<Option<Arc<LspServerActor>>> {
     let path = state.resolve_file_path(workspace_id, file_id)?;
-    let language = LanguageId::from_path(&path)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("no LSP configured for {path:?}"))?;
+    let Some(language) = LanguageId::from_path(&path).await else {
+        return Ok(None);
+    };
+    if !language.has_lsp_support() {
+        return Ok(None);
+    }
 
     let key = (workspace_id.clone(), language);
     if let Some(existing) = state.lsp_servers.get(&key) {
-        return Ok(existing.value().clone());
+        return Ok(Some(existing.value().clone()));
     }
 
     let root = state.workspace_root(workspace_id);
@@ -682,8 +998,8 @@ async fn get_or_spawn_lsp(
     .await?;
 
     match state.lsp_servers.entry(key) {
-        Entry::Occupied(e) => Ok(e.get().clone()), // another request won the race
-        Entry::Vacant(e) => Ok(e.insert(actor).clone()),
+        Entry::Occupied(e) => Ok(Some(e.get().clone())), // another request won the race
+        Entry::Vacant(e) => Ok(Some(e.insert(actor).clone())),
     }
 }
 
@@ -693,14 +1009,23 @@ async fn get_lsp_if_running(
     file_id: FileId,
 ) -> anyhow::Result<Option<Arc<LspServerActor>>> {
     let path = state.resolve_file_path(&workspace_id, &file_id)?;
-    let language = LanguageId::from_path(&path).await.ok_or(anyhow::Error::msg("Failed to get language result".to_string()))?;
+    let Some(language) = LanguageId::from_path(&path).await else {
+        return Ok(None);
+    };
+    if !language.has_lsp_support() {
+        return Ok(None);
+    }
     Ok(state
         .lsp_servers
         .get(&(workspace_id, language))
         .map(|e| e.value().clone()))
 }
 
-fn doc_uri(state: &AppState, workspace_id: &WorkspaceId, file_id: &FileId) -> anyhow::Result<String> {
+fn doc_uri(
+    state: &AppState,
+    workspace_id: &WorkspaceId,
+    file_id: &FileId,
+) -> anyhow::Result<String> {
     Ok(format!(
         "file://{}",
         state.resolve_file_path(workspace_id, file_id)?.display()

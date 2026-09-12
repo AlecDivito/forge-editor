@@ -1,4 +1,4 @@
-import { acquireDocument, DocEntry, releaseDocument } from "@/lib/documents/registry";
+import { acquireDocument, DocEntry, releaseDocumentEntry } from "@/lib/documents/registry";
 import { FileId, WorkspaceId } from "@/lib/ws/messages";
 import { useEffect, useState } from "react";
 
@@ -9,7 +9,7 @@ export default function useDocument(workspaceId: WorkspaceId, fileId: FileId) {
     useEffect(() => {
         const e = acquireDocument(workspaceId, fileId)
         setEntry(e)
-        return () => releaseDocument(workspaceId, fileId)
+        return () => releaseDocumentEntry(e)
     }, [workspaceId, fileId])
 
     return entry

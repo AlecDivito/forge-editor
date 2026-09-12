@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import "@testing-library/jest-dom";
-import { CacheManager } from "./cache";
+import { CacheManager } from "@/service/lsp/cache";
 import { TextDocumentContentChangeEvent } from "vscode-languageserver-protocol";
 
 it("CacheManager: Successfully updates incremental updates", () => {

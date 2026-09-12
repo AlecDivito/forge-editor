@@ -27,31 +27,31 @@ export default function FileMenu({ file, children, className, onRename, onNewFil
     e.stopPropagation()
     setOpen(false);
     requestAnimationFrame(() => { onNewFile(FsFileType.FILE); });
-  }, [file])
+  }, [onNewFile])
 
   const newFolder: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
     e.preventDefault()
     e.stopPropagation()
     setOpen(false);
     requestAnimationFrame(() => { onNewFile(FsFileType.DIRECTORY); });
-  }, [file])
+  }, [onNewFile])
 
   const copyPath: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
     navigator.clipboard.writeText(file.path);
     e.stopPropagation()
-  }, [file])
+  }, [file.path])
 
   const rename: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
     e.preventDefault()
     e.stopPropagation()
     setOpen(false);
     requestAnimationFrame(() => { onRename(); });
-  }, [file])
+  }, [onRename])
 
   const deleteFile: MouseEventHandler<HTMLDivElement> = useCallback(async (e) => {
     e.stopPropagation()
     await deleteFileOp({ body: { path: file.path } })
-  }, [file])
+  }, [deleteFileOp, file.path])
 
   return (
     <ContextMenu open={open} onOpenChange={setOpen}>

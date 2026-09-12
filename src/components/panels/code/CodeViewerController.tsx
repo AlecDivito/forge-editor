@@ -3,18 +3,33 @@ import { FC, useEffect, useMemo, useRef, useState } from "react";
 import DefaultView from "./components/DefaultView/DefaultView";
 import FileTab from "./components/FileTab/FileTab";
 import CodeView from "./components/CodeView/CodeView";
-import { titleFor, useUICodeState } from "./hooks/use-code-ui-state.hook";
+import { useShallow } from "zustand/react/shallow";
+import { selectPanels, useEditorSessionStore } from "./state/editor-session.store";
+import { titleFor } from "./state/panel-title";
 import { useKeyboard } from "react-pre-hooks";
+import { saveDocument } from "@/lib/documents/save";
+import { hasUnsavedDocuments } from "@/lib/documents/registry";
+import CloseConfirmationDialog from "./components/CloseConfirmationDialog/CloseConfirmationDialog";
 
 type Props = Record<string, string>;
 
 const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
     const [view, setView] = useState<DockviewApi | null>(null);
-    const openPanels = useUICodeState((s) => s.openPanels);
-    const closeFile = useUICodeState((s) => s.closeFile);
-    const syncGroups = useUICodeState((s) => s.syncGroups);
-    const setActivePanel = useUICodeState((s) => s.setActivePanel);
+    const openPanels = useEditorSessionStore(useShallow(selectPanels));
+    const requestClose = useEditorSessionStore((s) => s.requestClose);
+    const setActivePanel = useEditorSessionStore((s) => s.setActivePanel);
     const knownIds = useRef(new Set<string>());
+    const suppressNativeRemoval = useRef(new Set<string>());
+
+    useEffect(() => {
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (!hasUnsavedDocuments()) return;
+            event.preventDefault();
+            event.returnValue = "";
+        };
+        window.addEventListener("beforeunload", beforeUnload);
+        return () => window.removeEventListener("beforeunload", beforeUnload);
+    }, []);
 
     const components = useMemo(() => ({
         default: DefaultView,
@@ -48,6 +63,9 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 
         for (const id of knownIds.current) {
             if (!current.has(id)) {
+                // This close was initiated by the UI store. Mark it so the
+                // native removal callback cannot start a second close request.
+                suppressNativeRemoval.current.add(id);
                 view.getPanel(id)?.api.close();
                 knownIds.current.delete(id);
             }
@@ -58,6 +76,9 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
             if (!handle) continue;
             const nextTitle = titleFor(panel, openPanels);
             if (handle.title !== nextTitle) handle.setTitle(nextTitle);
+            // Keep the existing Dockview panel/editor instance while updating
+            // the path after an authoritative filesystem rename.
+            handle.update({ params: panel });
         }
     }, [view, openPanels]);
 
@@ -68,45 +89,38 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
         if (!view) return;
         const disposable = view.onDidRemovePanel((panel) => {
             knownIds.current.delete(panel.id);
-            closeFile(panel.id); // no-op if the store already removed it
+            if (suppressNativeRemoval.current.delete(panel.id)) return;
+            // Dockview has already removed the panel by this point. The store
+            // still owns the descriptor. Restore it synchronously when the
+            // guard needs it; this avoids a native removal bypassing the
+            // dialog even though openPanels itself did not change.
+            requestClose(panel.id);
+            const state = useEditorSessionStore.getState();
+            const descriptor = state.panelsById[panel.id];
+            if (descriptor) {
+                view.addPanel({
+                    id: descriptor.id,
+                    component: descriptor.kind,
+                    tabComponent: descriptor.kind === 'code' ? 'fileTab' : undefined,
+                    params: descriptor,
+                    title: titleFor(descriptor, selectPanels(state)),
+                });
+                knownIds.current.add(descriptor.id);
+            }
         });
         return () => disposable.dispose();
-    }, [view, closeFile]);
+    }, [view, requestClose]);
 
-    // Mirror dockview's own grouping/active-panel state into the store so
-    // things outside the dockview tree (sidebar highlighting, breadcrumbs,
-    // etc.) can read it without reaching into the dockview api. This covers
-    // drag-to-reorder and splits too, since both fire onDidLayoutChange —
-    // dockview stays the actual source of truth for layout; this is read-only.
+    // Dockview owns layout/group ordering. Only mirror the selected panel id,
+    // which other UI can join to both the panel descriptor and EditorView.
     useEffect(() => {
         if (!view) return;
-
-        const pushSnapshot = () => {
-            const groups = view.groups.map((g) => ({
-                id: g.id,
-                panelIds: g.panels.map((p) => p.id),
-                activePanelId: g.activePanel?.id,
-            }));
-            syncGroups(groups, groups.map((g) => g.id));
-        };
-
-        pushSnapshot(); // seed initial state — don't wait for the first change
-
-        const layoutSub = view.onDidLayoutChange(pushSnapshot);
         const activeSub = view.onDidActivePanelChange((panel) => {
-            setActivePanel(
-                panel.panel?.id ?? null,
-                panel.panel?.group?.id ?? null,
-                panel.panel?.params?.workspace,
-                panel.panel?.params?.fileId
-            );
+            setActivePanel(panel.panel?.id ?? null);
         });
-
-        return () => {
-            layoutSub.dispose();
-            activeSub.dispose();
-        };
-    }, [view, syncGroups, setActivePanel]);
+        setActivePanel(view.activePanel?.id ?? null);
+        return () => activeSub.dispose();
+    }, [view, setActivePanel]);
 
     useKeyboard({
         keys: {
@@ -122,7 +136,17 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
 
             'mod+w': () => {
                 const active = view?.activePanel;
-                if (active) closeFile(active.id); // through the store, not api.close()
+                if (active) requestClose(active.id);
+            },
+
+            'mod+s': () => {
+                const panel = view?.activePanel;
+                const workspace = panel?.params?.workspace;
+                const fileId = panel?.params?.fileId;
+                if (workspace === undefined || fileId === undefined) return;
+                void saveDocument(workspace, fileId).catch((error) => {
+                    console.error("Failed to save document", error);
+                });
             },
         },
     });
@@ -131,7 +155,7 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
         console.log(event);
     };
 
-    return (
+    return <>
         <DockviewReact
             onReady={(e) => setView(e.api)}
             components={components}
@@ -139,7 +163,8 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
             onDidDrop={onDidDrop}
             className="dockview-theme-vs"
         />
-    );
+        <CloseConfirmationDialog />
+    </>;
 };
 
 export default CodeViewerController;

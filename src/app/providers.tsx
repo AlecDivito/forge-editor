@@ -13,7 +13,10 @@ export default function Providers({ children }: Props) {
     const queryClient = new QueryClient()
 
     useEffect(() => {
-        socket.connect("http://localhost:8080/ws/editor", `token`);
+        // SocketManager converts http(s) origins to ws(s), while keeping the
+        // endpoint deployable behind the current browser origin or API host.
+        const apiHost = process.env.NEXT_PUBLIC_API_HOST || window.location.origin;
+        socket.connect(`${apiHost}/ws/editor`, `token`);
         // deliberately no disconnect() in cleanup — this component can
         // remount (Strict Mode, route changes) without tearing down a
         // connection that other parts of the app still depend on. The

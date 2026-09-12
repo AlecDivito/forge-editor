@@ -10,6 +10,27 @@
   height: 100%;
 }
 
+/* Code panels own vertical scrolling; the Dockview tab strip stays fixed. */
+.code-view,
+.code-view .cm-editor,
+.code-view .cm-scroller {
+  min-height: 0;
+}
+
+.code-view .cm-editor {
+  height: 100%;
+}
+
+.code-view .cm-scroller {
+  overflow: auto;
+}
+
+/* Equivalent of CodeMirror's newer scrollPastEnd extension: leave enough
+   space to scroll the final line into the viewport. */
+.code-view .cm-content {
+  padding-bottom: 50vh;
+}
+
 .cm-editor .cm-tooltip {
   max-width: 700px;
   max-height: 500px;
@@ -81,7 +102,7 @@
   --dv-paneview-active-outline-color: var(--ring);
 
   --dv-tabs-and-actions-container-font-size: 13px;
-  --dv-tabs-and-actions-container-height: 35px;
+  --dv-tabs-and-actions-container-height: 30px;
 
   --dv-drag-over-background-color: color-mix(in oklch, var(--accent) 70%, transparent);
   --dv-drag-over-border-color: var(--ring);
@@ -262,6 +283,7 @@
   flex-shrink: 0;
   box-sizing: border-box;
   height: var(--dv-tabs-and-actions-container-height);
+  overflow: hidden;
 
   background-color: var(--dv-tabs-and-actions-container-background-color);
 
@@ -286,9 +308,23 @@
   cursor: grab;
 }
 
+/* Dockview puts the tab list inside this scrollable wrapper. Constrain the
+   wrapper as well as the outer strip so it cannot introduce its own height. */
+.dv-tabs-and-actions-container > .dv-scrollable {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .dv-tabs-and-actions-container .dv-tabs-container {
   display: flex;
-  overflow-x: overlay;
+  align-items: center;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
 }
@@ -408,6 +444,65 @@
 .dv-tab .dv-default-tab .dv-default-tab-action:hover {
   border-radius: var(--radius-sm);
   background-color: var(--dv-icon-hover-background-color);
+}
+
+/* File tabs follow VS Code's compact tab treatment while retaining
+   Dockview's active/inactive tab classes for state and keyboard focus. */
+.dv-tab .file-tab {
+  min-width: 96px;
+  padding: 0 4px;
+  border-top: 1px solid transparent;
+}
+
+.dv-tab .file-tab-content {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 3px;
+}
+
+.dv-tab .file-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dv-tab .file-tab-icon {
+  color: var(--muted-foreground);
+}
+
+.dv-tab.dv-active-tab .file-tab {
+  border-top-color: transparent;
+  background-color: var(--dv-activegroup-visiblepanel-tab-background-color);
+}
+
+.dv-tab.dv-active-tab .file-tab-icon,
+.dv-tab.dv-active-tab .file-tab-name {
+  color: var(--dv-activegroup-visiblepanel-tab-color);
+}
+
+.dv-tab .file-tab .dv-default-tab-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dv-tab .file-tab .dv-default-tab-action:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.dv-tab .file-tab-dirty {
+  color: var(--dv-activegroup-visiblepanel-tab-color);
 }
 
 /* ==========================================================================

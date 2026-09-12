@@ -8,14 +8,15 @@ export default function useTerminal(workspaceId: WorkspaceId, terminalId: Termin
     useEffect(() => {
         const unsubscribe = socket.subscribe(msg => {
             if (msg.kind === 'TerminalOutput' && msg.term_id === terminalId) {
-                terminalEmitter.emit(terminalId, msg.data)
+                console.log(`terminal output ${msg.data}`)
+                // terminalEmitter.emit(terminalId, Uint8Array.from(msg.data))
             }
         })
         return () => { unsubscribe(); }
     })
 
     const write = useCallback((data: Uint8Array) => {
-        socket.send({ kind: 'TerminalInput', workspace, terminalId, data })
+        socket.send({ kind: 'TerminalInput', term_id: terminalId, data: Array.from(data) })
     }, [workspaceId, terminalId])
 
     return { write }

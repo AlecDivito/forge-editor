@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use axum::{
     Json,
     extract::{Query, State},
@@ -10,11 +8,17 @@ use rovo::{axum::IntoApiResponse, rovo};
 use crate::{
     error::AppError,
     models::{
-        CreateFile, FilePath, FsFile, FsFileOperation, FsFileType, FsListDirectory,
-        FsMoveFileResult, MovePath, PaginationParams, SaveFile,
+        CreateFile, FilePath, FsFile, FsFileOperation, FsListDirectory, FsMoveFileResult, MovePath,
+        MutationError, PaginationParams, SaveFile,
     },
+    services::workspace_mutations,
     state::AppState,
+    utils::workspace_mutation::normalize_workspace_relative,
 };
+
+// The HTTP filesystem API predates workspace-aware routes and the current
+// browser uses the empty workspace id for the single configured root.
+const HTTP_WORKSPACE_ID: &str = "";
 
 /// Get list of files for directory
 ///
@@ -93,14 +97,7 @@ pub async fn save_file(
 }
 
 async fn save_file_impl(state: AppState, body: SaveFile) -> Result<impl IntoResponse, AppError> {
-    let local_path = state.to_absolute_path(&body.path)?;
-    if local_path.is_file() {
-        tokio::fs::write(local_path, body.contents).await?;
-    } else {
-        return Err(AppError::String(format!(
-            "Updating non file is not supported"
-        )));
-    }
+    workspace_mutations::save_legacy(&state, &body).await?;
 
     Ok(Json(FsFileOperation {
         success: true,
@@ -129,16 +126,7 @@ async fn create_file_impl(
     state: AppState,
     body: CreateFile,
 ) -> Result<impl IntoResponse, AppError> {
-    let local_path = state.to_absolute_path(&body.path)?;
-    match body.ty {
-        FsFileType::Directory => tokio::fs::create_dir(local_path).await?,
-        FsFileType::File => tokio::fs::write(local_path, "").await?,
-        FsFileType::SymLink => {
-            return Err(AppError::String(
-                "Creating sym link is not supported".into(),
-            ));
-        }
-    }
+    workspace_mutations::create(&state, &body).await?;
 
     Ok(Json(body))
 }
@@ -162,34 +150,18 @@ pub async fn rename_file(
 }
 
 async fn rename_file_impl(state: AppState, path: MovePath) -> Result<impl IntoResponse, AppError> {
-    let (from, to) = path.to_file_path();
-    let to_path = state.to_absolute_path(to.path.clone())?;
-    let from_path = state.to_absolute_path(from.path.clone())?;
-    println!(
-        "{:?} ({}) -> {:?} ({})",
-        from_path,
-        from_path.try_exists()?,
-        to_path,
-        to_path.try_exists()?
-    );
-    if !from_path.try_exists()? {
-        return Err(AppError::String(
-            "Source file can't be moved because it does not exist".into(),
-        ));
-    }
-    if to_path.try_exists()? {
-        return Err(AppError::String(
-            "File can't be moved because it already exists in end result location".into(),
-        ));
-    }
-
-    let from_file = FsFile::from_app_state(&state, Path::new(&from.path))
-        .unwrap()
-        .unwrap();
-    std::fs::rename(from_path, to_path)?;
-    let to_file = FsFile::from_app_state(&state, Path::new(&to.path))
-        .unwrap()
-        .unwrap();
+    normalize_workspace_relative(&path.from).map_err(mutation_error)?;
+    let from_file = FsFile::from_app_state(&state, std::path::Path::new(&path.from))
+        .map_err(AppError::from)?
+        .ok_or_else(|| {
+            AppError::String("Source file can't be moved because it does not exist".into())
+        })?;
+    workspace_mutations::rename(&state, &HTTP_WORKSPACE_ID.to_owned(), &path.from, &path.to)
+        .await
+        .map_err(mutation_error)?;
+    let to_file = FsFile::from_app_state(&state, std::path::Path::new(&path.to))
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::String("Moved file could not be found after rename".into()))?;
 
     Ok(Json(FsMoveFileResult {
         from: from_file,
@@ -215,15 +187,18 @@ pub async fn delete_file(
 }
 
 async fn delete_file_impl(state: AppState, body: FilePath) -> Result<impl IntoResponse, AppError> {
-    let os_path = body.with_path(&state.config.base_dir)?;
-    if let Some(file) = FsFile::from_path(&os_path) {
-        file.delete().await?;
-    } else {
-        return Err(AppError::String(format!(
-            "File '{}' does not exist. Failed to delete file.",
-            body.path
-        )));
-    }
+    workspace_mutations::delete(&state, &HTTP_WORKSPACE_ID.to_owned(), &body.path)
+        .await
+        .map_err(mutation_error)?;
 
     Ok(Json(body))
+}
+
+fn mutation_error(error: MutationError) -> AppError {
+    match error {
+        MutationError::BadPath(message) => AppError::String(message),
+        MutationError::NotFound(message) => AppError::String(message),
+        MutationError::Conflict(message) => AppError::Conflict(message),
+        MutationError::Io(error) => AppError::from(error),
+    }
 }

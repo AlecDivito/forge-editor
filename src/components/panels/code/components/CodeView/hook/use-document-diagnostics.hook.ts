@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { EditorView } from "@uiw/react-codemirror";
 import { WorkspaceId, FileId } from "@/lib/ws/messages";
-import { useUICodeState } from "../../../hooks/use-code-ui-state.hook";
+import { documentKey, emptyDiagnostics, useDiagnosticsStore } from "../../../state/diagnostics.store";
 import { lintDiagnosticEffect } from "../extensions/lint.extension";
 
 /**
@@ -11,12 +11,11 @@ import { lintDiagnosticEffect } from "../extensions/lint.extension";
  * already arrived before this view existed (e.g. right after DocSubscribe).
  */
 export function useDocumentDiagnosticsSync(view: EditorView | null, workspace: WorkspaceId, fileId: FileId) {
-  const diagnosticObject = useUICodeState((s) => s.diagnostics);
-  const diagnostics = useMemo(() => diagnosticObject[`${workspace}:${fileId}`], [workspace, fileId, diagnosticObject])
+  const key = useMemo(() => documentKey(workspace, fileId), [workspace, fileId]);
+  const diagnostics = useDiagnosticsStore((state) => state.byDocument[key] ?? emptyDiagnostics);
 
   useEffect(() => {
-    if (!view || !diagnostics) return;
-    console.log(diagnostics)
+    if (!view) return;
     view.dispatch({ effects: lintDiagnosticEffect.of(diagnostics) });
   }, [view, diagnostics]);
 }

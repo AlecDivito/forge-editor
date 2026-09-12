@@ -14,7 +14,32 @@ export function getClientId(params: ClientParams): ClientId {
   return (params.id ?? "default") as ClientId;
 }
 
-export enum ErrorCode { }
+// Message `kind` values preserve the existing PascalCase wire format. Values
+// inside lifecycle enums use stable snake_case strings, matching Rust serde.
+export enum ErrorCode {
+  NotFound = "not_found",
+  Deleted = "deleted",
+  ReadOnly = "read_only",
+  SaveFailed = "save_failed",
+  RenameConflict = "rename_conflict",
+  DirtyDeleteConflict = "dirty_delete_conflict",
+  BadPath = "bad_path",
+  Unsupported = "unsupported",
+}
+
+export enum PersistencePhase {
+  Clean = "clean",
+  Pending = "pending",
+  Saving = "saving",
+  SaveError = "save_error",
+  Deleted = "deleted",
+}
+
+export enum FsEntryType {
+  File = "file",
+  Directory = "directory",
+  Symlink = "symlink",
+}
 
 export interface LspMethodMap {
   "textDocument/hover": {
@@ -81,13 +106,25 @@ export type ClientMessage =
     kind: "DocSyncStep1";
     workspace_id: WorkspaceId;
     file_id: FileId;
-    state_vector: Uint8Array;
+    state_vector: number[];
+  }
+  | {
+    kind: "DocSyncStep2";
+    workspace_id: WorkspaceId;
+    file_id: FileId;
+    update: number[];
+  }
+  | {
+    kind: "DocSave";
+    workspace_id: WorkspaceId;
+    file_id: FileId;
+    request_id: string;
   }
   | {
     kind: "Awareness";
     workspace_id: WorkspaceId;
     file_id: FileId;
-    payload: Uint8Array;
+    payload: number[];
   }
   | {
     kind: "TerminalOpen";
@@ -98,7 +135,7 @@ export type ClientMessage =
   | {
     kind: "TerminalInput";
     term_id: TerminalId;
-    data: Uint8Array;
+    data: number[];
   }
   | {
     kind: "TerminalResize";
@@ -138,13 +175,53 @@ export type ServerMessage =
     kind: "DocSync";
     workspace_id: WorkspaceId;
     file_id: FileId;
-    update: Uint8Array;
+    update: number[];
+  }
+  | {
+    kind: "DocSyncStep2";
+    workspace_id: WorkspaceId;
+    file_id: FileId;
+    update: number[];
+    state_vector: number[];
+    revision: number;
+    persisted_revision: number;
+  }
+  | {
+    kind: "DocState";
+    workspace_id: WorkspaceId;
+    file_id: FileId;
+    revision: number;
+    persisted_revision: number;
+    phase: PersistencePhase;
+    error?: string;
+  }
+  | {
+    kind: "DocSaveResult";
+    workspace_id: WorkspaceId;
+    file_id: FileId;
+    request_id: string;
+    saved_revision: number;
+    current_revision: number;
+    error?: string;
+  }
+  | {
+    kind: "FsRenamed";
+    workspace_id: WorkspaceId;
+    from: string;
+    to: string;
+    entry_type: FsEntryType;
+  }
+  | {
+    kind: "FsDeleted";
+    workspace_id: WorkspaceId;
+    path: string;
+    entry_type: FsEntryType;
   }
   | {
     kind: "DocUpdate";
     workspace_id: WorkspaceId;
     file_id: FileId;
-    update: Uint8Array;
+    update: number[];
     origin: ClientId;
   }
   | {
@@ -152,7 +229,7 @@ export type ServerMessage =
     workspace_id: WorkspaceId;
     file_id: FileId;
     client_id: ClientId;
-    payload: Uint8Array;
+    payload: number[];
   }
   | {
     kind: "Awarenessleave";
@@ -163,7 +240,7 @@ export type ServerMessage =
   | {
     kind: "TerminalOutput";
     term_id: TerminalId;
-    data: Uint8Array;
+    data: number[];
   }
   | {
     kind: "TerminalExit";

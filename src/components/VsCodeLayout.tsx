@@ -9,7 +9,6 @@ import CommandPallet from "./panels/commandPallet/CommandPallet";
 
 import { GridviewReact, GridviewReadyEvent } from "dockview-react"
 import CodeViewerController from "./panels/code/CodeViewerController";
-import { useUICodeState } from "./panels/code/hooks/use-code-ui-state.hook";
 import { useEffect, useRef, useState } from "react";
 
 const components = {

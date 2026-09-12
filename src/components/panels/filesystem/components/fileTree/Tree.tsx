@@ -10,7 +10,7 @@ import { useDropTarget } from "./hooks/use-drag-and-drop.hook";
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Button } from "@/components/ui/button";
-import { useUICodeState } from "@/components/panels/code/hooks/use-code-ui-state.hook";
+import { useEditorSessionStore } from "@/components/panels/code/state/editor-session.store";
 import { FileId, WorkspaceId } from "@/lib/ws/messages";
 
 interface Props {
@@ -20,7 +20,7 @@ interface Props {
 const FsTreeAccordionItem: FC<Props> = ({ path = "/" }) => {
   const { data } = useListFiles({ path })
   const { open, setOpen } = useFileTree();
-  const openFile = useUICodeState((s) => s.openFile);
+  const openFile = useEditorSessionStore((s) => s.openFile);
   const refreshFileSystem = useInvalidateAllFileLists()
   const { mutateAsync: createFileOp } = useCreateFile()
   const [newFile, setNewFile] = useState(false)

@@ -9,10 +9,20 @@ interface Pending {
 const pending = new Map<string, Pending>();
 let listening = false;
 
+function rejectDisconnectedRequests() {
+  if (socket.status.kind === 'open' || pending.size === 0) return;
+  const error = new Error("WebSocket disconnected while waiting for LSP response");
+  for (const [requestId, entry] of pending) {
+    pending.delete(requestId);
+    entry.reject(error);
+  }
+}
+
 /** One subscription for the whole app — not one per request, not one per document. */
 function ensureListening() {
   if (listening) return;
   listening = true;
+  socket.subscribeStatus(rejectDisconnectedRequests);
   socket.subscribe((msg: any) => {
     const entry = pending.get(msg.request_id);
     if (!entry) return; // not an LSP response, or already timed out
@@ -50,7 +60,7 @@ export function sendLspRequest<K extends keyof LspMethodMap>(
       reject: (e) => { clearTimeout(timeout); reject(e); },
     });
 
-    socket.send({
+    const sent = socket.send({
       kind: "LspRequest",
       workspace_id: workspaceId,
       file_id: fileId,
@@ -60,6 +70,10 @@ export function sendLspRequest<K extends keyof LspMethodMap>(
     } as any); // `as any`: TS can't narrow a generic M against the ClientMessage
                // union here — the real type safety is enforced at call sites,
                // since callers pick a literal method and get matching params/result.
+    if (!sent) {
+      pending.delete(requestId);
+      reject(new Error("WebSocket is not connected"));
+    }
   });
 }
 

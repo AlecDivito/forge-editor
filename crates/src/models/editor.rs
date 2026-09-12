@@ -50,6 +50,11 @@ impl LanguageId {
         }
     }
 
+    /// Whether this language currently has an LSP server configured.
+    pub fn has_lsp_support(&self) -> bool {
+        !self.server_binary_path().is_empty()
+    }
+
     /// Fast path: identify by extension alone, no I/O. Covers the vast
     /// majority of files and is what you want on any hot path.
     fn from_extension(path: &Path) -> Option<Self> {
@@ -134,11 +139,46 @@ pub enum DocEvent {
     Diagnostics {
         diagnostics: Vec<LspDiagnostic>,
     },
+    State {
+        revision: u64,
+        persisted_revision: u64,
+        phase: PersistencePhase,
+        error: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
+    NotFound,
+    Deleted,
     ReadOnly,
+    SaveFailed,
+    RenameConflict,
+    DirtyDeleteConflict,
+    BadPath,
+    Unsupported,
+}
+
+/// Persistence state carried on the wire. The `kind` discriminator remains
+/// PascalCase for compatibility with the existing websocket protocol, while
+/// enum values are stable snake_case strings.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistencePhase {
+    Clean,
+    Pending,
+    Saving,
+    SaveError,
+    Deleted,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FsEntryType {
+    File,
+    Directory,
+    Symlink,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone)]
@@ -163,6 +203,16 @@ pub enum ClientMessage {
         workspace_id: WorkspaceId,
         file_id: FileId,
         state_vector: Vec<u8>,
+    },
+    DocSyncStep2 {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+    },
+    DocSave {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        request_id: uuid::Uuid,
     },
 
     // presence - cursors, selections, "who's here"
@@ -243,6 +293,22 @@ impl std::fmt::Display for ClientMessage {
                 state_vector.len()
             ),
 
+            ClientMessage::DocSyncStep2 {
+                workspace_id,
+                file_id,
+                update,
+            } => write!(
+                f,
+                "DocSyncStep2({workspace_id}, {file_id}, {} bytes)",
+                update.len()
+            ),
+
+            ClientMessage::DocSave {
+                workspace_id,
+                file_id,
+                request_id,
+            } => write!(f, "DocSave({workspace_id}, {file_id}, {request_id})"),
+
             ClientMessage::Awareness {
                 workspace_id,
                 file_id,
@@ -311,6 +377,43 @@ pub enum ServerMessage {
         file_id: FileId,
         update: Vec<u8>,
     },
+    DocSyncStep2 {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+        state_vector: Vec<u8>,
+        revision: u64,
+        persisted_revision: u64,
+    },
+    DocState {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        revision: u64,
+        persisted_revision: u64,
+        phase: PersistencePhase,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    DocSaveResult {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        request_id: uuid::Uuid,
+        saved_revision: u64,
+        current_revision: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    FsRenamed {
+        workspace_id: WorkspaceId,
+        from: String,
+        to: String,
+        entry_type: FsEntryType,
+    },
+    FsDeleted {
+        workspace_id: WorkspaceId,
+        path: String,
+        entry_type: FsEntryType,
+    },
     DocUpdate {
         workspace_id: WorkspaceId,
         file_id: FileId,
@@ -365,3 +468,61 @@ This was output by AI. I think it's a good idea to keep around in the code base
 if we want to optimize this process in the future.
 If you want to skip JSON overhead for the hot doc-update / terminal-byte paths, use a tiny binary framing instead: [u8 kind][u32 target_id][u32 len][payload]. JSON envelope is fine to start; switch to binary framing only if you profile a problem.
 */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lifecycle_client_messages_use_json_number_arrays() {
+        let message = ClientMessage::DocSyncStep2 {
+            workspace_id: "workspace".into(),
+            file_id: "src/main.rs".into(),
+            update: vec![0, 127, 255],
+        };
+        let json = serde_json::to_value(&message).expect("message serializes");
+        assert_eq!(json["kind"], "DocSyncStep2");
+        assert_eq!(json["update"], serde_json::json!([0, 127, 255]));
+    }
+
+    #[test]
+    fn lifecycle_server_messages_round_trip() {
+        let message = ServerMessage::DocState {
+            workspace_id: "workspace".into(),
+            file_id: "src/main.rs".into(),
+            revision: 3,
+            persisted_revision: 2,
+            phase: PersistencePhase::Pending,
+            error: None,
+        };
+        let json = serde_json::to_string(&message).expect("message serializes");
+        assert!(json.contains(r#""phase":"pending""#));
+        let decoded: ServerMessage = serde_json::from_str(&json).expect("message decodes");
+        match decoded {
+            ServerMessage::DocState {
+                revision,
+                persisted_revision,
+                phase,
+                ..
+            } => {
+                assert_eq!(revision, 3);
+                assert_eq!(persisted_revision, 2);
+                assert_eq!(phase, PersistencePhase::Pending);
+            }
+            _ => panic!("decoded wrong message kind"),
+        }
+    }
+
+    #[test]
+    fn filesystem_event_serialization_is_explicit() {
+        let message = ServerMessage::FsRenamed {
+            workspace_id: "workspace".into(),
+            from: "old.rs".into(),
+            to: "new.rs".into(),
+            entry_type: FsEntryType::File,
+        };
+        let json = serde_json::to_value(message).expect("message serializes");
+        assert_eq!(json["kind"], "FsRenamed");
+        assert_eq!(json["entry_type"], "file");
+    }
+}
