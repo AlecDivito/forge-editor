@@ -5,7 +5,7 @@ use crate::{
         ServerMessage, WorkspaceId,
     },
     services::workspace_mutations,
-    state::{AppState, ClientConnectionHandle},
+    state::{AppState, ClientConnectionHandle, TerminalRecord},
 };
 use axum::{
     extract::{
@@ -20,6 +20,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
@@ -511,61 +512,180 @@ async fn dispatch(
             Ok(())
         }
 
-        ClientMessage::TerminalOpen {
+        ClientMessage::TerminalCreate {
+            request_id,
             workspace_id,
-            term_id,
+            profile_id,
             cols,
             rows,
         } => {
             authorize(state, &client_id, &workspace_id).await?;
-
-            if state.terminals.contains_key(&term_id) {
-                anyhow::bail!("terminal {term_id} already exists");
-            }
+            anyhow::ensure!(profile_id == "default", "unknown terminal profile");
+            anyhow::ensure!(
+                (2..=500).contains(&cols) && (1..=200).contains(&rows),
+                "invalid terminal dimensions"
+            );
+            let owned = state
+                .terminals
+                .iter()
+                .filter(|entry| entry.owner == client_id)
+                .count();
+            anyhow::ensure!(
+                owned < 8 && state.terminals.len() < 64,
+                "terminal limit exceeded"
+            );
+            let terminal_id = uuid::Uuid::new_v4().to_string();
+            let title = "shell".to_string();
+            let shared_title = Arc::new(std::sync::RwLock::new(title.clone()));
 
             let resolved_cwd = state.workspace_root(&workspace_id)?;
-            let (actor, _reader_handle) =
-                TerminalActor::spawn(term_id.clone(), resolved_cwd, cols, rows)?;
+            let (actor, reader_handle, start_reader) = TerminalActor::spawn(
+                terminal_id.clone(),
+                workspace_id.clone(),
+                shared_title.clone(),
+                resolved_cwd,
+                cols,
+                rows,
+            )?;
             actor.subscribe(client_id.clone(), terminal_tx.clone());
-            state.terminals.insert(term_id.clone(), actor);
+            state.terminals.insert(
+                terminal_id.clone(),
+                TerminalRecord {
+                    workspace_id: workspace_id.clone(),
+                    owner: client_id.clone(),
+                    profile_id: profile_id.clone(),
+                    title: shared_title,
+                    actor,
+                    terminating: Arc::new(AtomicBool::new(false)),
+                },
+            );
 
             if let Some(handle) = state.clients.get(&client_id) {
-                handle.value().open_terminals.insert(term_id);
+                handle.value().open_terminals.insert(terminal_id.clone());
             }
+            terminal_tx
+                .send(ServerMessage::TerminalCreated {
+                    request_id,
+                    workspace_id: workspace_id.clone(),
+                    terminal_id: terminal_id.clone(),
+                    profile_id,
+                    title: title.clone(),
+                    cols,
+                    rows,
+                })
+                .await
+                .ok();
+            let _ = start_reader.send(());
+            terminal_tx
+                .send(ServerMessage::TerminalState {
+                    workspace_id: workspace_id.clone(),
+                    terminal_id: terminal_id.clone(),
+                    status: crate::models::TerminalStatus::Running,
+                    title,
+                    exit: None,
+                })
+                .await
+                .ok();
+            let terminals = state.terminals.clone();
+            tokio::spawn(async move {
+                let _ = reader_handle.await;
+                terminals.remove(&terminal_id);
+            });
             Ok(())
         }
 
-        ClientMessage::TerminalInput { term_id, data, .. } => {
-            let terminal = state
-                .terminals
-                .get(&term_id)
-                .map(|e| e.value().clone())
-                .ok_or_else(|| anyhow::anyhow!("terminal not found: {term_id}"))?;
-            terminal.write_input(data).await
+        ClientMessage::TerminalInput {
+            workspace_id,
+            terminal_id,
+            data,
+        } => {
+            anyhow::ensure!(
+                !data.is_empty() && data.len() <= 64 * 1024,
+                "invalid terminal input"
+            );
+            let terminal = owned_terminal(state, &client_id, &workspace_id, &terminal_id)?;
+            anyhow::ensure!(
+                !terminal.terminating.load(Ordering::Acquire),
+                "terminal is terminating"
+            );
+            terminal.actor.write_input(data).await
         }
 
         ClientMessage::TerminalResize {
-            term_id,
+            workspace_id,
+            terminal_id,
             cols,
             rows,
-            ..
         } => {
-            let terminal = state
-                .terminals
-                .get(&term_id)
-                .map(|e| e.value().clone())
-                .ok_or_else(|| anyhow::anyhow!("terminal not found: {term_id}"))?;
-            terminal.resize(cols, rows)
+            anyhow::ensure!(
+                (2..=500).contains(&cols) && (1..=200).contains(&rows),
+                "invalid terminal dimensions"
+            );
+            let terminal = owned_terminal(state, &client_id, &workspace_id, &terminal_id)?;
+            anyhow::ensure!(
+                !terminal.terminating.load(Ordering::Acquire),
+                "terminal is terminating"
+            );
+            terminal.actor.resize(cols, rows)
         }
 
-        ClientMessage::TerminalClose { term_id, .. } => {
+        ClientMessage::TerminalRename {
+            workspace_id,
+            terminal_id,
+            title,
+        } => {
+            let title = title.trim().to_string();
+            anyhow::ensure!(
+                !title.is_empty()
+                    && title.chars().count() <= 80
+                    && !title.chars().any(char::is_control),
+                "invalid terminal title"
+            );
+            let terminal = owned_terminal(state, &client_id, &workspace_id, &terminal_id)?;
+            *terminal.title.write().unwrap() = title.clone();
+            terminal_tx
+                .send(ServerMessage::TerminalRenamed {
+                    workspace_id,
+                    terminal_id,
+                    title,
+                })
+                .await
+                .ok();
+            Ok(())
+        }
+
+        ClientMessage::TerminalTerminate {
+            request_id,
+            workspace_id,
+            terminal_id,
+        } => {
+            let terminal = owned_terminal(state, &client_id, &workspace_id, &terminal_id)?;
+            if !terminal.terminating.swap(true, Ordering::AcqRel) {
+                let title = terminal.title.read().unwrap().clone();
+                terminal_tx
+                    .send(ServerMessage::TerminalState {
+                        workspace_id: workspace_id.clone(),
+                        terminal_id: terminal_id.clone(),
+                        status: crate::models::TerminalStatus::Terminating,
+                        title,
+                        exit: None,
+                    })
+                    .await
+                    .ok();
+                terminal.actor.kill().await.ok();
+            }
             if let Some(handle) = state.clients.get(&client_id) {
-                handle.value().open_terminals.remove(&term_id);
+                handle.value().open_terminals.remove(&terminal_id);
             }
-            // explicit close always kills, regardless of persist-on-disconnect policy
-            if let Some((_, terminal)) = state.terminals.remove(&term_id) {
-                terminal.kill().await.ok();
-            }
+            terminal_tx
+                .send(ServerMessage::TerminalTerminateResult {
+                    request_id,
+                    workspace_id,
+                    terminal_id,
+                    error: None,
+                })
+                .await
+                .ok();
             Ok(())
         }
 
@@ -753,12 +873,13 @@ async fn process_message(
                         client_id,
                         message.clone(),
                         state,
-                        document_tx,
-                        terminal_tx,
+                        document_tx.clone(),
+                        terminal_tx.clone(),
                     )
                     .await
                     {
                         error!(">>> {who} message {message} dispatch failed: {err}");
+                        send_terminal_error(&terminal_tx, &message, err.to_string()).await;
                     }
                 }
                 Err(err) => {
@@ -774,12 +895,13 @@ async fn process_message(
                     client_id,
                     message.clone(),
                     state,
-                    document_tx,
-                    terminal_tx,
+                    document_tx.clone(),
+                    terminal_tx.clone(),
                 )
                 .await
                 {
                     error!(">>> {who} message {message} dispatch failed: {err}");
+                    send_terminal_error(&terminal_tx, &message, err.to_string()).await;
                 }
             }
         }
@@ -796,6 +918,69 @@ async fn process_message(
         Message::Ping(v) => debug!(">>> {who} sent ping with {v:?}"),
     }
     ControlFlow::Continue(())
+}
+
+async fn send_terminal_error(
+    sender: &mpsc::Sender<ServerMessage>,
+    message: &ClientMessage,
+    text: String,
+) {
+    use crate::models::TerminalErrorCode;
+    let (request_id, workspace_id, terminal_id) = match message {
+        ClientMessage::TerminalCreate {
+            request_id,
+            workspace_id,
+            ..
+        } => (Some(*request_id), Some(workspace_id.clone()), None),
+        ClientMessage::TerminalInput {
+            workspace_id,
+            terminal_id,
+            ..
+        }
+        | ClientMessage::TerminalResize {
+            workspace_id,
+            terminal_id,
+            ..
+        }
+        | ClientMessage::TerminalRename {
+            workspace_id,
+            terminal_id,
+            ..
+        } => (None, Some(workspace_id.clone()), Some(terminal_id.clone())),
+        ClientMessage::TerminalTerminate {
+            request_id,
+            workspace_id,
+            terminal_id,
+        } => (
+            Some(*request_id),
+            Some(workspace_id.clone()),
+            Some(terminal_id.clone()),
+        ),
+        _ => return,
+    };
+    let code = if text.contains("not found") {
+        TerminalErrorCode::NotFound
+    } else if text.contains("owned") || text.contains("workspace mismatch") {
+        TerminalErrorCode::Forbidden
+    } else if text.contains("limit") {
+        TerminalErrorCode::LimitExceeded
+    } else if text.contains("terminating") {
+        TerminalErrorCode::InvalidState
+    } else if matches!(message, ClientMessage::TerminalCreate { .. }) {
+        TerminalErrorCode::SpawnFailed
+    } else {
+        TerminalErrorCode::InvalidRequest
+    };
+    sender
+        .send(ServerMessage::TerminalError {
+            request_id,
+            workspace_id,
+            terminal_id,
+            code,
+            message: text,
+        })
+        .await
+        .ok();
 }
 
 /*
@@ -842,12 +1027,34 @@ async fn cleanup_connection_resources(
         if let Some(terminal) = state.terminals.get(&term_id).map(|e| e.value().clone()) {
             // Disconnect is ephemeral for terminals; an explicitly closed
             // connection should not leave the process running.
-            if terminal.unsubscribe(client_id) {
-                terminal.kill().await.ok();
-                state.terminals.remove(&term_id);
+            if terminal.owner == *client_id && !terminal.terminating.swap(true, Ordering::AcqRel) {
+                terminal.actor.unsubscribe(client_id);
+                terminal.actor.kill().await.ok();
             }
         }
     }
+}
+
+fn owned_terminal(
+    state: &AppState,
+    client_id: &ClientId,
+    workspace_id: &WorkspaceId,
+    terminal_id: &str,
+) -> anyhow::Result<TerminalRecord> {
+    let terminal = state
+        .terminals
+        .get(terminal_id)
+        .map(|entry| entry.value().clone())
+        .ok_or_else(|| anyhow::anyhow!("terminal not found: {terminal_id}"))?;
+    anyhow::ensure!(
+        terminal.workspace_id == *workspace_id,
+        "terminal workspace mismatch"
+    );
+    anyhow::ensure!(
+        terminal.owner == *client_id,
+        "terminal is owned by another client"
+    );
+    Ok(terminal)
 }
 
 async fn authorize(

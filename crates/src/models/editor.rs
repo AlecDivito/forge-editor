@@ -9,6 +9,34 @@ pub type ClientId = String;
 pub type WorkspaceId = String;
 pub type TerminalId = String;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalStatus {
+    Creating,
+    Running,
+    Terminating,
+    Exited,
+    Disconnected,
+    Error,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TerminalExit {
+    pub code: Option<i32>,
+    pub signal: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalErrorCode {
+    InvalidRequest,
+    NotFound,
+    Forbidden,
+    LimitExceeded,
+    SpawnFailed,
+    InvalidState,
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
 )]
@@ -254,23 +282,33 @@ pub enum ClientMessage {
         payload: Vec<u8>,
     },
 
-    TerminalOpen {
+    TerminalCreate {
+        request_id: uuid::Uuid,
         workspace_id: WorkspaceId,
-        term_id: TerminalId,
+        profile_id: String,
         cols: u16,
         rows: u16,
     },
     TerminalInput {
-        term_id: TerminalId,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
         data: Vec<u8>,
     },
     TerminalResize {
-        term_id: TerminalId,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
         cols: u16,
         rows: u16,
     },
-    TerminalClose {
-        term_id: TerminalId,
+    TerminalRename {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        title: String,
+    },
+    TerminalTerminate {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
     },
 
     LspRequest {
@@ -354,26 +392,52 @@ impl std::fmt::Display for ClientMessage {
                 payload.len()
             ),
 
-            ClientMessage::TerminalOpen {
+            ClientMessage::TerminalCreate {
+                request_id,
                 workspace_id,
-                term_id,
+                profile_id,
                 cols,
                 rows,
-            } => write!(f, "TerminalOpen({workspace_id}, {term_id}, {cols}x{rows})"),
+            } => write!(
+                f,
+                "TerminalCreate({request_id}, {workspace_id}, {profile_id}, {cols}x{rows})"
+            ),
 
-            ClientMessage::TerminalInput { term_id, data } => {
-                write!(f, "TerminalInput({term_id}, {} bytes)", data.len())
+            ClientMessage::TerminalInput {
+                workspace_id,
+                terminal_id,
+                data,
+            } => {
+                write!(
+                    f,
+                    "TerminalInput({workspace_id}, {terminal_id}, {} bytes)",
+                    data.len()
+                )
             }
 
             ClientMessage::TerminalResize {
-                term_id,
+                workspace_id,
+                terminal_id,
                 cols,
                 rows,
-            } => write!(f, "TerminalResize({term_id}, {cols}x{rows})"),
+            } => write!(
+                f,
+                "TerminalResize({workspace_id}, {terminal_id}, {cols}x{rows})"
+            ),
 
-            ClientMessage::TerminalClose { term_id } => {
-                write!(f, "TerminalClose({term_id})")
-            }
+            ClientMessage::TerminalRename {
+                workspace_id,
+                terminal_id,
+                ..
+            } => write!(f, "TerminalRename({workspace_id}, {terminal_id})"),
+            ClientMessage::TerminalTerminate {
+                request_id,
+                workspace_id,
+                terminal_id,
+            } => write!(
+                f,
+                "TerminalTerminate({request_id}, {workspace_id}, {terminal_id})"
+            ),
 
             ClientMessage::LspRequest {
                 workspace_id,
@@ -471,13 +535,49 @@ pub enum ServerMessage {
         payload: Vec<u8>,
     },
 
+    TerminalCreated {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        profile_id: String,
+        title: String,
+        cols: u16,
+        rows: u16,
+    },
     TerminalOutput {
-        term_id: TerminalId,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
         data: Vec<u8>,
     },
-    TerminalExit {
-        term_id: TerminalId,
-        code: i32,
+    TerminalState {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        status: TerminalStatus,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit: Option<TerminalExit>,
+    },
+    TerminalRenamed {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        title: String,
+    },
+    TerminalTerminateResult {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    TerminalError {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<uuid::Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace_id: Option<WorkspaceId>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        terminal_id: Option<TerminalId>,
+        code: TerminalErrorCode,
+        message: String,
     },
 
     LspResponse {

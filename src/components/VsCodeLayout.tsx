@@ -3,23 +3,48 @@
 import FileViewerController from "@/components/panels/filesystem/filesystem";
 import { Orientation } from "dockview";
 import Chat from "./chat";
-import Terminal from "./terminal";
+import TerminalRegion from "./panels/terminal/TerminalRegion";
 import CommandPallet from "./panels/commandPallet/CommandPallet";
 
-import { GridviewReact, GridviewReadyEvent } from "dockview-react"
+import { GridviewReact, GridviewReadyEvent } from "dockview-react";
 import CodeViewerController from "./panels/code/CodeViewerController";
 import { useLspEventRouter } from "@/lib/ws/use-lsp-event-router";
 import { LspNotifications } from "./notifications/LspNotifications";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { selectedWorkspace, useWorkspaceStore } from "@/lib/workspaces";
+import { terminalRegistry } from "./panels/terminal/terminal.registry";
 
 const components = {
   filesystem: FileViewerController,
   code: CodeViewerController,
-  terminal: Terminal,
+  terminal: TerminalRegion,
   chat: Chat,
 };
 
 const VSCodeLayout = () => {
   useLspEventRouter();
+  const workspace = useWorkspaceStore(selectedWorkspace);
+  const terminals = useSyncExternalStore(
+    terminalRegistry.subscribe,
+    terminalRegistry.getSnapshot,
+    terminalRegistry.getSnapshot,
+  );
+  const terminalPanel = useRef<{ setVisible(visible: boolean): void } | null>(null);
+  useEffect(() => {
+    const showTerminal = (event: KeyboardEvent) => {
+      const isTerminalShortcut =
+        (event.metaKey && event.key.toLowerCase() === "j") || (event.ctrlKey && event.key === "`");
+      if (isTerminalShortcut) {
+        event.preventDefault();
+        terminalPanel.current?.setVisible(true);
+        const active = terminals.at(-1);
+        if (active) terminalRegistry.focus(active);
+        else if (workspace) void terminalRegistry.create(workspace.id).catch(() => undefined);
+      }
+    };
+    window.addEventListener("keydown", showTerminal);
+    return () => window.removeEventListener("keydown", showTerminal);
+  }, [terminals, workspace]);
   // const ws = useWebSocket();
   // const sender = useSendRequest();
   // const { handleNotification: handleFileTreeNotification } = useFileStore();
@@ -124,12 +149,15 @@ const VSCodeLayout = () => {
     // });
     // chat.api.setVisible(false);
 
-    // event.api.addPanel({
-    //   id: "terminal",
-    //   component: "terminal",
-    //   params: {},
-    //   position: { referencePanel: "code", direction: "below" },
-    // });
+    const terminal = event.api.addPanel({
+      id: "terminal",
+      component: "terminal",
+      params: {},
+      size: 280,
+      position: { referencePanel: "code", direction: "below" },
+    });
+    terminalPanel.current = terminal.api;
+    terminal.api.setVisible(false);
   };
 
   return (

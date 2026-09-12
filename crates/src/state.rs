@@ -23,12 +23,22 @@ pub struct AppState {
     pub config: Arc<Config>,
     workspaces: Arc<HashMap<WorkspaceId, Arc<WorkspaceRuntime>>>,
     pub open_files: Arc<DashMap<(WorkspaceId, FileId), Arc<DocumentActor>>>,
-    pub terminals: Arc<DashMap<TerminalId, Arc<TerminalActor>>>,
+    pub terminals: Arc<DashMap<TerminalId, TerminalRecord>>,
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
     /// Stable only for this websocket connection. A reconnect may reuse the
     /// same client id, so cleanup must also match this identity.
     next_connection_id: Arc<AtomicU64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalRecord {
+    pub workspace_id: WorkspaceId,
+    pub owner: ClientId,
+    pub profile_id: String,
+    pub title: Arc<std::sync::RwLock<String>>,
+    pub actor: Arc<TerminalActor>,
+    pub terminating: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug)]
