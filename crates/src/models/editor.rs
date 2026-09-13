@@ -522,6 +522,11 @@ pub enum ServerMessage {
         workspace_id: WorkspaceId,
         paths: Vec<FileId>,
     },
+    GitChanged {
+        workspace_id: WorkspaceId,
+        generation: u64,
+        reason: String,
+    },
     DocUpdate {
         workspace_id: WorkspaceId,
         file_id: FileId,

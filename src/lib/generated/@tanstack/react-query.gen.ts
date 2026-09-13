@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { createFile, deleteFile, getEnvironment, listFiles, type Options, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles } from '../sdk.gen';
-import type { CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, GetEnvironmentData, GetEnvironmentResponse, ListFilesData, ListFilesResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse } from '../types.gen';
+import { commit, createFile, deleteFile, getDiff, getEnvironment, getStatus, listFiles, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, unstage } from '../sdk.gen';
+import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -246,6 +246,110 @@ export const searchAndReplaceFilesMutation = (options?: Partial<Options<SearchAn
     const mutationOptions: UseMutationOptions<SearchAndReplaceFilesResponse, AxiosError<DefaultError>, Options<SearchAndReplaceFilesData>> = {
         mutationFn: async (fnOptions) => {
             const { data } = await searchAndReplaceFiles({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const getStatusQueryKey = (options: Options<GetStatusData>) => createQueryKey('getStatus', options);
+
+/**
+ * Read the current Git repository status for a workspace.
+ */
+export const getStatusOptions = (options: Options<GetStatusData>) => queryOptions<GetStatusResponse, AxiosError<DefaultError>, GetStatusResponse, ReturnType<typeof getStatusQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getStatus({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getStatusQueryKey(options)
+});
+
+export const getDiffQueryKey = (options: Options<GetDiffData>) => createQueryKey('getDiff', options);
+
+/**
+ * Read the before and after contents for a Git comparison.
+ */
+export const getDiffOptions = (options: Options<GetDiffData>) => queryOptions<GetDiffResponse, AxiosError<DefaultError>, GetDiffResponse, ReturnType<typeof getDiffQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getDiff({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getDiffQueryKey(options)
+});
+
+/**
+ * Stage one or more workspace files.
+ */
+export const stageMutation = (options?: Partial<Options<StageData>>): UseMutationOptions<StageResponse, AxiosError<DefaultError>, Options<StageData>> => {
+    const mutationOptions: UseMutationOptions<StageResponse, AxiosError<DefaultError>, Options<StageData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await stage({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Unstage one or more workspace files.
+ */
+export const unstageMutation = (options?: Partial<Options<UnstageData>>): UseMutationOptions<UnstageResponse, AxiosError<DefaultError>, Options<UnstageData>> => {
+    const mutationOptions: UseMutationOptions<UnstageResponse, AxiosError<DefaultError>, Options<UnstageData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await unstage({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Commit the explicitly staged files.
+ */
+export const commitMutation = (options?: Partial<Options<CommitData>>): UseMutationOptions<CommitResponse, AxiosError<DefaultError>, Options<CommitData>> => {
+    const mutationOptions: UseMutationOptions<CommitResponse, AxiosError<DefaultError>, Options<CommitData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await commit({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Push the current branch to its configured upstream.
+ */
+export const pushMutation = (options?: Partial<Options<PushData>>): UseMutationOptions<PushResponse, AxiosError<DefaultError>, Options<PushData>> => {
+    const mutationOptions: UseMutationOptions<PushResponse, AxiosError<DefaultError>, Options<PushData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await push({
                 ...options,
                 ...fnOptions,
                 throwOnError: true

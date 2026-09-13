@@ -1,5 +1,6 @@
 use std::{
     path::Path,
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
@@ -37,6 +38,9 @@ pub fn start(state: AppState) -> anyhow::Result<Vec<RecommendedWatcher>> {
                     if paths.is_empty() {
                         return;
                     }
+                    let affects_git = paths
+                        .iter()
+                        .any(|path| path_affects_git(&callback_root, path));
 
                     // notify preserves both sides of an atomic rename on its
                     // native backends. Route that through the authoritative
@@ -78,6 +82,21 @@ pub fn start(state: AppState) -> anyhow::Result<Vec<RecommendedWatcher>> {
                             paths,
                         },
                     );
+                    if affects_git
+                        && let Ok(workspace) = callback_state.workspace(&callback_workspace_id)
+                    {
+                        let generation =
+                            workspace.git_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                        broadcast(
+                            &callback_state,
+                            &callback_workspace_id,
+                            ServerMessage::GitChanged {
+                                workspace_id: callback_workspace_id.clone(),
+                                generation,
+                                reason: "filesystem".into(),
+                            },
+                        );
+                    }
                 }
                 Ok(_) => {}
                 Err(error) => {
@@ -163,9 +182,25 @@ fn relative_file_id(root: &Path, path: &Path) -> Option<String> {
     ))
 }
 
+fn path_affects_git(root: &Path, file_id: &str) -> bool {
+    let relative = file_id.trim_start_matches('/');
+    if relative == ".git" || relative.starts_with(".git/") {
+        return true;
+    }
+    // Exit 0 means Git ignores the path. Missing/deleted and untracked paths
+    // still follow ignore rules, so they do not keep an active status query
+    // refetching for build output such as .next, target, or node_modules.
+    !std::process::Command::new("git")
+        .current_dir(root)
+        .args(["check-ignore", "--quiet", "--", relative])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RenamePairer, is_complete_rename, relative_file_id};
+    use super::{RenamePairer, is_complete_rename, path_affects_git, relative_file_id};
     use notify::{
         EventKind,
         event::{ModifyKind, RenameMode},
@@ -215,5 +250,22 @@ mod tests {
             reverse.observe("/old".into(), false),
             Some(("/old".into(), "/new".into()))
         );
+    }
+
+    #[test]
+    fn git_invalidation_ignores_ignored_build_output() {
+        let root = std::env::temp_dir().join(format!("forge-watcher-git-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("build")).unwrap();
+        std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
+        let initialized = std::process::Command::new("git")
+            .current_dir(&root)
+            .args(["init", "-q"])
+            .status()
+            .unwrap();
+        assert!(initialized.success());
+        assert!(!path_affects_git(&root, "/build/output.js"));
+        assert!(path_affects_git(&root, "/src/main.rs"));
+        assert!(path_affects_git(&root, "/.git/index"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

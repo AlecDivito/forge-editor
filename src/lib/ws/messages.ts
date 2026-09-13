@@ -278,6 +278,12 @@ export type ServerMessage =
       paths: FileId[];
     }
   | {
+      kind: "GitChanged";
+      workspace_id: WorkspaceId;
+      generation: number;
+      reason: string;
+    }
+  | {
       kind: "DocUpdate";
       workspace_id: WorkspaceId;
       file_id: FileId;

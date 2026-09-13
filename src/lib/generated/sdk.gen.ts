@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetEnvironmentData, GetEnvironmentResponses, ListFilesData, ListFilesErrors, ListFilesResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses } from './types.gen';
+import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -115,6 +115,76 @@ export const searchFileNames = <ThrowOnError extends boolean = false>(options: O
 export const searchAndReplaceFiles = <ThrowOnError extends boolean = false>(options: Options<SearchAndReplaceFilesData, ThrowOnError>) => (options.client ?? client).post<SearchAndReplaceFilesResponses, SearchAndReplaceFilesErrors, ThrowOnError>({
     responseType: 'json',
     url: '/api/fs/replace',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read the current Git repository status for a workspace.
+ */
+export const getStatus = <ThrowOnError extends boolean = false>(options: Options<GetStatusData, ThrowOnError>) => (options.client ?? client).get<GetStatusResponses, GetStatusErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/git/status',
+    ...options
+});
+
+/**
+ * Read the before and after contents for a Git comparison.
+ */
+export const getDiff = <ThrowOnError extends boolean = false>(options: Options<GetDiffData, ThrowOnError>) => (options.client ?? client).get<GetDiffResponses, GetDiffErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/git/diff',
+    ...options
+});
+
+/**
+ * Stage one or more workspace files.
+ */
+export const stage = <ThrowOnError extends boolean = false>(options: Options<StageData, ThrowOnError>) => (options.client ?? client).post<StageResponses, StageErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/git/stage',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Unstage one or more workspace files.
+ */
+export const unstage = <ThrowOnError extends boolean = false>(options: Options<UnstageData, ThrowOnError>) => (options.client ?? client).post<UnstageResponses, UnstageErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/git/unstage',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Commit the explicitly staged files.
+ */
+export const commit = <ThrowOnError extends boolean = false>(options: Options<CommitData, ThrowOnError>) => (options.client ?? client).post<CommitResponses, CommitErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/git/commit',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Push the current branch to its configured upstream.
+ */
+export const push = <ThrowOnError extends boolean = false>(options: Options<PushData, ThrowOnError>) => (options.client ?? client).post<PushResponses, PushErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/git/push',
     ...options,
     headers: {
         'Content-Type': 'application/json',

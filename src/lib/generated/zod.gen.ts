@@ -97,6 +97,62 @@ export const zFsSearchResponse = z.object({
     truncated: z.boolean()
 });
 
+export const zGitChange = z.object({
+    conflicted: z.boolean(),
+    index_status: z.string().nullish(),
+    original_path: z.string().nullish(),
+    path: z.string(),
+    worktree_status: z.string().nullish()
+});
+
+export const zGitCommitRequest = z.object({
+    message: z.string(),
+    workspace_id: z.string()
+});
+
+export const zGitDiff = z.object({
+    after: z.string(),
+    before: z.string(),
+    generation: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    path: z.string(),
+    view: z.string(),
+    workspace_id: z.string()
+});
+
+export const zGitDiffQuery = z.object({
+    path: z.string(),
+    view: z.string(),
+    workspace_id: z.string()
+});
+
+export const zGitMutationResult = z.object({
+    generation: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    message: z.string()
+});
+
+export const zGitPathsRequest = z.object({
+    paths: z.array(z.string()),
+    workspace_id: z.string()
+});
+
+export const zGitPushRequest = z.object({
+    workspace_id: z.string()
+});
+
+export const zGitStatus = z.object({
+    branch: z.string().nullish(),
+    can_push: z.boolean(),
+    changes: z.array(zGitChange),
+    detached: z.boolean(),
+    generation: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    identity_configured: z.boolean(),
+    workspace_id: z.string()
+});
+
+export const zGitWorkspaceQuery = z.object({
+    workspace_id: z.string()
+});
+
 export const zMovePath = z.object({
     from: z.string(),
     to: z.string()
@@ -252,3 +308,51 @@ export const zSearchAndReplaceFilesQuery = z.object({
  * Files successfully edited and text replaced
  */
 export const zSearchAndReplaceFilesResponse = zFsSearchResponse;
+
+export const zGetStatusQuery = z.object({
+    workspace_id: z.string()
+});
+
+/**
+ * Current repository status
+ */
+export const zGetStatusResponse = zGitStatus;
+
+export const zGetDiffQuery = z.object({
+    path: z.string(),
+    view: z.string(),
+    workspace_id: z.string()
+});
+
+/**
+ * File comparison contents
+ */
+export const zGetDiffResponse = zGitDiff;
+
+export const zStageBody = zGitPathsRequest;
+
+/**
+ * Files staged
+ */
+export const zStageResponse = zGitMutationResult;
+
+export const zUnstageBody = zGitPathsRequest;
+
+/**
+ * Files unstaged
+ */
+export const zUnstageResponse = zGitMutationResult;
+
+export const zCommitBody = zGitCommitRequest;
+
+/**
+ * Commit created
+ */
+export const zCommitResponse = zGitMutationResult;
+
+export const zPushBody = zGitPushRequest;
+
+/**
+ * Push completed
+ */
+export const zPushResponse = zGitMutationResult;

@@ -204,6 +204,62 @@ export type FsSearchResult = {
     workspace_id: string;
 };
 
+export type GitChange = {
+    conflicted: boolean;
+    index_status?: string | null;
+    original_path?: string | null;
+    path: string;
+    worktree_status?: string | null;
+};
+
+export type GitCommitRequest = {
+    message: string;
+    workspace_id: string;
+};
+
+export type GitDiff = {
+    after: string;
+    before: string;
+    generation: number;
+    path: string;
+    view: string;
+    workspace_id: string;
+};
+
+export type GitDiffQuery = {
+    path: string;
+    view: string;
+    workspace_id: string;
+};
+
+export type GitMutationResult = {
+    generation: number;
+    message: string;
+};
+
+export type GitPathsRequest = {
+    paths: Array<string>;
+    workspace_id: string;
+};
+
+export type GitPushRequest = {
+    workspace_id: string;
+};
+
+export type GitStatus = {
+    branch?: string | null;
+    can_push: boolean;
+    changes: Array<GitChange>;
+    detached: boolean;
+    generation: number;
+    identity_configured: boolean;
+    workspace_id: string;
+};
+
+export type GitWorkspaceQuery = {
+    workspace_id: string;
+};
+
 export type MovePath = {
     from: string;
     to: string;
@@ -527,3 +583,147 @@ export type SearchAndReplaceFilesResponses = {
 };
 
 export type SearchAndReplaceFilesResponse = SearchAndReplaceFilesResponses[keyof SearchAndReplaceFilesResponses];
+
+export type GetStatusData = {
+    body?: never;
+    path?: never;
+    query: {
+        workspace_id: string;
+    };
+    url: '/api/git/status';
+};
+
+export type GetStatusErrors = {
+    /**
+     * Repository unavailable or status failed
+     */
+    400: unknown;
+};
+
+export type GetStatusResponses = {
+    /**
+     * Current repository status
+     */
+    200: GitStatus;
+};
+
+export type GetStatusResponse = GetStatusResponses[keyof GetStatusResponses];
+
+export type GetDiffData = {
+    body?: never;
+    path?: never;
+    query: {
+        path: string;
+        view: string;
+        workspace_id: string;
+    };
+    url: '/api/git/diff';
+};
+
+export type GetDiffErrors = {
+    /**
+     * Invalid path, view, or repository
+     */
+    400: unknown;
+};
+
+export type GetDiffResponses = {
+    /**
+     * File comparison contents
+     */
+    200: GitDiff;
+};
+
+export type GetDiffResponse = GetDiffResponses[keyof GetDiffResponses];
+
+export type StageData = {
+    body: GitPathsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/git/stage';
+};
+
+export type StageErrors = {
+    /**
+     * Staging failed
+     */
+    400: unknown;
+};
+
+export type StageResponses = {
+    /**
+     * Files staged
+     */
+    200: GitMutationResult;
+};
+
+export type StageResponse = StageResponses[keyof StageResponses];
+
+export type UnstageData = {
+    body: GitPathsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/git/unstage';
+};
+
+export type UnstageErrors = {
+    /**
+     * Unstaging failed
+     */
+    400: unknown;
+};
+
+export type UnstageResponses = {
+    /**
+     * Files unstaged
+     */
+    200: GitMutationResult;
+};
+
+export type UnstageResponse = UnstageResponses[keyof UnstageResponses];
+
+export type CommitData = {
+    body: GitCommitRequest;
+    path?: never;
+    query?: never;
+    url: '/api/git/commit';
+};
+
+export type CommitErrors = {
+    /**
+     * Commit failed
+     */
+    400: unknown;
+};
+
+export type CommitResponses = {
+    /**
+     * Commit created
+     */
+    200: GitMutationResult;
+};
+
+export type CommitResponse = CommitResponses[keyof CommitResponses];
+
+export type PushData = {
+    body: GitPushRequest;
+    path?: never;
+    query?: never;
+    url: '/api/git/push';
+};
+
+export type PushErrors = {
+    /**
+     * Push failed
+     */
+    400: unknown;
+};
+
+export type PushResponses = {
+    /**
+     * Push completed
+     */
+    200: GitMutationResult;
+};
+
+export type PushResponse = PushResponses[keyof PushResponses];

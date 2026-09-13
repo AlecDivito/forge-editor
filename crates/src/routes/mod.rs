@@ -1,6 +1,7 @@
 mod environment;
 mod file_search;
 mod file_system;
+mod git;
 mod ws;
 
 use rovo::{
@@ -33,6 +34,12 @@ pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
         .route("/fs/search", get(search_files))
         .route("/fs/files/search", get(search_file_names))
         .route("/fs/replace", post(search_and_replace_files))
+        .route("/git/status", get(git::get_status))
+        .route("/git/diff", get(git::get_diff))
+        .route("/git/stage", post(git::stage))
+        .route("/git/unstage", post(git::unstage))
+        .route("/git/commit", post(git::commit))
+        .route("/git/push", post(git::push))
         .with_state(state)
 }
 

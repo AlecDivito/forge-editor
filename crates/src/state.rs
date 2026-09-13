@@ -47,6 +47,11 @@ pub struct WorkspaceRuntime {
     pub name: String,
     root: PathBuf,
     pub(crate) fs_mutation_lock: AsyncMutex<()>,
+    pub(crate) git_mutation_lock: AsyncMutex<()>,
+    pub(crate) git_generation: AtomicU64,
+    pub(crate) git_available: bool,
+    pub(crate) git_repository_present: bool,
+    pub(crate) git_identity_configured: bool,
 }
 
 impl AppState {
@@ -55,6 +60,28 @@ impl AppState {
             .workspaces
             .iter()
             .map(|workspace| {
+                let git_available = std::process::Command::new("git")
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|output| output.status.success());
+                let git_configured = |key: &str| {
+                    std::process::Command::new("git")
+                        .current_dir(&workspace.root)
+                        .args(["config", "--get", key])
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        .output()
+                        .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
+                };
+                let git_repository_present = std::process::Command::new("git")
+                    .current_dir(&workspace.root)
+                    .args(["rev-parse", "--show-toplevel"])
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .output()
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .and_then(|output| String::from_utf8(output.stdout).ok())
+                    .and_then(|path| std::path::PathBuf::from(path.trim()).canonicalize().ok())
+                    .is_some_and(|root| root == workspace.root);
                 (
                     workspace.id.clone(),
                     Arc::new(WorkspaceRuntime {
@@ -62,6 +89,12 @@ impl AppState {
                         name: workspace.name.clone(),
                         root: workspace.root.clone(),
                         fs_mutation_lock: AsyncMutex::new(()),
+                        git_mutation_lock: AsyncMutex::new(()),
+                        git_generation: AtomicU64::new(1),
+                        git_available,
+                        git_repository_present,
+                        git_identity_configured: git_configured("user.name")
+                            && git_configured("user.email"),
                     }),
                 )
             })

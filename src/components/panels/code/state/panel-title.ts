@@ -2,7 +2,9 @@ import { WorkspaceId } from "@/lib/ws/messages";
 import { PanelDescriptor } from "./editor-session.store";
 
 function baseName(panel: PanelDescriptor): string {
-  return panel.kind === "code" ? panel.fileId.split("/").pop() ?? "untitled" : "terminal";
+  if (panel.kind === "terminal") return "terminal";
+  const name = panel.fileId.split("/").pop() ?? "untitled";
+  return panel.kind === "git-diff" ? `${name} (${panel.view === "staged" ? "Index" : "Working Tree"})` : name;
 }
 
 export function titleFor(
@@ -13,7 +15,7 @@ export function titleFor(
   if (panel.kind === "terminal") return `Terminal ${panel.terminalId ?? ""}`.trim();
   const name = baseName(panel);
   const collides = allPanels.some(
-    (candidate) => candidate.id !== panel.id && candidate.kind === "code" && baseName(candidate) === name,
+    (candidate) => candidate.id !== panel.id && candidate.kind !== "terminal" && baseName(candidate) === name,
   );
   return collides ? `${name} — ${resolveWorkspaceName(panel.workspace)}` : name;
 }
