@@ -85,3 +85,73 @@ pnpm dev
 # or
 bun dev
 ```
+# Debugging (phase 1)
+
+Forge supports launch-only debugging through a server-owned adapter strategy.
+Add `.vscode/launch.json` to a configured workspace:
+
+```jsonc
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug app",
+      "type": "forge-rust",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/app",
+      "cwd": "${workspaceFolder}",
+      "args": [],
+      "env": {},
+      "console": "internalConsole"
+    }
+  ]
+}
+```
+
+The program and working directory must already exist and resolve inside the
+workspace. JSON comments and trailing commas are accepted. Integrated terminal,
+attach, command/config/environment substitutions, and arbitrary adapter commands
+are intentionally rejected in phase 1.
+
+### Debug adapter system dependencies
+
+Debug adapters run on the Forge server, so these are server dependencies rather
+than browser dependencies. Install the adapters for the languages the server is
+expected to debug:
+
+| `launch.json` type | Languages | Required server program | Transport |
+| --- | --- | --- | --- |
+| `forge-rust` | Rust and other native binaries | `lldb-dap` | stdio |
+| `forge-go` | Go | `dlv` (Delve) | loopback TCP |
+| `forge-node` | JavaScript and TypeScript | `node` and the VS Code `js-debug` `dapDebugServer.js` bundle | loopback TCP |
+| `forge-python` | Python | `python3` with the `debugpy` module | stdio |
+
+Typical development-machine installations are:
+
+```bash
+# Rust/native debugging (macOS)
+brew install llvm
+
+# Go debugging; make sure the resulting dlv binary is copied or linked into
+# /usr/local/bin or another PATH directory available to the Forge service.
+go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Python debugging. Use the same python3 installation visible to Forge.
+python3 -m pip install debugpy
+```
+
+For JavaScript and TypeScript, build or install Microsoft's `vscode-js-debug`
+adapter on the server and point Forge at its debug-server entry point:
+
+```dotenv
+FORGE_JS_DEBUG_SCRIPT=/opt/forge/js-debug/src/dapDebugServer.js
+```
+
+The configured file must be readable by the Forge service account. Forge starts
+it as `node "$FORGE_JS_DEBUG_SCRIPT" <ephemeral-port>` and keeps the port bound
+to loopback. The browser cannot select an adapter executable or network address.
+
+Production images should pin adapter versions in their package/image manifest
+instead of using floating installers such as `@latest`. A missing executable,
+Python module, or JavaScript adapter bundle produces a sanitized failed-session
+message without exposing the server path.

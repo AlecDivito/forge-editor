@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -190,4 +190,60 @@ export const push = <ThrowOnError extends boolean = false>(options: Options<Push
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Discover the supported debug configurations for a workspace.
+ *
+ * The response contains only public configuration summaries. Resolved host
+ * paths, adapter commands, launch arguments, and environment values remain in
+ * the debug service and are never serialized by this route.
+ */
+export const getConfigurations = <ThrowOnError extends boolean = false>(options: Options<GetConfigurationsData, ThrowOnError>) => (options.client ?? client).get<GetConfigurationsResponses, GetConfigurationsErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/workspaces/{workspace_id}/debug/configurations',
+    ...options
+});
+
+/**
+ * Create and register a launch-only debug session.
+ *
+ * The browser selects a previously discovered configuration by its opaque ID
+ * and revision. Adapter selection, path resolution, spawning, and ownership
+ * remain server-controlled.
+ */
+export const createSession = <ThrowOnError extends boolean = false>(options: Options<CreateSessionData, ThrowOnError>) => (options.client ?? client).post<CreateSessionResponses, CreateSessionErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/workspaces/{workspace_id}/debug/sessions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Terminate the debuggee and its server-owned adapter.
+ *
+ * Stop is idempotent: terminating and terminal sessions return their current
+ * snapshot. The debug service owns cleanup so HTTP cancellation cannot orphan
+ * the adapter process.
+ */
+export const stopSession = <ThrowOnError extends boolean = false>(options: Options<StopSessionData, ThrowOnError>) => (options.client ?? client).delete<StopSessionResponses, StopSessionErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}',
+    ...options
+});
+
+/**
+ * Retrieve the current public snapshot of a debug session.
+ *
+ * Session IDs are always checked against the workspace in the route. A
+ * session belonging to another workspace is reported as unavailable rather
+ * than disclosing its existence.
+ */
+export const getSession = <ThrowOnError extends boolean = false>(options: Options<GetSessionData, ThrowOnError>) => (options.client ?? client).get<GetSessionResponses, GetSessionErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}',
+    ...options
 });

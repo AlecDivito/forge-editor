@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { commit, createFile, deleteFile, getDiff, getEnvironment, getStatus, listFiles, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, unstage } from '../sdk.gen';
-import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, DeleteFileData, DeleteFileResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getStatus, listFiles, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
+import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -359,3 +359,89 @@ export const pushMutation = (options?: Partial<Options<PushData>>): UseMutationO
     };
     return mutationOptions;
 };
+
+export const getConfigurationsQueryKey = (options: Options<GetConfigurationsData>) => createQueryKey('getConfigurations', options);
+
+/**
+ * Discover the supported debug configurations for a workspace.
+ *
+ * The response contains only public configuration summaries. Resolved host
+ * paths, adapter commands, launch arguments, and environment values remain in
+ * the debug service and are never serialized by this route.
+ */
+export const getConfigurationsOptions = (options: Options<GetConfigurationsData>) => queryOptions<GetConfigurationsResponse, AxiosError<DefaultError>, GetConfigurationsResponse, ReturnType<typeof getConfigurationsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getConfigurations({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getConfigurationsQueryKey(options)
+});
+
+/**
+ * Create and register a launch-only debug session.
+ *
+ * The browser selects a previously discovered configuration by its opaque ID
+ * and revision. Adapter selection, path resolution, spawning, and ownership
+ * remain server-controlled.
+ */
+export const createSessionMutation = (options?: Partial<Options<CreateSessionData>>): UseMutationOptions<CreateSessionResponse, AxiosError<DefaultError>, Options<CreateSessionData>> => {
+    const mutationOptions: UseMutationOptions<CreateSessionResponse, AxiosError<DefaultError>, Options<CreateSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await createSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Terminate the debuggee and its server-owned adapter.
+ *
+ * Stop is idempotent: terminating and terminal sessions return their current
+ * snapshot. The debug service owns cleanup so HTTP cancellation cannot orphan
+ * the adapter process.
+ */
+export const stopSessionMutation = (options?: Partial<Options<StopSessionData>>): UseMutationOptions<StopSessionResponse, AxiosError<DefaultError>, Options<StopSessionData>> => {
+    const mutationOptions: UseMutationOptions<StopSessionResponse, AxiosError<DefaultError>, Options<StopSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await stopSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const getSessionQueryKey = (options: Options<GetSessionData>) => createQueryKey('getSession', options);
+
+/**
+ * Retrieve the current public snapshot of a debug session.
+ *
+ * Session IDs are always checked against the workspace in the route. A
+ * session belonging to another workspace is reported as unavailable rather
+ * than disclosing its existence.
+ */
+export const getSessionOptions = (options: Options<GetSessionData>) => queryOptions<GetSessionResponse, AxiosError<DefaultError>, GetSessionResponse, ReturnType<typeof getSessionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getSession({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getSessionQueryKey(options)
+});

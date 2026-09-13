@@ -1,3 +1,4 @@
+mod debug;
 mod environment;
 mod file_search;
 mod file_system;
@@ -40,6 +41,18 @@ pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
         .route("/git/unstage", post(git::unstage))
         .route("/git/commit", post(git::commit))
         .route("/git/push", post(git::push))
+        .route(
+            "/workspaces/{workspace_id}/debug/configurations",
+            get(debug::get_configurations),
+        )
+        .route(
+            "/workspaces/{workspace_id}/debug/sessions",
+            post(debug::create_session),
+        )
+        .route(
+            "/workspaces/{workspace_id}/debug/sessions/{session_id}",
+            get(debug::get_session).delete(debug::stop_session),
+        )
         .with_state(state)
 }
 

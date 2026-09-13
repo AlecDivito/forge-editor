@@ -2,7 +2,27 @@
 
 import * as z from 'zod';
 
-import { FsFileType } from './types.gen';
+import { FsFileType, SessionState } from './types.gen';
+
+export const zCreateSession = z.object({
+    activeFileId: z.string().nullish(),
+    configurationId: z.string(),
+    configurationRevision: z.string()
+});
+
+export const zDebugDiagnostic = z.object({
+    message: z.string(),
+    path: z.string()
+});
+
+export const zDebugSessionPath = z.object({
+    session_id: z.string(),
+    workspace_id: z.string()
+});
+
+export const zDebugWorkspacePath = z.object({
+    workspace_id: z.string()
+});
 
 export const zFileNameSearchQuery = z.object({
     max_results: z.int().gte(0).nullish(),
@@ -163,6 +183,12 @@ export const zMoveWorkspaceQuery = z.object({
     source_workspace_id: z.string()
 });
 
+export const zOutputChunk = z.object({
+    category: z.string(),
+    output: z.string(),
+    sequence: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' })
+});
+
 export const zPaginationParams = z.object({
     page: z.int().gte(0).nullish(),
     read_all: z.boolean().nullish(),
@@ -174,6 +200,26 @@ export const zFsListDirectory = z.object({
     is_more: z.boolean(),
     pagination: zPaginationParams,
     parent: z.string()
+});
+
+export const zPublicCapabilities = z.object({
+    integratedTerminal: z.boolean()
+});
+
+export const zConfigurationSummary = z.object({
+    type: z.string(),
+    capabilities: zPublicCapabilities,
+    id: z.string(),
+    name: z.string(),
+    request: z.string(),
+    valid: z.boolean(),
+    warnings: z.array(z.string())
+});
+
+export const zConfigurationList = z.object({
+    configurations: z.array(zConfigurationSummary),
+    diagnostics: z.array(zDebugDiagnostic),
+    revision: z.string()
 });
 
 export const zPublicEnvironment = z.object({
@@ -200,6 +246,21 @@ export const zSaveFile = z.object({
 
 export const zSearchWorkspaceQuery = z.object({
     workspace_id: z.string().nullish()
+});
+
+export const zSessionState = z.enum(SessionState);
+
+export const zSessionSnapshot = z.object({
+    capabilities: zPublicCapabilities,
+    configurationId: z.string(),
+    configurationName: z.string(),
+    error: z.string().nullish(),
+    eventCursor: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    exitCode: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
+    output: z.array(zOutputChunk),
+    sessionId: z.string(),
+    state: zSessionState,
+    workspaceId: z.string()
 });
 
 export const zWorkspaceQuery = z.object({
@@ -356,3 +417,43 @@ export const zPushBody = zGitPushRequest;
  * Push completed
  */
 export const zPushResponse = zGitMutationResult;
+
+export const zGetConfigurationsPath = z.object({
+    workspace_id: z.string()
+});
+
+/**
+ * Configuration summaries and diagnostics
+ */
+export const zGetConfigurationsResponse = zConfigurationList;
+
+export const zCreateSessionBody = zCreateSession;
+
+export const zCreateSessionPath = z.object({
+    workspace_id: z.string()
+});
+
+/**
+ * Session admitted and registered
+ */
+export const zCreateSessionResponse = zSessionSnapshot;
+
+export const zStopSessionPath = z.object({
+    session_id: z.string(),
+    workspace_id: z.string()
+});
+
+/**
+ * Current or newly terminating session snapshot
+ */
+export const zStopSessionResponse = zSessionSnapshot;
+
+export const zGetSessionPath = z.object({
+    session_id: z.string(),
+    workspace_id: z.string()
+});
+
+/**
+ * Current lifecycle, output, and exit snapshot
+ */
+export const zGetSessionResponse = zSessionSnapshot;

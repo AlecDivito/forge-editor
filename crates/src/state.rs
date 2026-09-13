@@ -26,6 +26,7 @@ pub struct AppState {
     pub terminals: Arc<DashMap<TerminalId, TerminalRecord>>,
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
+    pub debug: crate::debug::DebugService,
     /// Stable only for this websocket connection. A reconnect may reuse the
     /// same client id, so cleanup must also match this identity.
     next_connection_id: Arc<AtomicU64>,
@@ -106,6 +107,7 @@ impl AppState {
             terminals: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
+            debug: crate::debug::DebugService::new(),
             next_connection_id: Arc::new(AtomicU64::new(1)),
         }
     }

@@ -4,9 +4,54 @@ export type ClientOptions = {
     baseURL: 'http://localhost:8080' | (string & {});
 };
 
+export type ConfigurationList = {
+    configurations: Array<ConfigurationSummary>;
+    diagnostics: Array<DebugDiagnostic>;
+    revision: string;
+};
+
+export type ConfigurationSummary = {
+    type: string;
+    capabilities: PublicCapabilities;
+    id: string;
+    name: string;
+    request: string;
+    valid: boolean;
+    warnings: Array<string>;
+};
+
 export type CreateFile = {
     path: string;
     ty: FsFileType;
+};
+
+export type CreateSession = {
+    activeFileId?: string | null;
+    configurationId: string;
+    configurationRevision: string;
+};
+
+export type DebugDiagnostic = {
+    message: string;
+    path: string;
+};
+
+export type DebugSessionPath = {
+    /**
+     * Opaque server-issued debug session ID.
+     */
+    session_id: string;
+    /**
+     * Public ID of the workspace that owns the session.
+     */
+    workspace_id: string;
+};
+
+export type DebugWorkspacePath = {
+    /**
+     * Public ID of the workspace containing the launch configuration.
+     */
+    workspace_id: string;
 };
 
 export type EnvironmentSnapshot = {
@@ -270,10 +315,20 @@ export type MoveWorkspaceQuery = {
     source_workspace_id: string;
 };
 
+export type OutputChunk = {
+    category: string;
+    output: string;
+    sequence: number;
+};
+
 export type PaginationParams = {
     page?: number | null;
     read_all?: boolean | null;
     size?: number | null;
+};
+
+export type PublicCapabilities = {
+    integratedTerminal: boolean;
 };
 
 export type PublicEnvironment = {
@@ -297,6 +352,31 @@ export type SearchWorkspaceQuery = {
      */
     workspace_id?: string | null;
 };
+
+export type SessionSnapshot = {
+    capabilities: PublicCapabilities;
+    configurationId: string;
+    configurationName: string;
+    error?: string | null;
+    eventCursor: number;
+    exitCode?: number | null;
+    output: Array<OutputChunk>;
+    sessionId: string;
+    state: SessionState;
+    workspaceId: string;
+};
+
+export enum SessionState {
+    CREATING = 'creating',
+    SPAWNING_ADAPTER = 'spawning_adapter',
+    INITIALIZING = 'initializing',
+    LAUNCHING = 'launching',
+    CONFIGURING = 'configuring',
+    RUNNING = 'running',
+    TERMINATING = 'terminating',
+    TERMINATED = 'terminated',
+    FAILED = 'failed'
+}
 
 export type WorkspaceQuery = {
     workspace_id: string;
@@ -727,3 +807,127 @@ export type PushResponses = {
 };
 
 export type PushResponse = PushResponses[keyof PushResponses];
+
+export type GetConfigurationsData = {
+    body?: never;
+    path: {
+        /**
+         * Public ID of the workspace containing the launch configuration.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/debug/configurations';
+};
+
+export type GetConfigurationsErrors = {
+    /**
+     * Unknown workspace or unreadable configuration
+     */
+    400: unknown;
+};
+
+export type GetConfigurationsResponses = {
+    /**
+     * Configuration summaries and diagnostics
+     */
+    200: ConfigurationList;
+};
+
+export type GetConfigurationsResponse = GetConfigurationsResponses[keyof GetConfigurationsResponses];
+
+export type CreateSessionData = {
+    body: CreateSession;
+    path: {
+        /**
+         * Public ID of the workspace containing the launch configuration.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/debug/sessions';
+};
+
+export type CreateSessionErrors = {
+    /**
+     * Invalid workspace, configuration, or session limit
+     */
+    400: unknown;
+    /**
+     * Configuration revision is stale
+     */
+    409: unknown;
+};
+
+export type CreateSessionResponses = {
+    /**
+     * Session admitted and registered
+     */
+    201: SessionSnapshot;
+};
+
+export type CreateSessionResponse = CreateSessionResponses[keyof CreateSessionResponses];
+
+export type StopSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Opaque server-issued debug session ID.
+         */
+        session_id: string;
+        /**
+         * Public ID of the workspace that owns the session.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}';
+};
+
+export type StopSessionErrors = {
+    /**
+     * Unknown workspace or session
+     */
+    400: unknown;
+};
+
+export type StopSessionResponses = {
+    /**
+     * Current or newly terminating session snapshot
+     */
+    200: SessionSnapshot;
+};
+
+export type StopSessionResponse = StopSessionResponses[keyof StopSessionResponses];
+
+export type GetSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Opaque server-issued debug session ID.
+         */
+        session_id: string;
+        /**
+         * Public ID of the workspace that owns the session.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}';
+};
+
+export type GetSessionErrors = {
+    /**
+     * Unknown workspace or session
+     */
+    400: unknown;
+};
+
+export type GetSessionResponses = {
+    /**
+     * Current lifecycle, output, and exit snapshot
+     */
+    200: SessionSnapshot;
+};
+
+export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];

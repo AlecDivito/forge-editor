@@ -3,17 +3,18 @@
 import { FC, ReactNode, useState } from "react";
 import { IGridviewPanelProps } from "dockview-react";
 import { useKeyboard } from "react-pre-hooks";
-import { FaFile, FaGitAlt, FaSearch } from "react-icons/fa";
+import { FaBug, FaFile, FaGitAlt, FaSearch } from "react-icons/fa";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { FileTreeProvider } from "./components/fileTree/providers/FileTreeProvider";
 import FsTreeAccordionItem from "./components/fileTree/Tree";
 import FileSearchView from "./components/fileSearch/SearchView";
 import { selectedWorkspace, useWorkspaceStore } from "@/lib/workspaces";
 import GitView from "./components/git/GitView";
+import DebugView from "./components/debug/DebugView";
 
 type Props = Record<string, string>;
 
-type ViewType = "file" | "search" | "git";
+type ViewType = "file" | "search" | "git" | "debug";
 
 const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
   const [view, setView] = useState<ViewType>("file");
@@ -51,6 +52,7 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
       </FileTreeProvider>
     ),
     git: <GitView workspaceId={workspace.id} />,
+    debug: <DebugView workspaceId={workspace.id} />,
   };
 
   return (
@@ -124,15 +126,24 @@ const FileViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
           title="Source Control">
           <FaGitAlt size={21} />
         </button>
+
+        <button
+          type="button"
+          onClick={() => setView("debug")}
+          className={`relative flex h-12.5 w-12.5 items-center justify-center transition-colors ${view === "debug" ? "bg-background text-sidebar-foreground" : "bg-sidebar text-sidebar-accent-foreground"}`}
+          aria-label="Run and Debug"
+          title="Run and Debug">
+          <FaBug size={21} />
+        </button>
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {(view === "search" || view === "git") && (
+        {(view === "search" || view === "git" || view === "debug") && (
           <select
             className="m-2 bg-background text-sm"
             value={workspace.id}
             onChange={(event) => selectWorkspace(event.target.value as typeof workspace.id)}
-            aria-label="Search workspace">
+            aria-label={`${view === "debug" ? "Debug" : view === "git" ? "Source control" : "Search"} workspace`}>
             {workspaces.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}

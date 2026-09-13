@@ -1,5 +1,6 @@
 mod actors;
 mod config;
+mod debug;
 mod error;
 mod models;
 mod routes;
@@ -47,7 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .allow_origin(AllowOrigin::exact(HeaderValue::from_static(
             "http://localhost:3000",
         )))
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE]);
 
     let mut api = OpenApi::default();
