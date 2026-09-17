@@ -22,8 +22,18 @@ export interface GitDiffPanelDescriptor extends BasePanelDescriptor {
   fileId: FileId;
   view: "working" | "staged";
 }
+export interface GeneratedSourcePanelDescriptor extends BasePanelDescriptor {
+  kind: "debug-source";
+  sessionId: string;
+  generation: number;
+  sourceHandle: string;
+  name: string;
+  content: string;
+  mimeType?: string;
+}
 
-export type PanelDescriptor = CodePanelDescriptor | TerminalPanelDescriptor | GitDiffPanelDescriptor;
+export type PanelDescriptor =
+  CodePanelDescriptor | TerminalPanelDescriptor | GitDiffPanelDescriptor | GeneratedSourcePanelDescriptor;
 
 export interface EditorSessionState {
   panelsById: Record<string, PanelDescriptor>;
@@ -33,6 +43,8 @@ export interface EditorSessionState {
 
   openFile: (workspace: WorkspaceId, fileId: FileId) => string;
   openDiff: (workspace: WorkspaceId, fileId: FileId, view: "working" | "staged") => string;
+  openGeneratedSource: (value: Omit<GeneratedSourcePanelDescriptor, "id" | "kind">) => string;
+  closeGeneratedSources: (sessionId: string, generation?: number) => void;
   closePanel: (panelId: string) => void;
   requestClose: (panelId: string) => void;
   cancelClose: () => void;
@@ -100,6 +112,47 @@ export const useEditorSessionStore = create<EditorSessionState>((set, get) => ({
     }));
     return panel.id;
   },
+  openGeneratedSource: (value) => {
+    const existing = get().panelOrder.find((id) => {
+      const p = get().panelsById[id];
+      return (
+        p?.kind === "debug-source" &&
+        p.sessionId === value.sessionId &&
+        p.generation === value.generation &&
+        p.sourceHandle === value.sourceHandle
+      );
+    });
+    if (existing) {
+      set({ activePanelId: existing });
+      return existing;
+    }
+    const panel: GeneratedSourcePanelDescriptor = { id: crypto.randomUUID(), kind: "debug-source", ...value };
+    set((s) => ({
+      panelsById: { ...s.panelsById, [panel.id]: panel },
+      panelOrder: [...s.panelOrder, panel.id],
+      activePanelId: panel.id,
+    }));
+    return panel.id;
+  },
+  closeGeneratedSources: (sessionId, generation) =>
+    set((state) => {
+      const removed = state.panelOrder.filter((id) => {
+        const p = state.panelsById[id];
+        return (
+          p?.kind === "debug-source" &&
+          p.sessionId === sessionId &&
+          (generation === undefined || p.generation === generation)
+        );
+      });
+      if (!removed.length) return state;
+      const panelsById = { ...state.panelsById };
+      removed.forEach((id) => delete panelsById[id]);
+      return {
+        panelsById,
+        panelOrder: state.panelOrder.filter((id) => !removed.includes(id)),
+        activePanelId: removed.includes(state.activePanelId ?? "") ? null : state.activePanelId,
+      };
+    }),
 
   closePanel: (panelId) =>
     set((state) => {

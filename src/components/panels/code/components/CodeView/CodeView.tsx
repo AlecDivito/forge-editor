@@ -3,7 +3,7 @@ import { useDocumentLifecycle } from "@/hooks/use-document-lifecycle.hook";
 import { Compartment, EditorState, EditorView, hoverTooltip } from "@uiw/react-codemirror";
 import { basicSetup } from "codemirror";
 import { IDockviewPanelProps } from "dockview";
-import { FC, useEffect, useRef, useState } from "react";
+import { FC, useEffect, useMemo, useRef, useState } from "react";
 import { yCollab } from "y-codemirror.next";
 import { useDocumentDiagnosticsSync } from "./hook/use-document-diagnostics.hook";
 import { linterExtension } from "./extensions/lint.extension";
@@ -17,6 +17,10 @@ import { registerEditorInstance } from "../../state/editor-instance.registry";
 import { useDocumentAwareness } from "./hook/use-document-awareness.hook";
 import { DocumentParticipants } from "./components/DocumentParticipants";
 import { languageForFile } from "./extensions/language.extension";
+import { debugBreakpointGutter } from "./extensions/debug.extension";
+import { useDebugIntentStore } from "@/store/debug";
+import { useDebugRuntimeStore } from "@/store/debug-runtime";
+import { useShallow } from "zustand/react/shallow";
 
 const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
   const { id: panelId, workspace, fileId } = props.params;
@@ -28,6 +32,32 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
   const identityCompartment = useRef(new Compartment());
   const languageCompartment = useRef(new Compartment());
   const readOnlyCompartment = useRef(new Compartment());
+  const debugCompartment = useRef(new Compartment());
+  const breakpoints = useDebugIntentStore(
+    useShallow((s) => (s.byWorkspace[workspace] ?? []).filter((b) => b.fileId === fileId)),
+  );
+  const toggleBreakpoint = useDebugIntentStore((s) => s.toggle);
+  const updateBreakpoint = useDebugIntentStore((s) => s.update);
+  const activeDebugSession = useDebugRuntimeStore((s) => s.authority?.session);
+  const allVerification = useDebugIntentStore((s) =>
+    activeDebugSession ? s.verificationBySession[activeDebugSession] : undefined,
+  );
+  const verification = useMemo(
+    () => (allVerification ?? []).filter((item) => breakpoints.some((b) => b.breakpointId === item.requestedBreakpointId)),
+    [allVerification, breakpoints],
+  );
+  const currentExecutionLine = useDebugRuntimeStore(
+    (s) => s.frames.find((frame) => frame.source.kind === "workspace" && frame.source.file_id === fileId)?.line,
+  );
+  const selectedExecutionLine = useDebugRuntimeStore(
+    (s) =>
+      s.frames.find(
+        (frame) =>
+          frame.frameHandle === s.selectedFrameHandle &&
+          frame.source.kind === "workspace" &&
+          frame.source.file_id === fileId,
+      )?.line,
+  );
 
   useDocumentDiagnosticsSync(view, workspace, fileId);
 
@@ -57,6 +87,9 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
             EditorView.editable.of(lifecycle.phase !== "deleted"),
           ]),
           languageCompartment.current.of(languageForFile(fileId)),
+          debugCompartment.current.of(
+            debugBreakpointGutter([], (line) => void toggleBreakpoint(workspace, fileId, line)),
+          ),
           tooltipExtension,
           autocompletion({
             activateOnTyping: true,
@@ -96,6 +129,34 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
       setView(null);
     };
   }, [document, panelId]);
+
+  useEffect(() => {
+    if (!view) return;
+    view.dispatch({
+      effects: debugCompartment.current.reconfigure(
+        debugBreakpointGutter(
+          breakpoints,
+          (line) => void toggleBreakpoint(workspace, fileId, line),
+          currentExecutionLine,
+          selectedExecutionLine,
+          verification,
+          (breakpoint, field) => {
+            const value = window.prompt(
+              field === "condition" ? "Breakpoint condition" : field === "hitCondition" ? "Hit count condition" : "Log message",
+              breakpoint[field] ?? "",
+            );
+            if (value !== null)
+              void updateBreakpoint(workspace, breakpoint, { [field]: value.trim() || null });
+          },
+          (breakpoint, line, column) => {
+            void updateBreakpoint(workspace, breakpoint, { line, column: column ?? null }).catch(() =>
+              useDebugIntentStore.getState().load(workspace),
+            );
+          },
+        ),
+      ),
+    });
+  }, [breakpoints, fileId, toggleBreakpoint, updateBreakpoint, view, workspace, currentExecutionLine, selectedExecutionLine, verification]);
 
   // A filesystem rename updates Dockview params while retaining this
   // EditorView. Reconfigure only path-sensitive facets/extensions so the

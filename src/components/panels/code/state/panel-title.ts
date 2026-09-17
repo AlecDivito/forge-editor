@@ -3,6 +3,7 @@ import { PanelDescriptor } from "./editor-session.store";
 
 function baseName(panel: PanelDescriptor): string {
   if (panel.kind === "terminal") return "terminal";
+  if (panel.kind === "debug-source") return `${panel.name} (read only)`;
   const name = panel.fileId.split("/").pop() ?? "untitled";
   return panel.kind === "git-diff" ? `${name} (${panel.view === "staged" ? "Index" : "Working Tree"})` : name;
 }
