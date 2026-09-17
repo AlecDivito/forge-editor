@@ -100,45 +100,47 @@ impl DebugService {
             publications,
         };
         let mut changes = breakpoints.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match changes.recv().await {
-                    Ok(change) => {
-                        let list = breakpoints.list(&change.workspace_id).await;
-                        let source_breakpoints = list
-                            .breakpoints
-                            .into_iter()
-                            .filter(|item| item.file_id == change.file_id)
-                            .collect::<Vec<_>>();
-                        let records = sessions.all();
-                        for record in records {
-                            let tx = {
-                                let r = record.lock().await;
-                                (r.snapshot.workspace_id == change.workspace_id
-                                    && !matches!(
-                                        r.snapshot.state,
-                                        SessionState::Terminated
-                                            | SessionState::Failed
-                                            | SessionState::Terminating
-                                    ))
-                                .then(|| r.command_tx.clone())
-                            };
-                            if let Some(tx) = tx {
-                                let _ = tx
-                                    .send(ActorCommand::SyncBreakpoints {
-                                        file_id: change.file_id.clone(),
-                                        revision: change.revision,
-                                        breakpoints: source_breakpoints.clone(),
-                                    })
-                                    .await;
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                loop {
+                    match changes.recv().await {
+                        Ok(change) => {
+                            let list = breakpoints.list(&change.workspace_id).await;
+                            let source_breakpoints = list
+                                .breakpoints
+                                .into_iter()
+                                .filter(|item| item.file_id == change.file_id)
+                                .collect::<Vec<_>>();
+                            let records = sessions.all();
+                            for record in records {
+                                let tx = {
+                                    let r = record.lock().await;
+                                    (r.snapshot.workspace_id == change.workspace_id
+                                        && !matches!(
+                                            r.snapshot.state,
+                                            SessionState::Terminated
+                                                | SessionState::Failed
+                                                | SessionState::Terminating
+                                        ))
+                                    .then(|| r.command_tx.clone())
+                                };
+                                if let Some(tx) = tx {
+                                    let _ = tx
+                                        .send(ActorCommand::SyncBreakpoints {
+                                            file_id: change.file_id.clone(),
+                                            revision: change.revision,
+                                            breakpoints: source_breakpoints.clone(),
+                                        })
+                                        .await;
+                                }
                             }
                         }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-            }
-        });
+            });
+        }
         service
     }
     pub async fn configurations(
