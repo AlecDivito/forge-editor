@@ -3,7 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 
 const MAX_BODY: usize = 1024 * 1024;
 
-pub async fn write_message<W: AsyncWrite + Unpin>(
+pub async fn write_message<W: AsyncWrite + Unpin + ?Sized>(
     writer: &mut W,
     value: &Value,
 ) -> anyhow::Result<()> {

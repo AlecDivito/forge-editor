@@ -327,6 +327,24 @@ pub enum ClientMessage {
         method: String,
         params: serde_json::Value,
     },
+    DebugRequest {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        session_id: String,
+        attachment_generation: u64,
+        stopped_generation: Option<u64>,
+        operation: crate::debug::DebugOperation,
+    },
+    DebugAttach {
+        workspace_id: WorkspaceId,
+        session_id: String,
+        attachment_generation: u64,
+    },
+    DebugDetach {
+        workspace_id: WorkspaceId,
+        session_id: String,
+        attachment_generation: u64,
+    },
 
     Ping,
 }
@@ -460,6 +478,25 @@ impl std::fmt::Display for ClientMessage {
                 f,
                 "LspNotification({workspace_id}, {file_id}, {method}, {params})"
             ),
+            ClientMessage::DebugRequest {
+                request_id,
+                workspace_id,
+                session_id,
+                ..
+            } => write!(
+                f,
+                "DebugRequest({request_id}, {workspace_id}, {session_id})"
+            ),
+            ClientMessage::DebugAttach {
+                workspace_id,
+                session_id,
+                ..
+            } => write!(f, "DebugAttach({workspace_id}, {session_id})"),
+            ClientMessage::DebugDetach {
+                workspace_id,
+                session_id,
+                ..
+            } => write!(f, "DebugDetach({workspace_id}, {session_id})"),
 
             ClientMessage::Ping => write!(f, "Ping"),
         }
@@ -611,6 +648,22 @@ pub enum ServerMessage {
         method: String,
         params: serde_json::Value,
     },
+    DebugResult {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        session_id: String,
+        attachment_generation: u64,
+        stopped_generation: Option<u64>,
+        result: serde_json::Value,
+    },
+    DebugError {
+        request_id: uuid::Uuid,
+        code: String,
+        message: String,
+    },
+    DebugSnapshot {
+        snapshot: crate::debug::SessionSnapshot,
+    },
     Diagnostics {
         workspace_id: WorkspaceId,
         file_id: FileId,
@@ -709,5 +762,16 @@ mod tests {
         let json = serde_json::to_value(message).expect("message serializes");
         assert_eq!(json["kind"], "FsRenamed");
         assert_eq!(json["entry_type"], "file");
+    }
+    #[test]
+    fn shared_debug_wire_fixtures_decode_in_rust() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/debug-wire.json")).unwrap();
+        for value in fixture["client"].as_array().unwrap() {
+            serde_json::from_value::<ClientMessage>(value.clone()).unwrap();
+        }
+        for value in fixture["server"].as_array().unwrap() {
+            serde_json::from_value::<ServerMessage>(value.clone()).unwrap();
+        }
     }
 }

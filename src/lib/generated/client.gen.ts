@@ -15,4 +15,4 @@ import type { ClientOptions as ClientOptions2 } from './types.gen';
  */
 export type CreateClientConfig<T extends ClientOptions = ClientOptions2> = (override?: Config<ClientOptions & T>) => Config<Required<ClientOptions> & T>;
 
-export const client = createClient(createClientConfig(createConfig<ClientOptions2>({ baseURL: 'http://localhost:8080' })));
+export const client = createClient(createClientConfig(createConfig<ClientOptions2>({ baseURL: 'http://127.0.0.1:18081' })));

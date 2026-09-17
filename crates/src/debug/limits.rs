@@ -1,0 +1,24 @@
+//! Server-enforced debug resource limits. Keep policy in one place.
+pub const MAX_BREAKPOINTS_PER_WORKSPACE: usize = 4_096;
+pub const MAX_BREAKPOINTS_PER_SOURCE: usize = 256;
+pub const MAX_CONDITION_BYTES: usize = 4 * 1024;
+pub const MAX_HIT_CONDITION_BYTES: usize = 256;
+pub const MAX_LOG_MESSAGE_BYTES: usize = 8 * 1024;
+pub const MAX_PENDING_REQUESTS: usize = 128;
+pub const MAX_THREADS: usize = 256;
+pub const DEFAULT_STACK_LEVELS: u32 = 50;
+pub const MAX_STACK_LEVELS: u32 = 200;
+pub const MAX_FRAME_HANDLES: usize = 2_000;
+pub const MAX_CONCURRENT_INSPECTION_REQUESTS: usize = 8;
+pub const MAX_OUTPUT_BYTES: usize = 256 * 1024;
+pub const MAX_SCOPES_PER_FRAME: usize = 64;
+pub const DEFAULT_VARIABLES_PER_PAGE: u32 = 100;
+pub const MAX_VARIABLES_PER_PAGE: u32 = 500;
+pub const MAX_VARIABLE_NODES: usize = 5_000;
+pub const MAX_VARIABLE_DEPTH: u8 = 20;
+pub const MAX_DISPLAY_BYTES: usize = 64 * 1024;
+pub const MAX_WATCHES: usize = 100;
+pub const MAX_EXPRESSION_BYTES: usize = 8 * 1024;
+pub const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+pub const MAX_CONSOLE_RECORDS: usize = 1_000;
+pub const MAX_CONSOLE_BYTES: usize = 256 * 1024;
