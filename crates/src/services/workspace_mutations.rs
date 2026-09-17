@@ -346,6 +346,19 @@ pub async fn rename(
         to: display_relative(&to),
         entry_type: ty,
     };
+    if let Err(error) = state
+        .debug
+        .breakpoints
+        .rename_source(
+            workspace_id,
+            &commit.from,
+            &commit.to,
+            commit.entry_type == FsEntryType::Directory,
+        )
+        .await
+    {
+        warn!(workspace_id=%workspace_id,"failed to reconcile debug breakpoints after rename: {error}");
+    }
     info!(
         workspace_id = %workspace_id,
         from = %commit.from,
@@ -447,6 +460,18 @@ pub async fn delete(
             .map(|document| display_relative(&document.old_relative))
             .collect(),
     };
+    if let Err(error) = state
+        .debug
+        .breakpoints
+        .mark_source_deleted(
+            workspace_id,
+            &commit.path,
+            commit.entry_type == FsEntryType::Directory,
+        )
+        .await
+    {
+        warn!(workspace_id=%workspace_id,"failed to reconcile debug breakpoints after delete: {error}");
+    }
     info!(
         workspace_id = %workspace_id,
         path = %commit.path,

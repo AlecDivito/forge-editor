@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getStatus, listFiles, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
-import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { commit, createBreakpoint, createFile, createSession, deleteBreakpoint, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getStatus, listBreakpoints, listFiles, type Options, push, renameFile, restartSession, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage, updateBreakpoint } from '../sdk.gen';
+import type { CommitData, CommitResponse, CreateBreakpointData, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteBreakpointData, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListBreakpointsData, ListFilesData, ListFilesResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, RestartSessionData, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse, UpdateBreakpointData } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -403,6 +403,63 @@ export const createSessionMutation = (options?: Partial<Options<CreateSessionDat
     return mutationOptions;
 };
 
+export const listBreakpointsQueryKey = (options: Options<ListBreakpointsData>) => createQueryKey('listBreakpoints', options);
+
+export const listBreakpointsOptions = (options: Options<ListBreakpointsData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof listBreakpointsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listBreakpoints({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listBreakpointsQueryKey(options)
+});
+
+export const createBreakpointMutation = (options?: Partial<Options<CreateBreakpointData>>): UseMutationOptions<unknown, AxiosError<DefaultError>, Options<CreateBreakpointData>> => {
+    const mutationOptions: UseMutationOptions<unknown, AxiosError<DefaultError>, Options<CreateBreakpointData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await createBreakpoint({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const deleteBreakpointMutation = (options?: Partial<Options<DeleteBreakpointData>>): UseMutationOptions<unknown, AxiosError<DefaultError>, Options<DeleteBreakpointData>> => {
+    const mutationOptions: UseMutationOptions<unknown, AxiosError<DefaultError>, Options<DeleteBreakpointData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await deleteBreakpoint({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const updateBreakpointMutation = (options?: Partial<Options<UpdateBreakpointData>>): UseMutationOptions<unknown, AxiosError<DefaultError>, Options<UpdateBreakpointData>> => {
+    const mutationOptions: UseMutationOptions<unknown, AxiosError<DefaultError>, Options<UpdateBreakpointData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await updateBreakpoint({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 /**
  * Terminate the debuggee and its server-owned adapter.
  *
@@ -445,3 +502,20 @@ export const getSessionOptions = (options: Options<GetSessionData>) => queryOpti
     },
     queryKey: getSessionQueryKey(options)
 });
+
+/**
+ * Terminate a session and create a replacement with a new identity.
+ */
+export const restartSessionMutation = (options?: Partial<Options<RestartSessionData>>): UseMutationOptions<unknown, AxiosError<DefaultError>, Options<RestartSessionData>> => {
+    const mutationOptions: UseMutationOptions<unknown, AxiosError<DefaultError>, Options<RestartSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await restartSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};

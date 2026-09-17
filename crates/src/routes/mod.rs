@@ -7,7 +7,7 @@ mod ws;
 
 use rovo::{
     IntoNestRouter, Router,
-    routing::{any, get, post},
+    routing::{any, get, patch, post},
 };
 
 use crate::{
@@ -50,8 +50,20 @@ pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
             post(debug::create_session),
         )
         .route(
+            "/workspaces/{workspace_id}/debug/breakpoints",
+            get(debug::list_breakpoints).post(debug::create_breakpoint),
+        )
+        .route(
+            "/workspaces/{workspace_id}/debug/breakpoints/{breakpoint_id}",
+            patch(debug::update_breakpoint).delete(debug::delete_breakpoint),
+        )
+        .route(
             "/workspaces/{workspace_id}/debug/sessions/{session_id}",
             get(debug::get_session).delete(debug::stop_session),
+        )
+        .route(
+            "/workspaces/{workspace_id}/debug/sessions/{session_id}/restart",
+            post(debug::restart_session),
         )
         .with_state(state)
 }

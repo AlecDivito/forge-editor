@@ -46,6 +46,7 @@ async fn handle_socket(state: AppState, socket: WebSocket, client: ClientParams,
     let (mut sender, mut receiver) = socket.split();
     let (terminal_tx, mut terminal_rx) = mpsc::channel::<ServerMessage>(64);
     let (document_tx, mut document_rx) = mpsc::channel::<ServerMessage>(256);
+    let (debug_tx, mut debug_rx) = mpsc::channel::<ServerMessage>(128);
 
     let client_id = client.get_client_id();
     let replacement = state.new_client_connection(document_tx.clone());
@@ -56,6 +57,25 @@ async fn handle_socket(state: AppState, socket: WebSocket, client: ClientParams,
         // eventual cleanup is identity-checked and cannot touch the new one.
         cleanup_connection_resources(&state, &client_id, superseded).await;
     }
+    let mut debug_publications = state.debug.subscribe();
+    let debug_state = state.clone();
+    let debug_client = client_id.clone();
+    let debug_forwarder = tokio::spawn(async move {
+        while let Ok(snapshot) = debug_publications.recv().await {
+            let subscribed = debug_state
+                .clients
+                .get(&debug_client)
+                .is_some_and(|handle| handle.debug_sessions.contains(&snapshot.session_id));
+            if subscribed
+                && debug_tx
+                    .send(ServerMessage::DebugSnapshot { snapshot })
+                    .await
+                    .is_err()
+            {
+                break;
+            }
+        }
+    });
 
     // Handle any messages that are meant to be sent. This is normally the backend
     // system communicating with the client server.
@@ -68,6 +88,7 @@ async fn handle_socket(state: AppState, socket: WebSocket, client: ClientParams,
                         error!("Failed to send document event {:?}", err);
                     }
                 }
+                Some(msg) = debug_rx.recv() => { sender.send(encode(msg)).await.ok(); }
                 Some(msg) = terminal_rx.recv() => { sender.send(encode(msg)).await.ok(); }
                 else => break,
             }
@@ -121,6 +142,7 @@ async fn handle_socket(state: AppState, socket: WebSocket, client: ClientParams,
     }) {
         cleanup_connection_resources(&state, &client_id, client_connection_handle).await;
     }
+    debug_forwarder.abort();
 
     info!("Websocket context {who} destroyed.")
 }
@@ -846,6 +868,109 @@ async fn dispatch(
                 return Ok(()); // no server yet — notifications before any request are droppable
             };
             lsp.notify(&method, params).await
+        }
+        ClientMessage::DebugAttach {
+            workspace_id,
+            session_id,
+            attachment_generation,
+        } => {
+            authorize(state, &client_id, &workspace_id).await?;
+            let snapshot = state
+                .debug
+                .attach(
+                    &client_id,
+                    &workspace_id,
+                    &session_id,
+                    attachment_generation,
+                )
+                .await?;
+            if let Some(handle) = state.clients.get(&client_id) {
+                handle.debug_sessions.insert(session_id);
+            }
+            document_tx
+                .send(ServerMessage::DebugSnapshot { snapshot })
+                .await
+                .ok();
+            Ok(())
+        }
+        ClientMessage::DebugDetach {
+            workspace_id,
+            session_id,
+            attachment_generation,
+        } => {
+            authorize(state, &client_id, &workspace_id).await?;
+            let _snapshot = state
+                .debug
+                .detach(
+                    &client_id,
+                    &workspace_id,
+                    &session_id,
+                    attachment_generation,
+                )
+                .await?;
+            if let Some(handle) = state.clients.get(&client_id) {
+                handle.debug_sessions.remove(&session_id);
+            }
+            Ok(())
+        }
+        ClientMessage::DebugRequest {
+            request_id,
+            workspace_id,
+            session_id,
+            attachment_generation,
+            stopped_generation,
+            operation,
+        } => {
+            authorize(state, &client_id, &workspace_id).await?;
+            let service = state.debug.clone();
+            let response_tx = document_tx.clone();
+            let principal = client_id.clone();
+            tokio::spawn(async move {
+                match service
+                    .execute(
+                        &principal,
+                        &workspace_id,
+                        &session_id,
+                        attachment_generation,
+                        stopped_generation,
+                        operation,
+                    )
+                    .await
+                {
+                    Ok(result) => {
+                        response_tx
+                            .send(ServerMessage::DebugResult {
+                                request_id,
+                                workspace_id,
+                                session_id,
+                                attachment_generation,
+                                stopped_generation: result
+                                    .get("stoppedGeneration")
+                                    .and_then(|v| v.as_u64()),
+                                result,
+                            })
+                            .await
+                            .ok();
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        let code = message
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("debug_adapter_failed")
+                            .to_owned();
+                        response_tx
+                            .send(ServerMessage::DebugError {
+                                request_id,
+                                code,
+                                message,
+                            })
+                            .await
+                            .ok();
+                    }
+                }
+            });
+            Ok(())
         }
     }
 }

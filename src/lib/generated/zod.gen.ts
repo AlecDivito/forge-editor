@@ -4,15 +4,50 @@ import * as z from 'zod';
 
 import { FsFileType, SessionState } from './types.gen';
 
+export const zCreateBreakpoint = z.object({
+    column: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }).nullish(),
+    condition: z.string().nullish(),
+    enabled: z.boolean().optional().default(true),
+    fileId: z.string(),
+    hitCondition: z.string().nullish(),
+    line: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+    logMessage: z.string().nullish()
+});
+
 export const zCreateSession = z.object({
     activeFileId: z.string().nullish(),
     configurationId: z.string(),
-    configurationRevision: z.string()
+    configurationRevision: z.string(),
+    principalId: z.string()
+});
+
+export const zDebugBreakpointPath = z.object({
+    breakpoint_id: z.string(),
+    workspace_id: z.string()
+});
+
+export const zDebugControlQuery = z.object({
+    principalId: z.string()
 });
 
 export const zDebugDiagnostic = z.object({
     message: z.string(),
     path: z.string()
+});
+
+export const zDebugLimits = z.object({
+    concurrentInspectionRequests: z.int().gte(0),
+    consoleBytes: z.int().gte(0),
+    consoleRecords: z.int().gte(0),
+    displayBytes: z.int().gte(0),
+    expressionBytes: z.int().gte(0),
+    generatedSourceBytes: z.int().gte(0),
+    stackPage: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+    threads: z.int().gte(0),
+    variableDepth: z.int().gte(0).lte(255),
+    variableNodes: z.int().gte(0),
+    variablePage: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+    watches: z.int().gte(0)
 });
 
 export const zDebugSessionPath = z.object({
@@ -22,6 +57,10 @@ export const zDebugSessionPath = z.object({
 
 export const zDebugWorkspacePath = z.object({
     workspace_id: z.string()
+});
+
+export const zDeleteBreakpoint = z.object({
+    expectedRevision: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' })
 });
 
 export const zFileNameSearchQuery = z.object({
@@ -227,6 +266,25 @@ export const zPublicEnvironment = z.object({
     name: z.string()
 });
 
+export const zPublicSource = z.union([
+    z.object({
+        file_id: z.string(),
+        kind: z.literal('workspace'),
+        workspace_id: z.string()
+    }),
+    z.object({
+        kind: z.literal('generated'),
+        name: z.string().nullish(),
+        session_id: z.string(),
+        source_handle: z.string()
+    }),
+    z.object({
+        kind: z.literal('unavailable'),
+        reason: z.string(),
+        safe_name: z.string().nullish()
+    })
+]);
+
 export const zPublicWorkspace = z.object({
     id: z.string(),
     name: z.string()
@@ -237,6 +295,33 @@ export const zEnvironmentSnapshot = z.object({
     environment: zPublicEnvironment,
     schema_version: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
     workspaces: z.array(zPublicWorkspace)
+});
+
+export const zRequestedSourceBreakpoint = z.object({
+    breakpointId: z.string(),
+    column: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }).nullish(),
+    condition: z.string().nullish(),
+    enabled: z.boolean(),
+    fileId: z.string(),
+    hitCondition: z.string().nullish(),
+    line: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+    logMessage: z.string().nullish(),
+    revision: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    workspaceId: z.string()
+});
+
+export const zRuntimeCapabilities = z.object({
+    limits: zDebugLimits,
+    supportsConditionalBreakpoints: z.boolean(),
+    supportsConfigurationDone: z.boolean(),
+    supportsHitConditionalBreakpoints: z.boolean(),
+    supportsLoadedSources: z.boolean(),
+    supportsLogPoints: z.boolean(),
+    supportsPause: z.boolean(),
+    supportsStepBack: z.boolean(),
+    supportsValueFormatting: z.boolean(),
+    supportsVariablePaging: z.boolean(),
+    supportsVariableType: z.boolean()
 });
 
 export const zSaveFile = z.object({
@@ -250,7 +335,30 @@ export const zSearchWorkspaceQuery = z.object({
 
 export const zSessionState = z.enum(SessionState);
 
+export const zUpdateBreakpoint = z.object({
+    column: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }).nullish(),
+    condition: z.string().nullish(),
+    enabled: z.boolean().nullish(),
+    expectedRevision: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    hitCondition: z.string().nullish(),
+    line: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }).nullish(),
+    logMessage: z.string().nullish()
+});
+
+export const zVerifiedBreakpoint = z.object({
+    adapterBreakpointId: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).nullish(),
+    message: z.string().nullish(),
+    requestedBreakpointId: z.string(),
+    resolvedColumn: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }).nullish(),
+    resolvedLine: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }).nullish(),
+    resolvedSource: zPublicSource.nullish(),
+    sessionId: z.string(),
+    verified: z.boolean()
+});
+
 export const zSessionSnapshot = z.object({
+    attachmentGeneration: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    breakpointRevision: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
     capabilities: zPublicCapabilities,
     configurationId: z.string(),
     configurationName: z.string(),
@@ -258,8 +366,12 @@ export const zSessionSnapshot = z.object({
     eventCursor: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
     exitCode: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
     output: z.array(zOutputChunk),
+    requestedBreakpoints: z.array(zRequestedSourceBreakpoint),
+    runtimeCapabilities: zRuntimeCapabilities,
     sessionId: z.string(),
     state: zSessionState,
+    stoppedGeneration: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).nullish(),
+    verifiedBreakpoints: z.array(zVerifiedBreakpoint),
     workspaceId: z.string()
 });
 
@@ -438,9 +550,37 @@ export const zCreateSessionPath = z.object({
  */
 export const zCreateSessionResponse = zSessionSnapshot;
 
+export const zListBreakpointsPath = z.object({
+    workspace_id: z.string()
+});
+
+export const zCreateBreakpointBody = zCreateBreakpoint;
+
+export const zCreateBreakpointPath = z.object({
+    workspace_id: z.string()
+});
+
+export const zDeleteBreakpointBody = zDeleteBreakpoint;
+
+export const zDeleteBreakpointPath = z.object({
+    breakpoint_id: z.string(),
+    workspace_id: z.string()
+});
+
+export const zUpdateBreakpointBody = zUpdateBreakpoint;
+
+export const zUpdateBreakpointPath = z.object({
+    breakpoint_id: z.string(),
+    workspace_id: z.string()
+});
+
 export const zStopSessionPath = z.object({
     session_id: z.string(),
     workspace_id: z.string()
+});
+
+export const zStopSessionQuery = z.object({
+    principalId: z.string()
 });
 
 /**
@@ -457,3 +597,12 @@ export const zGetSessionPath = z.object({
  * Current lifecycle, output, and exit snapshot
  */
 export const zGetSessionResponse = zSessionSnapshot;
+
+export const zRestartSessionPath = z.object({
+    session_id: z.string(),
+    workspace_id: z.string()
+});
+
+export const zRestartSessionQuery = z.object({
+    principalId: z.string()
+});

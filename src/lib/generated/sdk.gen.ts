@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { CommitData, CommitErrors, CommitResponses, CreateBreakpointData, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteBreakpointData, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListBreakpointsData, ListFilesData, ListFilesErrors, ListFilesResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, RestartSessionData, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses, UpdateBreakpointData } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -222,6 +222,35 @@ export const createSession = <ThrowOnError extends boolean = false>(options: Opt
     }
 });
 
+export const listBreakpoints = <ThrowOnError extends boolean = false>(options: Options<ListBreakpointsData, ThrowOnError>) => (options.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/workspaces/{workspace_id}/debug/breakpoints', ...options });
+
+export const createBreakpoint = <ThrowOnError extends boolean = false>(options: Options<CreateBreakpointData, ThrowOnError>) => (options.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/workspaces/{workspace_id}/debug/breakpoints',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const deleteBreakpoint = <ThrowOnError extends boolean = false>(options: Options<DeleteBreakpointData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({
+    url: '/api/workspaces/{workspace_id}/debug/breakpoints/{breakpoint_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const updateBreakpoint = <ThrowOnError extends boolean = false>(options: Options<UpdateBreakpointData, ThrowOnError>) => (options.client ?? client).patch<unknown, unknown, ThrowOnError>({
+    url: '/api/workspaces/{workspace_id}/debug/breakpoints/{breakpoint_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
 /**
  * Terminate the debuggee and its server-owned adapter.
  *
@@ -247,3 +276,8 @@ export const getSession = <ThrowOnError extends boolean = false>(options: Option
     url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}',
     ...options
 });
+
+/**
+ * Terminate a session and create a replacement with a new identity.
+ */
+export const restartSession = <ThrowOnError extends boolean = false>(options: Options<RestartSessionData, ThrowOnError>) => (options.client ?? client).post<unknown, unknown, ThrowOnError>({ url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}/restart', ...options });

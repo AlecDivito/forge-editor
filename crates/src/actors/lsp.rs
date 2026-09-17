@@ -21,6 +21,7 @@ use tokio::{
 };
 use tracing::{debug, warn};
 
+use crate::services::process_env;
 use crate::{
     models::{JsonRpcError, JsonRpcMessage, LspFramedReader, RawLspDiagnostic},
     state::AppState,
@@ -58,6 +59,7 @@ impl LspServerActor {
         let mut child = Command::new(language.server_binary_path())
             .args(language.server_args())
             .current_dir(workspace_root)
+            .env("PATH", process_env::tool_path())
             .kill_on_drop(true) // don't orphan the process if we crash/restart
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

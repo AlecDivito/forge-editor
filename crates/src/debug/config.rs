@@ -32,7 +32,7 @@ pub struct ConfigurationSummary {
     pub capabilities: PublicCapabilities,
 }
 
-#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicCapabilities {
     pub integrated_terminal: bool,

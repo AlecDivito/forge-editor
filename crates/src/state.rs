@@ -129,6 +129,7 @@ pub struct ClientConnectionHandle {
     pub document_tx: mpsc::Sender<ServerMessage>,
     pub subscribed_documents: DashSet<(WorkspaceId, FileId)>,
     pub open_terminals: DashSet<TerminalId>,
+    pub debug_sessions: DashSet<String>,
     pub authorized_workspaces: DashSet<WorkspaceId>,
     /// forwarder tasks piping DocumentActor broadcast events -> this
     /// client's sender. Must be aborted on unsubscribe/disconnect or
@@ -143,6 +144,7 @@ impl ClientConnectionHandle {
             document_tx,
             subscribed_documents: DashSet::new(),
             open_terminals: DashSet::new(),
+            debug_sessions: DashSet::new(),
             authorized_workspaces: DashSet::new(),
             doc_forwarders: DashMap::new(),
         }
