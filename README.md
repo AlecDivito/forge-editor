@@ -103,6 +103,11 @@ bun dev
 ```
 # Debugging (phase 1)
 
+See [Debugging in Forge](./docs/debugging.md) for the current supported feature
+set, resource limits, and known missing features.
+For a protocol-focused tutorial, see
+[Learning DAP with Go and Delve](./docs/learning-dap-with-go.md).
+
 Forge supports launch-only debugging through a server-owned adapter strategy.
 Add `.vscode/launch.json` to a configured workspace:
 
