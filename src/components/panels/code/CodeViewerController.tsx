@@ -11,6 +11,7 @@ import { saveDocument } from "@/lib/documents/save";
 import { hasUnsavedDocuments } from "@/lib/documents/registry";
 import CloseConfirmationDialog from "./components/CloseConfirmationDialog/CloseConfirmationDialog";
 import GitDiffView from "./components/GitDiffView/GitDiffView";
+import DebugSourceView from "./components/DebugSourceView/DebugSourceView";
 
 type Props = Record<string, string>;
 
@@ -38,6 +39,7 @@ const CodeViewerController: FC<IGridviewPanelProps<Props>> = (props) => {
       default: DefaultView,
       code: CodeView,
       "git-diff": GitDiffView,
+      "debug-source": DebugSourceView,
       // terminal: TerminalView,
     }),
     [],

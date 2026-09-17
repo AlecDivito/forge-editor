@@ -1,11 +1,11 @@
-import { ClientId, ClientMessage, FileId, ServerMessage, WorkspaceId } from "./messages";
-import { ConnectionStatus } from "./types";
+import { ClientId, ClientMessage, DebugOperation, FileId, ServerMessage, WorkspaceId } from './messages';
+import { ConnectionStatus } from './types';
 
 // lib/ws/connection.ts
 type Listener = (msg: ServerMessage) => void;
 type StatusListener = () => void;
 type ConnectionListener = (generation: number) => void;
-type SaveResult = Extract<ServerMessage, { kind: "DocSaveResult" }>;
+type SaveResult = Extract<ServerMessage, { kind: 'DocSaveResult' }>;
 
 class SocketManager {
     private ws: WebSocket | null = null;
@@ -18,13 +18,20 @@ class SocketManager {
     private _status: ConnectionStatus = { kind: 'idle' };
     private connectionUrl: string | undefined;
     private connectionTokenValue: string | undefined;
-    private pendingSaves = new Map<string, {
-        resolve: (result: SaveResult) => void;
-        reject: (error: Error) => void;
-        timeout: ReturnType<typeof setTimeout>;
-        documentKey: string;
-    }>();
+    private pendingSaves = new Map<
+        string,
+        {
+            resolve: (result: SaveResult) => void;
+            reject: (error: Error) => void;
+            timeout: ReturnType<typeof setTimeout>;
+            documentKey: string;
+        }
+    >();
     private inFlightSaves = new Map<string, Promise<SaveResult>>();
+    private pendingDebug = new Map<
+        string,
+        { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }
+    >();
 
     /** The query id is stable for this browser process; Hello confirms it. */
     public clientId = makeClientId() as ClientId;
@@ -58,13 +65,13 @@ class SocketManager {
             if (this.ws !== ws || generation !== this.connectionToken) return;
             const msg = decode(e.data);
             if (!msg || typeof msg.kind !== 'string') return;
-            if (msg.kind === "Hello") {
+            if (msg.kind === 'Hello') {
                 this.clientId = msg.client_id;
                 this.reconnectAttempt = 0;
                 this.setStatus({ kind: 'open' });
                 this.connectionListeners.forEach((listener) => listener(generation));
             }
-            if (msg.kind === "DocSaveResult") {
+            if (msg.kind === 'DocSaveResult') {
                 const pending = this.pendingSaves.get(msg.request_id);
                 if (pending) {
                     this.pendingSaves.delete(msg.request_id);
@@ -72,6 +79,16 @@ class SocketManager {
                     this.inFlightSaves.delete(pending.documentKey);
                     if (msg.error) pending.reject(new Error(msg.error));
                     else pending.resolve(msg);
+                }
+            }
+            if (msg.kind === 'DebugResult' || msg.kind === 'DebugError') {
+                const pending = this.pendingDebug.get(msg.request_id);
+                if (pending) {
+                    this.pendingDebug.delete(msg.request_id);
+                    clearTimeout(pending.timeout);
+                    msg.kind === 'DebugError'
+                        ? pending.reject(new Error(`${msg.code}: ${msg.message}`))
+                        : pending.resolve(msg.result);
                 }
             }
             this.listeners.forEach((l) => l(msg));
@@ -84,7 +101,7 @@ class SocketManager {
         ws.onclose = () => {
             if (this.ws !== ws || generation !== this.connectionToken) return;
             this.ws = null;
-            this.rejectPendingSaves(new Error("WebSocket disconnected while saving"));
+            this.rejectPendingSaves(new Error('WebSocket disconnected while saving'));
             this.setStatus({ kind: 'reconnecting', attempt: this.reconnectAttempt + 1 });
             this.scheduleReconnect();
         };
@@ -110,7 +127,7 @@ class SocketManager {
         if (inFlight) return inFlight;
 
         if (this.status.kind !== 'open' || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            return Promise.reject(new Error("WebSocket is not connected"));
+            return Promise.reject(new Error('WebSocket is not connected'));
         }
 
         const requestId = makeRequestId();
@@ -121,15 +138,50 @@ class SocketManager {
                 reject(new Error(`Timed out saving ${fileId}`));
             }, timeoutMs);
             this.pendingSaves.set(requestId, { resolve, reject, timeout, documentKey });
-            this.ws!.send(encode({
-                kind: "DocSave",
-                workspace_id: workspaceId,
-                file_id: fileId,
-                request_id: requestId,
-            } satisfies ClientMessage));
+            this.ws!.send(
+                encode({
+                    kind: 'DocSave',
+                    workspace_id: workspaceId,
+                    file_id: fileId,
+                    request_id: requestId,
+                } satisfies ClientMessage),
+            );
         });
         this.inFlightSaves.set(documentKey, promise);
         return promise;
+    }
+
+    debugRequest<T>(
+        workspaceId: WorkspaceId,
+        sessionId: string,
+        attachmentGeneration: number,
+        stoppedGeneration: number | undefined,
+        operation: DebugOperation,
+    ): Promise<T> {
+        if (this.status.kind !== 'open') return Promise.reject(new Error('WebSocket is not connected'));
+        const requestId = makeRequestId();
+        return new Promise<T>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.pendingDebug.delete(requestId);
+                reject(new Error('debug_request_timeout'));
+            }, 10_000);
+            this.pendingDebug.set(requestId, { resolve: (value) => resolve(value as T), reject, timeout });
+            if (
+                !this.send({
+                    kind: 'DebugRequest',
+                    request_id: requestId,
+                    workspace_id: workspaceId,
+                    session_id: sessionId,
+                    attachment_generation: attachmentGeneration,
+                    stopped_generation: stoppedGeneration,
+                    operation,
+                })
+            ) {
+                clearTimeout(timeout);
+                this.pendingDebug.delete(requestId);
+                reject(new Error('WebSocket is not connected'));
+            }
+        });
     }
 
     subscribe(listener: Listener) {
@@ -153,7 +205,7 @@ class SocketManager {
         const ws = this.ws;
         this.ws = null;
         ++this.connectionToken;
-        this.rejectPendingSaves(new Error("WebSocket closed"));
+        this.rejectPendingSaves(new Error('WebSocket closed'));
         ws?.close();
         this.setStatus({ kind: 'closed', reason });
     }
@@ -184,7 +236,7 @@ class SocketManager {
 }
 
 function makeClientId(): string {
-    if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+    if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
@@ -197,18 +249,18 @@ export function normalizeWebSocketUrl(value: string): string {
 }
 
 function makeRequestId(): string {
-    if (typeof globalThis.crypto?.randomUUID === "function") {
+    if (typeof globalThis.crypto?.randomUUID === 'function') {
         return globalThis.crypto.randomUUID();
     }
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function encode(data: any): string {
-    return JSON.stringify(data)
+    return JSON.stringify(data);
 }
 
 function decode(data: string): any {
-    return JSON.parse(data)
+    return JSON.parse(data);
 }
 
 export const socket = new SocketManager(); // one instance, whole app

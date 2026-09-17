@@ -20,6 +20,7 @@ import {
   WorkspaceSymbolParams,
   Range,
 } from "vscode-languageserver-protocol";
+import type { SessionSnapshot } from "@/lib/generated";
 
 export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
 export type FileId = string & { readonly __brand: "FileId" };
@@ -30,6 +31,18 @@ export type TerminalExit = { code?: number; signal?: string };
 export type TerminalErrorCode =
   "invalid_request" | "not_found" | "forbidden" | "limit_exceeded" | "spawn_failed" | "invalid_state";
 export type LanguageId = string & { readonly __brand: "LanguageId" };
+export type DebugOperation =
+  | { operation: "threads" }
+  | { operation: "stack_trace"; thread_handle: string; start_frame?: number; levels?: number }
+  | { operation: "scopes"; frame_handle: string }
+  | { operation: "variables"; variables_handle: string; filter?: "indexed" | "named"; start?: number; count?: number }
+  | { operation: "evaluate"; expression: string; frame_handle?: string; context: "repl" | "watch" }
+  | { operation: "source"; source_handle: string }
+  | { operation: "continue" | "next" | "step_in" | "step_out"; thread_handle: string }
+  | { operation: "pause"; thread_handle?: string }
+  | { operation: "watch_create"; expression: string; auto_refresh: boolean }
+  | { operation: "watch_update"; watch_id: string; expression?: string; auto_refresh?: boolean }
+  | { operation: "watch_delete" | "watch_refresh"; watch_id: string };
 
 export type LspScope = { kind: "document"; file_id: FileId } | { kind: "workspace"; language_id?: LanguageId };
 
@@ -217,6 +230,21 @@ export type ClientMessage =
     }
   | {
       kind: "Ping";
+    }
+  | {
+      kind: "DebugRequest";
+      request_id: string;
+      workspace_id: WorkspaceId;
+      session_id: string;
+      attachment_generation: number;
+      stopped_generation?: number;
+      operation: DebugOperation;
+    }
+  | {
+      kind: "DebugAttach" | "DebugDetach";
+      workspace_id: WorkspaceId;
+      session_id: string;
+      attachment_generation: number;
     };
 
 export type ServerMessage =
@@ -377,7 +405,18 @@ export type ServerMessage =
     }
   | {
       kind: "Pong";
-    };
+    }
+  | {
+      kind: "DebugResult";
+      request_id: string;
+      workspace_id: WorkspaceId;
+      session_id: string;
+      attachment_generation: number;
+      stopped_generation?: number;
+      result: unknown;
+    }
+  | { kind: "DebugError"; request_id: string; code: string; message: string }
+  | { kind: "DebugSnapshot"; snapshot: SessionSnapshot };
 
 export interface LspDiagnostic {
   range: LspRange;

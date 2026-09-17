@@ -1217,3 +1217,12 @@
     pointer-events: none;
   }
 }
+.cm-debug-gutter .cm-gutterElement { cursor: pointer; color: #e05252; min-width: 14px; text-align: center; }
+.cm-debug-breakpoint.is-disabled { color: #888; }
+.cm-debug-breakpoint.is-unverified { color: #e05252; opacity: .65; }
+.cm-debug-breakpoint.is-verified { color: #e05252; }
+.cm-debug-breakpoint.is-moved { color: #e0a52f; }
+.cm-debug-breakpoint.is-rejected { color: #f0a0a0; font-weight: 700; }
+.cm-debug-breakpoint { font-size: 11px; line-height: 1; }
+.cm-debug-current { background: color-mix(in srgb, #d9a441 28%, transparent); box-shadow: inset 3px 0 #d9a441; }
+.cm-debug-selected { background: color-mix(in srgb, #4b91d1 18%, transparent); box-shadow: inset 3px 0 #4b91d1; }

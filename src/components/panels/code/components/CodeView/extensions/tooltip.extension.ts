@@ -183,16 +183,24 @@ export const requestHoverToolTip = async (view: EditorView, pos: number /* side:
     const line = view.state.doc.lineAt(pos);
 
     // TODO: (Alec) Send document changes
-    const result = await sendDocumentLspRequest(
-        workspaceId,
-        fileId,
-        'textDocument/hover',
-        {
-            position: {
-                line: line.number - 1,
-                character: pos - line.from,
-            },
-        });
+    let result;
+    try {
+        result = await sendDocumentLspRequest(
+            workspaceId,
+            fileId,
+            'textDocument/hover',
+            {
+                position: {
+                    line: line.number - 1,
+                    character: pos - line.from,
+                },
+            });
+    } catch {
+        // Some supported editor languages (for example JSON) currently have
+        // syntax highlighting but no backend LSP. Hover should simply be
+        // unavailable in that case, rather than creating an unhandled rejection.
+        return null;
+    }
 
 
     if (!result) {
