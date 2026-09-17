@@ -16,24 +16,24 @@ import {
   SignatureHelp,
   SignatureHelpParams,
 } from "vscode-languageserver-protocol";
-import { CacheManager } from "./cache";
 import { ClientLspNotification } from ".";
 import { LspProxyClient, Proxy } from "./proxy";
+import { VirtualEditorManager } from "./virtualEditor";
 
 export class LspEventHandler {
   private proxy: LspProxyClient;
-  private cache: CacheManager;
+  private editor: VirtualEditorManager;
   private support: InitializeResult;
 
-  constructor(proxy: Proxy, cache: CacheManager) {
+  constructor(proxy: Proxy, editor: VirtualEditorManager) {
     this.proxy = proxy.client;
     this.support = proxy.support;
-    this.cache = cache;
+    this.editor = editor;
   }
 
   async textDocumentDidOpen(params: DidOpenTextDocumentParams): Promise<DidOpenTextDocumentParams> {
-    const cacheFilePath = this.convertFileUriToS3Uri(params.textDocument);
-    const textDocument = await this.cache.getDocument(cacheFilePath);
+    const path = this.convertFileUriToFilesystemUri(params.textDocument);
+    const textDocument = await this.editor.open(path);
 
     const overrideParams: DidOpenTextDocumentParams = {
       textDocument: {
@@ -55,12 +55,12 @@ export class LspEventHandler {
 
   async textDocumentDidChange(params: DidChangeTextDocumentParams): Promise<void> {
     const { textDocument, contentChanges } = params;
-    const cacheFilePath = this.convertFileUriToS3Uri(textDocument);
+    const cacheFilePath = this.convertFileUriToFilesystemUri(textDocument);
     const version = textDocument.version;
 
     try {
       const promises = [
-        this.cache.applyChanges(cacheFilePath, version, contentChanges),
+        this.editor.applyChanges(cacheFilePath, version, contentChanges),
         this.proxy.sendNotification({
           method: "textDocument/didChange",
           params,
@@ -84,11 +84,11 @@ export class LspEventHandler {
 
   async textDocumentDidClose(params: DidCloseTextDocumentParams): Promise<void> {
     const { textDocument } = params;
-    const cacheFilePath = this.convertFileUriToS3Uri(textDocument);
+    const cacheFilePath = this.convertFileUriToFilesystemUri(textDocument);
 
     try {
       const promises = [
-        this.cache.syncDocumentToS3(cacheFilePath),
+        this.editor.close(cacheFilePath),
         this.canOpenClose()
           ? this.proxy.sendNotification({
               method: "textDocument/didClose",
@@ -206,8 +206,10 @@ export class LspEventHandler {
     }
   }
 
-  private convertFileUriToS3Uri(textDocument: { uri: string }): string {
-    return textDocument.uri.replace("file:///", "");
+  async textDocumentDelete(params: { path: string });
+
+  private convertFileUriToFilesystemUri(textDocument: { uri: string }): string {
+    return textDocument.uri.replace("file:///", "/");
   }
 
   private canOpenClose(): boolean {

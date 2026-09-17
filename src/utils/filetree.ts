@@ -1,23 +1,22 @@
 import { DirectoryEntry } from "@/lib/storage";
-import { FileChangeType, FileEvent } from "vscode-languageserver-protocol";
 
 export type FileNode = {
   id: string;
   path: string; // Full path of the file/directory
   name: string;
-  type: "f" | "d";
+  type: "f" | "d" | "createFile" | "createFolder";
   children?: FileNode[];
 };
 
 /**
  * Converts a flat list of FileItems into a hierarchical tree structure.
  */
-export function buildFileTree(fileList: DirectoryEntry[]): FileNode {
+export function buildFileTree(fileList: DirectoryEntry[] = []): FileNode {
   const root: FileNode = { id: "/", path: "/", name: "/", type: "d", children: [] };
   const nodeMap = new Map<string, FileNode>([["", root]]);
 
-  const directories = fileList.filter((f) => f.ty === "d");
-  const files = fileList.filter((f) => f.ty === "f");
+  const directories = fileList?.filter((f) => f.ty === "d") || [];
+  const files = fileList?.filter((f) => f.ty === "f") || [];
   directories.sort((a, b) => a.path.localeCompare(b.path));
   files.sort((a, b) => a.path.localeCompare(b.path));
   const children = directories.concat(files);
@@ -103,7 +102,7 @@ export function removeFileFromTree(root: FileNode, filePath: string): boolean {
 /**
  * Finds a node in the tree based on its path.
  */
-function findNodeByPath(root: FileNode, path: string): FileNode | null {
+export function findNodeByPath(root: FileNode, path: string): FileNode | null {
   if (path === "") return root;
   const parts = path.split("/");
   let currentNode: FileNode | undefined = root;

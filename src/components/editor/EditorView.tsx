@@ -55,7 +55,6 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
   const { file, theme } = params;
   const { capabilities } = useLspStore();
   const { activeFiles } = useEditorStore();
-  const { base } = useFileStore();
   const [view, setView] = useState<CodeMirrorView | undefined>();
   const language = getFileExtension(file);
   const sendRequest = useSendRequest(language);
@@ -94,7 +93,7 @@ const EditorView: FC<IDockviewPanelProps<EditorParams>> = ({ params }) => {
     if (activeFiles?.[file] && file && capabilities) {
       loadExtensions();
     }
-  }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme, base]);
+  }, [sendRequest, sendNotification, language, activeFiles, file, capabilities, theme]);
 
   useEffect(() => {
     if (view && diagnostics) {

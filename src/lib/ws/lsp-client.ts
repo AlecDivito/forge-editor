@@ -1,0 +1,111 @@
+import { socket } from "@/lib/ws/connection";
+import { WorkspaceId, FileId, LanguageId, LspMethodMap, LspScope } from "@/lib/ws/messages";
+
+interface Pending {
+  resolve: (value: any) => void;
+  reject: (reason: any) => void;
+}
+
+const pending = new Map<string, Pending>();
+let listening = false;
+
+function rejectDisconnectedRequests() {
+  if (socket.status.kind === 'open' || pending.size === 0) return;
+  const error = new Error("WebSocket disconnected while waiting for LSP response");
+  for (const [requestId, entry] of pending) {
+    pending.delete(requestId);
+    entry.reject(error);
+  }
+}
+
+/** One subscription for the whole app — not one per request, not one per document. */
+function ensureListening() {
+  if (listening) return;
+  listening = true;
+  socket.subscribeStatus(rejectDisconnectedRequests);
+  socket.subscribe((msg: any) => {
+    const entry = pending.get(msg.request_id);
+    if (!entry) return; // not an LSP response, or already timed out
+    if (msg.kind === "LspResponse") {
+      entry.resolve(msg.result);
+      pending.delete(msg.request_id);
+    } else if (msg.kind === "LspError") {
+      entry.reject(new Error(msg.message));
+      pending.delete(msg.request_id);
+    }
+  });
+}
+
+// Matches the backend's own 10s LSP request timeout — no point waiting
+// longer here than the server already gave up.
+const TIMEOUT_MS = 10_000;
+
+export function sendLspRequest<K extends keyof LspMethodMap>(
+  workspaceId: WorkspaceId,
+  scope: LspScope,
+  method: K,
+  params: LspMethodMap[K]["params"],
+  signal?: AbortSignal,
+): Promise<LspMethodMap[K]["result"]> {
+  ensureListening();
+  const requestId = crypto.randomUUID();
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      pending.delete(requestId);
+      if (timeout !== undefined) clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = () => {
+      socket.send({ kind: "LspCancel", request_id: requestId });
+      finish(() => reject(signal?.reason instanceof Error ? signal.reason : new DOMException("LSP request aborted", "AbortError")));
+    };
+    if (signal?.aborted) return abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    timeout = setTimeout(() => {
+      socket.send({ kind: "LspCancel", request_id: requestId });
+      finish(() => reject(new Error(`LSP request '${method}' timed out on the frontend`)));
+    }, TIMEOUT_MS);
+
+    pending.set(requestId, {
+      resolve: (v) => finish(() => resolve(v)),
+      reject: (e) => finish(() => reject(e)),
+    });
+
+    const sent = socket.send({
+      kind: "LspRequest",
+      workspace_id: workspaceId,
+      scope,
+      request_id: requestId,
+      method,
+      params,
+    });
+    if (!sent) {
+      finish(() => reject(new Error("WebSocket is not connected")));
+    }
+  });
+}
+
+export function sendDocumentLspRequest<K extends Exclude<keyof LspMethodMap, "workspace/symbol">>(
+  workspaceId: WorkspaceId, fileId: FileId, method: K,
+  params: LspMethodMap[K]["params"], signal?: AbortSignal,
+) {
+  return sendLspRequest(workspaceId, { kind: "document", file_id: fileId }, method, params, signal);
+}
+
+export function sendWorkspaceLspRequest(
+  workspaceId: WorkspaceId, method: "workspace/symbol",
+  params: LspMethodMap["workspace/symbol"]["params"], signal?: AbortSignal,
+  languageId?: LanguageId,
+) {
+  return sendLspRequest(workspaceId, { kind: "workspace", language_id: languageId }, method, params, signal);
+}
+
+export function sendLspNotification(workspaceId: WorkspaceId, fileId: FileId, method: string, params: unknown) {
+  socket.send({ kind: "LspNotification", workspace_id: workspaceId, file_id: fileId, method, params });
+}

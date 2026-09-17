@@ -2,29 +2,56 @@
 
 import { DirectoryEntry } from "@/lib/storage";
 import { ServerLspNotification } from "@/service/lsp";
-import { addFileToTree, buildFileTree, FileNode, removeFileFromTree } from "@/utils/filetree";
+import { addFileToTree, buildFileTree, FileNode, findNodeByPath, removeFileFromTree } from "@/utils/filetree";
 import { create } from "zustand";
 
 export interface FileTreeState {
-  user: string;
-  project: string;
-  base: string;
   fileTree?: FileNode;
 
-  initialize: (user: string, project: string, folder: DirectoryEntry[]) => void; // Initializes the file tree
+  hideInsertFile: (path: string) => void;
+  insertFile: (parent: string) => void;
+  insertFolder: (parent: string) => void;
+
+  initialize: (folder: DirectoryEntry[]) => void; // Initializes the file tree
   handleNotification: (message: ServerLspNotification) => void;
 }
 
 export const useFileStore = create<FileTreeState>((set, get) => ({
-  base: "",
-  user: "",
-  project: "",
   fileTree: undefined,
 
+  hideInsertFile(path) {
+    const { fileTree } = get();
+    removeFileFromTree(fileTree!, path);
+    return set({ fileTree });
+  },
+  insertFile(parent) {
+    const { fileTree } = get();
+    const name = `${Math.random() * 1000}.tmp`;
+    const node = {
+      path: `${parent}/${name}`,
+      name: name,
+      ty: "createFile",
+    } as DirectoryEntry;
+    console.log(node);
+    addFileToTree(fileTree!, node);
+    return set({ fileTree });
+  },
+  insertFolder(parent) {
+    const { fileTree } = get();
+    const name = `${Math.random() * 1000}.tmp`;
+    const node = {
+      path: `${parent}/${name}`,
+      name: name,
+      ty: "createFolder",
+    } as DirectoryEntry;
+    addFileToTree(fileTree!, node);
+    return set({ fileTree });
+  },
+
   // Initializes the tree structure based on the folder data
-  initialize: (user: string, project: string, files: DirectoryEntry[]) => {
+  initialize: (files: DirectoryEntry[]) => {
     console.log(files);
-    set({ user, project, base: `${user}/${project}`, fileTree: buildFileTree(files) });
+    set({ fileTree: buildFileTree(files) });
   },
 
   handleNotification: (message: ServerLspNotification) => {

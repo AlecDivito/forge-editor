@@ -3,7 +3,7 @@ import { stat, readdir } from "fs/promises";
 import { mkdir } from "node:fs/promises";
 
 export interface DirectoryEntry {
-  ty: "f" | "d";
+  ty: "f" | "d" | "createFile" | "createFolder";
   name: string;
   path: string;
 }

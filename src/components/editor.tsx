@@ -1,13 +1,13 @@
 "use client";
 
 import { FC, useEffect, useState } from "react";
-import { DockviewApi, DockviewDidDropEvent, DockviewReact, IDockviewPanel, IGridviewPanelProps } from "dockview";
+import { DockviewApi, DockviewDidDropEvent, IDockviewPanel } from "dockview";
+import { DockviewReact, IGridviewPanelProps } from "dockview-react"
 import EditorView, { getFileExtension } from "./editor/EditorView";
 import FileTab from "./editor/FileTab";
 import DefaultView from "./editor/DefaultView";
 import { useSendNotification } from "@/hooks/use-send-notification";
 import { useEditorStore } from "@/store/editor";
-import DebugView from "./editor/DebugView";
 
 interface Props {
   theme?: "material" | "gruvbox";
@@ -62,7 +62,7 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
       const removeGroup = view.onDidRemoveGroup((e) => {
         console.log(e);
       });
-      const disposable = view.onUnhandledDragOverEvent((event) => {
+      const disposable = view.onUnhandledDragOver((event) => {
         event.accept();
       });
 
@@ -99,7 +99,6 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
   const components = {
     default: DefaultView,
     editor: EditorView,
-    debug: DebugView,
   };
 
   const tabComponents = {
@@ -113,10 +112,6 @@ const Editor: FC<IGridviewPanelProps<Props>> = ({ params: { theme = "gruvbox" } 
   return (
     <DockviewReact
       onReady={(view) => {
-        view.api.addPanel({
-          id: "debug",
-          component: "debug",
-        });
         setView(view.api);
       }}
       components={components}

@@ -1,0 +1,713 @@
+use super::LspDiagnostic;
+use rovo::schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+pub type FileId = String;
+pub type ClientId = String;
+pub type WorkspaceId = String;
+pub type TerminalId = String;
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalStatus {
+    Creating,
+    Running,
+    Terminating,
+    Exited,
+    Disconnected,
+    Error,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TerminalExit {
+    pub code: Option<i32>,
+    pub signal: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalErrorCode {
+    InvalidRequest,
+    NotFound,
+    Forbidden,
+    LimitExceeded,
+    SpawnFailed,
+    InvalidState,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageId {
+    Rust,
+    TypeScript,
+    JavaScript,
+    Python,
+    Go,
+    Json,
+    Yaml,
+    Shell,
+    Dockerfile,
+}
+
+impl LanguageId {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::TypeScript => "typescript",
+            Self::JavaScript => "javascript",
+            Self::Python => "python",
+            Self::Go => "go",
+            Self::Json => "json",
+            Self::Yaml => "yaml",
+            Self::Shell => "shellscript",
+            Self::Dockerfile => "dockerfile",
+        }
+    }
+
+    pub fn server_binary_path(&self) -> &'static str {
+        match self {
+            Self::Rust => "rust-analyzer",
+            Self::TypeScript | Self::JavaScript => "typescript-language-server",
+            Self::Python => "pyright-langserver",
+            Self::Go => "gopls",
+            // no LSP wired up for these yet — from_path will still return
+            // Some(..) for them, so callers that need a server must check
+            // has_lsp_support() before spawning.
+            Self::Json | Self::Yaml | Self::Shell | Self::Dockerfile => "",
+        }
+    }
+
+    /// Command-line arguments required to run the language server over stdio.
+    pub fn server_args(&self) -> &'static [&'static str] {
+        match self {
+            // gopls serves LSP over stdin/stdout by default and rejects
+            // the --stdio flag used by several Node-based language servers.
+            Self::Go => &["serve"],
+            Self::Rust
+            | Self::TypeScript
+            | Self::JavaScript
+            | Self::Python
+            | Self::Json
+            | Self::Yaml
+            | Self::Shell
+            | Self::Dockerfile => &["--stdio"],
+        }
+    }
+
+    /// Whether this language currently has an LSP server configured.
+    pub fn has_lsp_support(&self) -> bool {
+        !self.server_binary_path().is_empty()
+    }
+
+    /// Fast path: identify by extension alone, no I/O. Covers the vast
+    /// majority of files and is what you want on any hot path.
+    fn from_extension(path: &Path) -> Option<Self> {
+        match path.extension()?.to_str()? {
+            "rs" => Some(Self::Rust),
+            "ts" | "tsx" => Some(Self::TypeScript),
+            "js" | "jsx" | "mjs" | "cjs" => Some(Self::JavaScript),
+            "py" | "pyi" => Some(Self::Python),
+            "go" => Some(Self::Go),
+            "json" => Some(Self::Json),
+            "yaml" | "yml" => Some(Self::Yaml),
+            "sh" | "bash" => Some(Self::Shell),
+            _ => None,
+        }
+    }
+
+    /// Extensionless files, identified by name or (as a last resort) by
+    /// reading the shebang line. This is the part that needs to be async.
+    fn from_filename(path: &Path) -> Option<Self> {
+        match path.file_name()?.to_str()? {
+            "Dockerfile" | "Containerfile" => Some(Self::Dockerfile),
+            _ => None,
+        }
+    }
+
+    async fn from_shebang(path: &Path) -> Option<Self> {
+        let file = tokio::fs::File::open(path).await.ok()?;
+        let mut reader = BufReader::new(file);
+        let mut first_line = String::new();
+        // cap the read — a binary file with no newline in its first few KB
+        // shouldn't make this hang reading the whole thing into memory.
+        reader.read_line(&mut first_line).await.ok()?;
+
+        if !first_line.starts_with("#!") {
+            return None;
+        }
+        if first_line.contains("python") {
+            Some(Self::Python)
+        } else if first_line.contains("bash") || first_line.contains("/sh") {
+            Some(Self::Shell)
+        } else if first_line.contains("node") {
+            Some(Self::JavaScript)
+        } else {
+            None
+        }
+    }
+
+    /// Resolve a file's language for LSP routing. Cheapest checks first;
+    /// only touches disk for extensionless files that need a shebang peek.
+    pub async fn from_path(path: &Path) -> Option<Self> {
+        if let Some(lang) = Self::from_extension(path) {
+            return Some(lang);
+        }
+        if let Some(lang) = Self::from_filename(path) {
+            return Some(lang);
+        }
+        Self::from_shebang(path).await
+    }
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Clone)]
+pub struct ClientParams {
+    id: Option<String>,
+}
+
+impl ClientParams {
+    pub fn get_client_id(&self) -> ClientId {
+        self.id.clone().unwrap_or("default".into())
+    }
+}
+
+#[derive(Clone)]
+pub enum DocEvent {
+    Update {
+        update: Vec<u8>,
+        origin: ClientId,
+    },
+    AwarenessUpdate {
+        payload: Vec<u8>,
+        origin: ClientId,
+    },
+    Diagnostics {
+        diagnostics: Vec<LspDiagnostic>,
+    },
+    State {
+        revision: u64,
+        persisted_revision: u64,
+        phase: PersistencePhase,
+        error: Option<String>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    NotFound,
+    Deleted,
+    ReadOnly,
+    SaveFailed,
+    RenameConflict,
+    DirtyDeleteConflict,
+    BadPath,
+    Unsupported,
+}
+
+/// Persistence state carried on the wire. The `kind` discriminator remains
+/// PascalCase for compatibility with the existing websocket protocol, while
+/// enum values are stable snake_case strings.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistencePhase {
+    Clean,
+    Pending,
+    Saving,
+    SaveError,
+    Deleted,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FsEntryType {
+    File,
+    Directory,
+    Symlink,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LspScope {
+    Document {
+        file_id: FileId,
+    },
+    Workspace {
+        #[serde(default)]
+        language_id: Option<LanguageId>,
+    },
+}
+
+#[derive(JsonSchema, Serialize, Deserialize, Clone)]
+#[serde(tag = "kind")]
+pub enum ClientMessage {
+    Hello,
+
+    DocSubscribe {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+    },
+    DocUnsubscribe {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+    },
+    DocUpdate {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+    },
+    DocSyncStep1 {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        state_vector: Vec<u8>,
+    },
+    DocSyncStep2 {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+    },
+    DocSave {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        request_id: uuid::Uuid,
+    },
+
+    // presence - cursors, selections, "who's here"
+    AwarenessUpdate {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        payload: Vec<u8>,
+    },
+
+    TerminalCreate {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        profile_id: String,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalInput {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        data: Vec<u8>,
+    },
+    TerminalResize {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalRename {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        title: String,
+    },
+    TerminalTerminate {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+    },
+
+    LspRequest {
+        workspace_id: WorkspaceId,
+        scope: LspScope,
+        request_id: uuid::Uuid,
+        method: String,
+        params: serde_json::Value,
+    },
+    LspCancel {
+        request_id: uuid::Uuid,
+    },
+    LspNotification {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        method: String,
+        params: serde_json::Value,
+    },
+
+    Ping,
+}
+
+impl std::fmt::Display for ClientMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClientMessage::Hello => write!(f, "Hello"),
+
+            ClientMessage::DocSubscribe {
+                workspace_id,
+                file_id,
+            } => write!(f, "DocSubscribe({workspace_id}, {file_id})"),
+
+            ClientMessage::DocUnsubscribe {
+                workspace_id,
+                file_id,
+            } => write!(f, "DocUnsubscribe({workspace_id}, {file_id})"),
+
+            ClientMessage::DocUpdate {
+                workspace_id,
+                file_id,
+                update,
+            } => write!(
+                f,
+                "DocUpdate({workspace_id}, {file_id}, {} bytes)",
+                update.len()
+            ),
+
+            ClientMessage::DocSyncStep1 {
+                workspace_id,
+                file_id,
+                state_vector,
+            } => write!(
+                f,
+                "DocSyncStep1({workspace_id}, {file_id}, {} bytes)",
+                state_vector.len()
+            ),
+
+            ClientMessage::DocSyncStep2 {
+                workspace_id,
+                file_id,
+                update,
+            } => write!(
+                f,
+                "DocSyncStep2({workspace_id}, {file_id}, {} bytes)",
+                update.len()
+            ),
+
+            ClientMessage::DocSave {
+                workspace_id,
+                file_id,
+                request_id,
+            } => write!(f, "DocSave({workspace_id}, {file_id}, {request_id})"),
+
+            ClientMessage::AwarenessUpdate {
+                workspace_id,
+                file_id,
+                payload,
+            } => write!(
+                f,
+                "AwarenessUpdate({workspace_id}, {file_id}, {} bytes)",
+                payload.len()
+            ),
+
+            ClientMessage::TerminalCreate {
+                request_id,
+                workspace_id,
+                profile_id,
+                cols,
+                rows,
+            } => write!(
+                f,
+                "TerminalCreate({request_id}, {workspace_id}, {profile_id}, {cols}x{rows})"
+            ),
+
+            ClientMessage::TerminalInput {
+                workspace_id,
+                terminal_id,
+                data,
+            } => {
+                write!(
+                    f,
+                    "TerminalInput({workspace_id}, {terminal_id}, {} bytes)",
+                    data.len()
+                )
+            }
+
+            ClientMessage::TerminalResize {
+                workspace_id,
+                terminal_id,
+                cols,
+                rows,
+            } => write!(
+                f,
+                "TerminalResize({workspace_id}, {terminal_id}, {cols}x{rows})"
+            ),
+
+            ClientMessage::TerminalRename {
+                workspace_id,
+                terminal_id,
+                ..
+            } => write!(f, "TerminalRename({workspace_id}, {terminal_id})"),
+            ClientMessage::TerminalTerminate {
+                request_id,
+                workspace_id,
+                terminal_id,
+            } => write!(
+                f,
+                "TerminalTerminate({request_id}, {workspace_id}, {terminal_id})"
+            ),
+
+            ClientMessage::LspRequest {
+                workspace_id,
+                scope,
+                request_id,
+                method,
+                params,
+            } => write!(
+                f,
+                "LspRequest({workspace_id}, {scope:?}, {request_id}, {method}, {params})"
+            ),
+            ClientMessage::LspCancel { request_id } => write!(f, "LspCancel({request_id})"),
+
+            ClientMessage::LspNotification {
+                workspace_id,
+                file_id,
+                method,
+                params,
+            } => write!(
+                f,
+                "LspNotification({workspace_id}, {file_id}, {method}, {params})"
+            ),
+
+            ClientMessage::Ping => write!(f, "Ping"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "kind")]
+pub enum ServerMessage {
+    Hello {
+        client_id: ClientId,
+        environment_id: String,
+        schema_version: u32,
+    },
+    DocSync {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+    },
+    DocSyncStep2 {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+        state_vector: Vec<u8>,
+        revision: u64,
+        persisted_revision: u64,
+    },
+    DocState {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        revision: u64,
+        persisted_revision: u64,
+        phase: PersistencePhase,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    DocSaveResult {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        request_id: uuid::Uuid,
+        saved_revision: u64,
+        current_revision: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    FsRenamed {
+        workspace_id: WorkspaceId,
+        from: String,
+        to: String,
+        entry_type: FsEntryType,
+    },
+    FsDeleted {
+        workspace_id: WorkspaceId,
+        path: String,
+        entry_type: FsEntryType,
+    },
+    /// A change observed outside Forge's mutation API (for example from a
+    /// terminal command). Consumers should refresh cached directory listings.
+    FsChanged {
+        workspace_id: WorkspaceId,
+        paths: Vec<FileId>,
+    },
+    GitChanged {
+        workspace_id: WorkspaceId,
+        generation: u64,
+        reason: String,
+    },
+    DocUpdate {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        update: Vec<u8>,
+        origin: ClientId,
+    },
+
+    AwarenessUpdate {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        client_id: ClientId,
+        payload: Vec<u8>,
+    },
+    AwarenessSnapshot {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        payload: Vec<u8>,
+    },
+
+    TerminalCreated {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        profile_id: String,
+        title: String,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalOutput {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        data: Vec<u8>,
+    },
+    TerminalState {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        status: TerminalStatus,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit: Option<TerminalExit>,
+    },
+    TerminalRenamed {
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        title: String,
+    },
+    TerminalTerminateResult {
+        request_id: uuid::Uuid,
+        workspace_id: WorkspaceId,
+        terminal_id: TerminalId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    TerminalError {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<uuid::Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace_id: Option<WorkspaceId>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        terminal_id: Option<TerminalId>,
+        code: TerminalErrorCode,
+        message: String,
+    },
+
+    LspResponse {
+        request_id: uuid::Uuid,
+        result: serde_json::Value,
+    },
+    LspError {
+        request_id: uuid::Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<i64>,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
+    },
+    LspServerEvent {
+        workspace_id: WorkspaceId,
+        language_id: LanguageId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_id: Option<FileId>,
+        method: String,
+        params: serde_json::Value,
+    },
+    Diagnostics {
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        diagnostics: Vec<LspDiagnostic>,
+    },
+
+    Error {
+        context: Option<String>,
+        code: ErrorCode,
+        message: String,
+    },
+    Pong,
+}
+/*
+This was output by AI. I think it's a good idea to keep around in the code base
+if we want to optimize this process in the future.
+If you want to skip JSON overhead for the hot doc-update / terminal-byte paths, use a tiny binary framing instead: [u8 kind][u32 target_id][u32 len][payload]. JSON envelope is fine to start; switch to binary framing only if you profile a problem.
+*/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lsp_request_scopes_and_cancellation_round_trip() {
+        let document: ClientMessage = serde_json::from_value(serde_json::json!({
+            "kind": "LspRequest", "workspace_id": "one",
+            "scope": { "kind": "document", "file_id": "/src/main.rs" },
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "method": "textDocument/hover", "params": { "position": { "line": 0, "character": 0 } }
+        }))
+        .unwrap();
+        assert!(matches!(
+            document,
+            ClientMessage::LspRequest {
+                scope: LspScope::Document { .. },
+                ..
+            }
+        ));
+
+        let cancel: ClientMessage = serde_json::from_value(serde_json::json!({
+            "kind": "LspCancel", "request_id": "00000000-0000-0000-0000-000000000001"
+        }))
+        .unwrap();
+        assert!(matches!(cancel, ClientMessage::LspCancel { .. }));
+    }
+
+    #[test]
+    fn lifecycle_client_messages_use_json_number_arrays() {
+        let message = ClientMessage::DocSyncStep2 {
+            workspace_id: "workspace".into(),
+            file_id: "src/main.rs".into(),
+            update: vec![0, 127, 255],
+        };
+        let json = serde_json::to_value(&message).expect("message serializes");
+        assert_eq!(json["kind"], "DocSyncStep2");
+        assert_eq!(json["update"], serde_json::json!([0, 127, 255]));
+    }
+
+    #[test]
+    fn lifecycle_server_messages_round_trip() {
+        let message = ServerMessage::DocState {
+            workspace_id: "workspace".into(),
+            file_id: "src/main.rs".into(),
+            revision: 3,
+            persisted_revision: 2,
+            phase: PersistencePhase::Pending,
+            error: None,
+        };
+        let json = serde_json::to_string(&message).expect("message serializes");
+        assert!(json.contains(r#""phase":"pending""#));
+        let decoded: ServerMessage = serde_json::from_str(&json).expect("message decodes");
+        match decoded {
+            ServerMessage::DocState {
+                revision,
+                persisted_revision,
+                phase,
+                ..
+            } => {
+                assert_eq!(revision, 3);
+                assert_eq!(persisted_revision, 2);
+                assert_eq!(phase, PersistencePhase::Pending);
+            }
+            _ => panic!("decoded wrong message kind"),
+        }
+    }
+
+    #[test]
+    fn filesystem_event_serialization_is_explicit() {
+        let message = ServerMessage::FsRenamed {
+            workspace_id: "workspace".into(),
+            from: "old.rs".into(),
+            to: "new.rs".into(),
+            entry_type: FsEntryType::File,
+        };
+        let json = serde_json::to_value(message).expect("message serializes");
+        assert_eq!(json["kind"], "FsRenamed");
+        assert_eq!(json["entry_type"], "file");
+    }
+}

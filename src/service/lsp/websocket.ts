@@ -10,6 +10,10 @@ export const ProxyErrorObject: Record<number, LspError> = {
     code: 1,
     message: "The request wasn't processed because the file manager hasn't been initialized yet. Please wait",
   },
+  2: {
+    code: 2,
+    message: "The request wasn't processed because the virtual editor hasn't been initialized yet. Please wait",
+  },
   9999999: {
     code: 9999999,
     message: "Error handling logic not implemented yet.",

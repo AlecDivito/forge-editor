@@ -1,0 +1,420 @@
+import {
+  CodeAction,
+  CodeActionParams,
+  CompletionItem,
+  CompletionList,
+  CompletionParams,
+  DefinitionParams,
+  DocumentFormattingParams,
+  DocumentSymbol,
+  DocumentSymbolParams,
+  Hover,
+  HoverParams,
+  Location,
+  LocationLink,
+  ReferenceParams,
+  RenameParams,
+  SymbolInformation,
+  TextEdit,
+  WorkspaceEdit,
+  WorkspaceSymbolParams,
+  Range,
+} from "vscode-languageserver-protocol";
+
+export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
+export type FileId = string & { readonly __brand: "FileId" };
+export type ClientId = string & { readonly __brand: "ClientId" };
+export type TerminalId = string & { readonly __brand: "TerminalId" };
+export type TerminalStatus = "creating" | "running" | "terminating" | "exited" | "disconnected" | "error";
+export type TerminalExit = { code?: number; signal?: string };
+export type TerminalErrorCode =
+  "invalid_request" | "not_found" | "forbidden" | "limit_exceeded" | "spawn_failed" | "invalid_state";
+export type LanguageId = string & { readonly __brand: "LanguageId" };
+
+export type LspScope = { kind: "document"; file_id: FileId } | { kind: "workspace"; language_id?: LanguageId };
+
+export interface CanonicalLocation {
+  workspace_id: WorkspaceId;
+  file_id: FileId;
+  range: Range;
+  selection_range?: Range;
+}
+export interface CanonicalSymbol {
+  name: string;
+  kind: number;
+  container_name?: string;
+  location: CanonicalLocation;
+}
+
+export interface ClientParams {
+  id?: string;
+}
+
+export function getClientId(params: ClientParams): ClientId {
+  return (params.id ?? "default") as ClientId;
+}
+
+// Message `kind` values preserve the existing PascalCase wire format. Values
+// inside lifecycle enums use stable snake_case strings, matching Rust serde.
+export enum ErrorCode {
+  NotFound = "not_found",
+  Deleted = "deleted",
+  ReadOnly = "read_only",
+  SaveFailed = "save_failed",
+  RenameConflict = "rename_conflict",
+  DirtyDeleteConflict = "dirty_delete_conflict",
+  BadPath = "bad_path",
+  Unsupported = "unsupported",
+}
+
+export enum PersistencePhase {
+  Clean = "clean",
+  Pending = "pending",
+  Saving = "saving",
+  SaveError = "save_error",
+  Deleted = "deleted",
+}
+
+export enum FsEntryType {
+  File = "file",
+  Directory = "directory",
+  Symlink = "symlink",
+}
+
+export interface LspMethodMap {
+  "textDocument/hover": {
+    params: Omit<HoverParams, "textDocument">;
+    result: Hover | null;
+  };
+  "textDocument/completion": {
+    params: Omit<CompletionParams, "textDocument">;
+    result: CompletionItem[] | CompletionList | null;
+  };
+  "textDocument/definition": {
+    params: Omit<DefinitionParams, "textDocument">;
+    result: Location | Location[] | LocationLink[] | null;
+  };
+  "textDocument/references": {
+    params: Omit<ReferenceParams, "textDocument">;
+    result: Location[] | null;
+  };
+  "textDocument/documentSymbol": {
+    params: Omit<DocumentSymbolParams, "textDocument">;
+    result: DocumentSymbol[] | SymbolInformation[] | null;
+  };
+  // no textDocument field at all — this is the one that doesn't fit the
+  // "always scoped to a file" shape the wire format currently assumes.
+  "workspace/symbol": {
+    params: WorkspaceSymbolParams;
+    result: CanonicalSymbol[] | null;
+  };
+  "textDocument/codeAction": {
+    params: Omit<CodeActionParams, "textDocument">;
+    result: /* LspCommand | */ CodeAction[] | null;
+  };
+  "textDocument/rename": {
+    params: Omit<RenameParams, "textDocument">;
+    result: WorkspaceEdit | null;
+  };
+  "textDocument/formatting": {
+    params: Omit<DocumentFormattingParams, "textDocument">;
+    result: TextEdit[] | null;
+  };
+}
+
+export type ClientMessage =
+  | {
+      kind: "Hello";
+    }
+  | {
+      kind: "DocSubscribe";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+    }
+  | {
+      kind: "DocUnsubscribe";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+    }
+  | {
+      kind: "DocUpdate";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      update: number[];
+    }
+  | {
+      kind: "DocSyncStep1";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      state_vector: number[];
+    }
+  | {
+      kind: "DocSyncStep2";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      update: number[];
+    }
+  | {
+      kind: "DocSave";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      request_id: string;
+    }
+  | {
+      kind: "AwarenessUpdate";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      payload: number[];
+    }
+  | {
+      kind: "TerminalCreate";
+      request_id: string;
+      workspace_id: WorkspaceId;
+      profile_id: string;
+      cols: number;
+      rows: number;
+    }
+  | {
+      kind: "TerminalInput";
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      data: number[];
+    }
+  | {
+      kind: "TerminalResize";
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      cols: number;
+      rows: number;
+    }
+  | {
+      kind: "TerminalRename";
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      title: string;
+    }
+  | {
+      kind: "TerminalTerminate";
+      request_id: string;
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+    }
+  | {
+      kind: "LspRequest";
+      workspace_id: WorkspaceId;
+      scope: LspScope;
+      request_id: string;
+      method: string;
+      params: unknown;
+    }
+  | { kind: "LspCancel"; request_id: string }
+  | {
+      kind: "LspNotification";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      method: string;
+      params: unknown;
+    }
+  | {
+      kind: "Ping";
+    };
+
+export type ServerMessage =
+  | {
+      kind: "Hello";
+      client_id: ClientId;
+      environment_id: string;
+      schema_version: number;
+    }
+  | {
+      kind: "DocSync";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      update: number[];
+    }
+  | {
+      kind: "DocSyncStep2";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      update: number[];
+      state_vector: number[];
+      revision: number;
+      persisted_revision: number;
+    }
+  | {
+      kind: "DocState";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      revision: number;
+      persisted_revision: number;
+      phase: PersistencePhase;
+      error?: string;
+    }
+  | {
+      kind: "DocSaveResult";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      request_id: string;
+      saved_revision: number;
+      current_revision: number;
+      error?: string;
+    }
+  | {
+      kind: "FsRenamed";
+      workspace_id: WorkspaceId;
+      from: string;
+      to: string;
+      entry_type: FsEntryType;
+    }
+  | {
+      kind: "FsDeleted";
+      workspace_id: WorkspaceId;
+      path: string;
+      entry_type: FsEntryType;
+    }
+  | {
+      kind: "FsChanged";
+      workspace_id: WorkspaceId;
+      paths: FileId[];
+    }
+  | {
+      kind: "GitChanged";
+      workspace_id: WorkspaceId;
+      generation: number;
+      reason: string;
+    }
+  | {
+      kind: "DocUpdate";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      update: number[];
+      origin: ClientId;
+    }
+  | {
+      kind: "AwarenessUpdate";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      client_id: ClientId;
+      payload: number[];
+    }
+  | {
+      kind: "AwarenessSnapshot";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      payload: number[];
+    }
+  | {
+      kind: "TerminalCreated";
+      request_id: string;
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      profile_id: string;
+      title: string;
+      cols: number;
+      rows: number;
+    }
+  | {
+      kind: "TerminalOutput";
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      data: number[];
+    }
+  | {
+      kind: "TerminalState";
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      status: TerminalStatus;
+      title: string;
+      exit?: TerminalExit;
+    }
+  | { kind: "TerminalRenamed"; workspace_id: WorkspaceId; terminal_id: TerminalId; title: string }
+  | {
+      kind: "TerminalTerminateResult";
+      request_id: string;
+      workspace_id: WorkspaceId;
+      terminal_id: TerminalId;
+      error?: string;
+    }
+  | {
+      kind: "TerminalError";
+      request_id?: string;
+      workspace_id?: WorkspaceId;
+      terminal_id?: TerminalId;
+      code: TerminalErrorCode;
+      message: string;
+    }
+  | {
+      kind: "LspResponse";
+      request_id: string;
+      result: unknown;
+    }
+  | {
+      kind: "LspError";
+      request_id: string;
+      code?: number;
+      message: string;
+      data?: unknown;
+    }
+  | {
+      kind: "LspServerEvent";
+      workspace_id: WorkspaceId;
+      language_id: LanguageId;
+      file_id?: FileId;
+      method: string;
+      params: unknown;
+    }
+  | {
+      kind: "Diagnostics";
+      workspace_id: WorkspaceId;
+      file_id: FileId;
+      diagnostics: LspDiagnostic[];
+    }
+  | {
+      kind: "Error";
+      context?: string;
+      code: ErrorCode;
+      message: string;
+    }
+  | {
+      kind: "Pong";
+    };
+
+export interface LspDiagnostic {
+  range: LspRange;
+  severity: DiagnosticSeverity;
+  message: string;
+  source?: string;
+  code: DiagnosticCode;
+  tags: DiagnosticTag[];
+  related_information: RelatedInfo[];
+}
+
+type DiagnosticCode = number | string;
+
+interface LspRange {
+  start: LspPosition;
+  end: LspPosition;
+}
+
+interface LspPosition {
+  line: number;
+  character: number;
+}
+
+enum DiagnosticSeverity {
+  Error = 1,
+  Warning = 2,
+  Information = 3,
+  Hint = 4,
+}
+
+enum DiagnosticTag {
+  Unnecessary = 1,
+  Deprecated = 2,
+}
+
+interface RelatedInfo {
+  location_uri: string;
+  range: LspRange;
+  message: string;
+}

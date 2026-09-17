@@ -3,13 +3,14 @@ import { IncomingMessage } from "http";
 import { LspProxyManager } from "@/service/lsp/manager";
 import { ProcessLspClientFactory } from "@/service/lsp/proxy/process";
 import { FileExtension } from "@/service/lsp/proxy";
-import { CacheManager } from "@/service/lsp/cache";
 import { LspEventHandler } from "@/service/lsp/events";
 import WebSocketClient, { ProxyErrorObject } from "@/service/lsp/websocket";
 import { LspError, ServerAcceptedMessage } from "@/service/lsp";
 import watchman from "fb-watchman";
 import { FileChangeType } from "vscode-languageserver-protocol";
 import { DirectoryEntry } from "@/lib/storage";
+import { FileSystemManager } from "@/service/lsp/filesystem";
+import { VirtualEditorManager } from "@/service/lsp/virtualEditor";
 
 export async function SOCKET(
   client: WebSocket,
@@ -19,7 +20,12 @@ export async function SOCKET(
   wss: WebSocketServer,
 ) {
   console.log("New LSP WebSocket connection.");
-  let cacheManager: CacheManager | undefined = undefined;
+  // {user}/{workspace}
+  //                   /code
+  //                   /config
+  //       /config
+  let filesystem: FileSystemManager | undefined = undefined;
+  let virtualEditor: VirtualEditorManager | undefined = undefined;
   let manager: LspProxyManager | undefined = undefined;
   let watchmanClient: watchman.Client | undefined = undefined;
   // TODO: Alec the project name must be validated before it's used because it
@@ -33,10 +39,10 @@ export async function SOCKET(
       console.log("- Clients all successfully cleaned up");
     }
 
-    if (cacheManager) {
-      console.log("- Syncing all files to S3");
-      await cacheManager.syncAllToS3();
-      console.log("- All files synced to S3.");
+    if (virtualEditor) {
+      console.log("- Closing virtual editor");
+      await virtualEditor.closeAll();
+      console.log("- All tabs in the virtual editor has closed.");
     }
 
     if (watchmanClient) {
@@ -64,15 +70,20 @@ export async function SOCKET(
 
       // Initialize the LSP proxy
       if (type === "client-to-server-request" && message.method === "initialize") {
-        if (!cacheManager) {
-          cacheManager = new CacheManager(process.env.S3_BUCKET!, ctx.workspace);
+        if (!filesystem) {
+          console.log("Recived initalize request. Creating filesystem manager for client.");
+          filesystem = new FileSystemManager();
+        }
+        if (!virtualEditor) {
+          console.log("Recived initialize request. Creating virutal editor for client.");
+          virtualEditor = new VirtualEditorManager(filesystem);
         }
         if (!watchmanClient) {
           watchmanClient = new watchman.Client();
           if (watchmanClient) {
             const root = process.env.ROOT_PROJECT_DIRECTORY as string;
             // TODO(Alec): Hard coding for now to prove a point
-            const watchPath = `${root}/test/test`;
+            const watchPath = `${root}/typescript/new`;
             watchmanClient.capabilityCheck(
               {
                 optional: [],
@@ -191,18 +202,31 @@ export async function SOCKET(
         return;
       }
 
-      if (!cacheManager) {
+      if (!filesystem) {
         requestClient.sendResponseError(ProxyErrorObject[1]);
+        return;
+      }
+
+      if (!virtualEditor) {
+        requestClient.sendResponseError(ProxyErrorObject[2]);
         return;
       }
 
       // I think the easiest solution for now would be to handle the generic requests here
       // and do the language specific requests later on in the program. In the future we
       // should try and create a strategy pattern that does this.
-      if (type === "client-to-server-request" && message.method === "workspace/workspaceFolders") {
-        await manager.sendMessageToAll(message);
-        requestClient.sendSuccessConfirmation();
-        return;
+      if (type === "client-to-server-request") {
+        if (message.method === "workspace/workspaceFolders") {
+          await manager.sendMessageToAll(message);
+          requestClient.sendSuccessConfirmation();
+          return;
+        } else if (message.method === "experimental/textDocument/create") {
+          const result = await filesystem.createFile(message.params.path);
+          requestClient.sendResponse({ method: message.method, ...result });
+        } else if (message.method === "experimental/folder/create") {
+          const result = await filesystem.createFolder(message.params.path);
+          requestClient.sendResponse({ method: message.method, ...result });
+        }
       } else if (type === "client-to-server-notification" && message.method === "workspace/didChangeWatchedFiles") {
         for (const change of message.params.changes) {
           if (change.type === 1) {
@@ -234,7 +258,7 @@ export async function SOCKET(
         requestClient.sendNotification({ method: "proxy/initialize", language: lang, params: proxy.support });
       }
 
-      const eventHandler = new LspEventHandler(proxy, cacheManager);
+      const eventHandler = new LspEventHandler(proxy, virtualEditor);
 
       if (type === "client-to-server-request") {
         if (message.method === "textDocument/completion") {
@@ -249,6 +273,12 @@ export async function SOCKET(
         } else if (message.method === "textDocument/codeAction") {
           const result = await eventHandler.textDocumentCodeAction(message.params);
           requestClient.sendResponse({ method: message.method, ...result });
+        } else if (message.method === "experimental/delete") {
+          const result = await eventHandler.textDocumentDelete(message.params);
+          requestClient.sendResponse({ method: message.method, ...result });
+        } else if (message.method === "textDocument/rename") {
+          const result = await eventHandler.textDocumentRename(message.params);
+          requestClient.sendResponse({ method: mess.meth });
         }
       } else if (type === "client-to-server-notification") {
         if (message.method === "textDocument/didOpen") {

@@ -1,0 +1,33 @@
+[package]
+name = "code-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["multipart", "ws", "macros"] }
+axum-extra = { version = "0.12.6", features = ["typed-header"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+headers = "0.4"
+rovo = { version = "0.4.8", features = ["swagger"] }
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+tokio-tungstenite = "0.29.0"
+tower-http = { version = "0.6.1", features = ["fs", "limit", "trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15.7"
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+ignore = "0.4.33"
+globset = "0.4.20"
+regex = "1.13.1"
+percent-encoding = "2"
+grep-matcher = "0.1.9"
+yrs = { version = "0.27.4", features = ["sync"] }
+dashmap = "6.2.1"
+serde_json = "1.0.151"
+bytes = "1.12.1"
+portable-pty = "0.9.0"
+uuid = { version = "1.26.0", features = ["serde", "v4"] }
+notify = "8.2.0"
