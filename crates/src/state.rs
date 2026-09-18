@@ -100,6 +100,7 @@ impl AppState {
                 )
             })
             .collect();
+        let debug = crate::debug::DebugService::new(config.debug_adapter_path.clone());
         Self {
             config: Arc::new(config),
             workspaces: Arc::new(workspaces),
@@ -107,7 +108,7 @@ impl AppState {
             terminals: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
-            debug: crate::debug::DebugService::new(),
+            debug,
             next_connection_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -250,6 +251,7 @@ mod tests {
                 id: "test".into(),
                 name: "Test".into(),
             },
+            debug_adapter_path: crate::config::DEFAULT_DEBUG_ADAPTER_PATH.into(),
             workspaces: vec![
                 WorkspaceConfig {
                     id: "one".into(),

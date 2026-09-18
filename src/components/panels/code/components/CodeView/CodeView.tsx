@@ -84,7 +84,7 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
             override: [autoCompletionOverride],
           }),
           linterExtension(),
-          infoPanelExtension(),
+          // infoPanelExtension(),
         ],
       }),
     });

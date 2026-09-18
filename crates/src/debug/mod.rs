@@ -1,10 +1,9 @@
 mod config;
-mod dap;
+pub(crate) mod dap;
 mod models;
 mod profiles;
 mod service;
 
-pub use config::*;
 pub use models::*;
 pub use profiles::*;
 pub use service::*;

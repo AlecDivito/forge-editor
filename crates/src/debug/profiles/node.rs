@@ -1,14 +1,11 @@
-use super::{AdapterCommand, AdapterTransport, DebugStrategy, common_launch};
-use crate::debug::ResolvedConfiguration;
-use serde_json::{Value, json};
+use super::{AdapterCommand, AdapterTransport, DebugStrategy};
+use crate::debug::{LaunchArguments, ResolvedConfiguration};
+use serde_json::json;
 use std::path::PathBuf;
 
 pub(super) struct NodeStrategy;
 
 impl DebugStrategy for NodeStrategy {
-    fn type_id(&self) -> &'static str {
-        "forge-node"
-    }
     fn display_name(&self) -> &'static str {
         "js-debug (JavaScript/TypeScript)"
     }
@@ -25,9 +22,7 @@ impl DebugStrategy for NodeStrategy {
             adapter_id: "pwa-node",
         }
     }
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> Value {
-        let mut value = common_launch(configuration);
-        value["type"] = json!("pwa-node");
-        value
+    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> LaunchArguments {
+        LaunchArguments::from(configuration).with_adapter_field("type", json!("pwa-node"))
     }
 }

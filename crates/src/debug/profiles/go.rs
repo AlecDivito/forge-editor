@@ -1,13 +1,10 @@
-use super::{AdapterCommand, AdapterTransport, DebugStrategy, common_launch};
-use crate::debug::ResolvedConfiguration;
-use serde_json::{Value, json};
+use super::{AdapterCommand, AdapterTransport, DebugStrategy};
+use crate::debug::{LaunchArguments, ResolvedConfiguration};
+use serde_json::json;
 
 pub(super) struct GoStrategy;
 
 impl DebugStrategy for GoStrategy {
-    fn type_id(&self) -> &'static str {
-        "forge-go"
-    }
     fn display_name(&self) -> &'static str {
         "Delve (Go)"
     }
@@ -21,9 +18,7 @@ impl DebugStrategy for GoStrategy {
             adapter_id: "go",
         }
     }
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> Value {
-        let mut value = common_launch(configuration);
-        value["mode"] = json!("debug");
-        value
+    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> LaunchArguments {
+        LaunchArguments::from(configuration).with_adapter_field("mode", json!("debug"))
     }
 }
