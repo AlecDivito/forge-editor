@@ -20,6 +20,7 @@ import {
   WorkspaceSymbolParams,
   Range,
 } from "vscode-languageserver-protocol";
+import type { SessionSnapshot } from "@/lib/generated";
 
 export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
 export type FileId = string & { readonly __brand: "FileId" };
@@ -200,6 +201,11 @@ export type ClientMessage =
       terminal_id: TerminalId;
     }
   | {
+      kind: "DebugSessionSubscribe";
+      workspace_id: WorkspaceId;
+      session_id: string;
+    }
+  | {
       kind: "LspRequest";
       workspace_id: WorkspaceId;
       scope: LspScope;
@@ -342,6 +348,12 @@ export type ServerMessage =
       terminal_id?: TerminalId;
       code: TerminalErrorCode;
       message: string;
+    }
+  | {
+      kind: "DebugSessionUpdated";
+      workspace_id: WorkspaceId;
+      session_id: string;
+      session: SessionSnapshot;
     }
   | {
       kind: "LspResponse";

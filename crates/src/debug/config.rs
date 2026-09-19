@@ -1,62 +1,26 @@
-use super::StrategyRegistry;
-use rovo::schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use super::{models::*, strategy_for};
+use crate::models::WorkspaceId;
+use serde::Deserialize;
 use std::{
-    collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
+    collections::HashMap,
     path::{Path, PathBuf},
 };
 
-const MAX_CONFIG_BYTES: u64 = 256 * 1024;
-const MAX_ARGS: usize = 128;
-const MAX_ENV: usize = 64;
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigurationList {
-    pub revision: String,
-    pub configurations: Vec<ConfigurationSummary>,
-    pub diagnostics: Vec<DebugDiagnostic>,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigurationSummary {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub request: String,
-    pub valid: bool,
-    pub warnings: Vec<String>,
-    pub capabilities: PublicCapabilities,
-}
-
-#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PublicCapabilities {
-    pub integrated_terminal: bool,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct DebugDiagnostic {
-    pub path: String,
-    pub message: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct LaunchFile {
-    version: String,
+    #[serde(default)]
+    _version: Option<String>,
     configurations: Vec<RawConfiguration>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct RawConfiguration {
     name: String,
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default = "launch_request")]
     request: String,
     program: String,
     cwd: Option<String>,
@@ -64,294 +28,220 @@ struct RawConfiguration {
     args: Vec<String>,
     #[serde(default)]
     env: HashMap<String, String>,
-    console: Option<String>,
     stop_on_entry: Option<bool>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ResolvedConfiguration {
-    pub id: String,
-    pub name: String,
-    pub adapter_type: String,
-    pub program: PathBuf,
-    pub cwd: PathBuf,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
-    pub stop_on_entry: bool,
+fn launch_request() -> String {
+    "launch".into()
 }
 
-pub struct LoadedConfigurations {
-    pub public: ConfigurationList,
-    pub resolved: HashMap<String, ResolvedConfiguration>,
+/// Owns one workspace's configuration policy and parsing boundary.
+///
+/// This is deliberately the sole entry point for launch configuration: callers
+/// cannot obtain a resolved configuration without first passing through the
+/// same validation and sanitization rules.
+pub struct ConfigurationLoader<'a> {
+    root: &'a Path,
+    workspace_id: &'a WorkspaceId,
 }
 
-pub async fn load(
-    root: &Path,
-    workspace_id: &str,
-    strategies: &StrategyRegistry,
-) -> anyhow::Result<LoadedConfigurations> {
-    let path = root.join(".vscode/launch.json");
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(LoadedConfigurations {
-                public: ConfigurationList {
-                    revision: revision(b"missing"),
-                    configurations: vec![],
-                    diagnostics: vec![],
-                },
-                resolved: HashMap::new(),
-            });
-        }
-        Err(error) => return Err(error.into()),
-    };
-    if bytes.len() as u64 > MAX_CONFIG_BYTES {
-        anyhow::bail!("launch.json exceeds 256 KiB");
+impl<'a> ConfigurationLoader<'a> {
+    pub fn new(root: &'a Path, workspace_id: &'a WorkspaceId) -> Self {
+        Self { root, workspace_id }
     }
-    let rev = revision(&bytes);
-    let text =
-        std::str::from_utf8(&bytes).map_err(|_| anyhow::anyhow!("launch.json must be UTF-8"))?;
-    let stripped = strip_jsonc(text)?;
-    let file: LaunchFile = match serde_json::from_str(&stripped) {
-        Ok(file) => file,
-        Err(error) => {
-            return Ok(LoadedConfigurations {
-                public: ConfigurationList {
-                    revision: rev,
-                    configurations: vec![],
-                    diagnostics: vec![DebugDiagnostic {
-                        path: ".vscode/launch.json".into(),
-                        message: error.to_string(),
-                    }],
-                },
-                resolved: HashMap::new(),
-            });
-        }
-    };
-    let mut summaries = vec![];
-    let mut resolved = HashMap::new();
-    let mut names = HashSet::new();
-    let version_ok = file.version == "0.2.0";
-    for (index, raw) in file.configurations.into_iter().enumerate() {
-        let normalized = raw.name.trim().to_lowercase();
-        let id = stable_id(workspace_id, &normalized, &raw.kind);
-        let mut errors = vec![];
-        if !version_ok {
-            errors.push("version must be 0.2.0".into());
-        }
-        if normalized.is_empty() {
-            errors.push("name must not be empty".into());
-        }
-        if !names.insert(normalized) {
-            errors.push("configuration names must be unique".into());
-        }
-        let strategy = strategies.get(&raw.kind);
-        if strategy.is_none() {
-            errors.push(format!(
-                "unsupported debug type; expected one of: {}",
-                strategies.supported_types().join(", ")
-            ));
-        }
-        if raw.request != "launch" {
-            errors.push("only request: launch is supported".into());
-        }
-        if raw.args.len() > MAX_ARGS {
-            errors.push("args exceeds 128 entries".into());
-        }
-        if raw.env.len() > MAX_ENV {
-            errors.push("env exceeds 64 entries".into());
-        }
-        if raw.console.as_deref().unwrap_or("internalConsole") != "internalConsole" {
-            errors.push("debug adapters currently support internalConsole only".into());
-        }
-        let program = resolve_path(root, &raw.program)
-            .map_err(|e| errors.push(format!("program: {e}")))
-            .ok();
-        let cwd = resolve_path(root, raw.cwd.as_deref().unwrap_or("${workspaceFolder}"))
-            .map_err(|e| errors.push(format!("cwd: {e}")))
-            .ok();
-        for value in raw.args.iter().chain(raw.env.values()) {
-            if value.contains("${") {
-                errors.push("substitutions are supported only in program and cwd".into());
-                break;
+
+    pub async fn load(&self) -> anyhow::Result<LoadedConfigurations> {
+        let path = self.root.join(".vscode/launch.json");
+        let bytes = match tokio::fs::read(&path).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(LoadedConfigurations {
+                    public: ConfigurationList {
+                        revision: Self::revision(b"missing"),
+                        configurations: vec![],
+                        diagnostics: vec![],
+                    },
+                    resolved: HashMap::new(),
+                });
             }
-            if value.len() > 8192 {
-                errors.push("argument or environment value is too large".into());
-                break;
-            }
-        }
-        let valid = errors.is_empty();
-        summaries.push(ConfigurationSummary {
-            id: id.clone(),
-            name: raw.name.clone(),
-            kind: raw.kind.clone(),
-            request: raw.request,
-            valid,
-            warnings: errors.clone(),
-            capabilities: strategy
-                .as_ref()
+            Err(error) => return Err(error.into()),
+        };
+        self.parse(&bytes)
+    }
+
+    /// Parse one launch file without performing I/O or interacting with an adapter.
+    ///
+    /// Keeping parsing separate from `load` makes the configuration boundary
+    /// directly testable and ensures later session code cannot accidentally accept
+    /// unvalidated launch data.
+    pub fn parse(&self, bytes: &[u8]) -> anyhow::Result<LoadedConfigurations> {
+        let root = self
+            .root
+            .canonicalize()
+            .map_err(|_| anyhow::anyhow!("workspace root does not exist"))?;
+        let rev = Self::revision(bytes);
+        let text =
+            std::str::from_utf8(bytes).map_err(|_| anyhow::anyhow!("launch.json must be UTF-8"))?;
+        let file: LaunchFile = serde_json::from_str(text)?;
+        let mut summaries = vec![];
+        let mut resolved = HashMap::new();
+        for raw in file.configurations {
+            let id = self.stable_id(&raw.name, &raw.kind);
+            let capabilities = strategy_for(&raw.kind)
                 .map(|strategy| strategy.capabilities())
-                .unwrap_or_default(),
-        });
-        if valid {
+                .unwrap_or_default();
+            let program = Self::resolve_path(&root, &raw.program)?;
+            let cwd =
+                Self::resolve_path(&root, raw.cwd.as_deref().unwrap_or("${workspaceFolder}"))?;
+            summaries.push(ConfigurationSummary {
+                id: id.clone(),
+                name: raw.name.clone(),
+                kind: raw.kind.clone(),
+                request: raw.request,
+                valid: true,
+                warnings: vec![],
+                capabilities,
+            });
             resolved.insert(
                 id.clone(),
                 ResolvedConfiguration {
                     id,
                     name: raw.name,
                     adapter_type: raw.kind,
-                    program: program.unwrap(),
-                    cwd: cwd.unwrap(),
+                    program,
+                    cwd,
                     args: raw.args,
                     env: raw.env,
                     stop_on_entry: raw.stop_on_entry.unwrap_or(false),
                 },
             );
         }
-        if errors.len() > 16 {
-            summaries[index].warnings.truncate(16);
-        }
+        Ok(LoadedConfigurations {
+            public: ConfigurationList {
+                revision: rev,
+                configurations: summaries,
+                diagnostics: vec![],
+            },
+            resolved,
+        })
     }
-    Ok(LoadedConfigurations {
-        public: ConfigurationList {
-            revision: rev,
-            configurations: summaries,
-            diagnostics: vec![],
-        },
-        resolved,
-    })
-}
 
-fn resolve_path(root: &Path, value: &str) -> anyhow::Result<PathBuf> {
-    if value.contains("${command:") || value.contains("${env:") || value.contains("${config:") {
-        anyhow::bail!("unsupported substitution");
+    fn resolve_path(root: &Path, value: &str) -> anyhow::Result<PathBuf> {
+        let value = value.replace("${workspaceFolder}", root.to_string_lossy().as_ref());
+        let candidate = PathBuf::from(value);
+        let candidate = if candidate.is_absolute() {
+            candidate
+        } else {
+            root.join(candidate)
+        };
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|_| anyhow::anyhow!("path does not exist"))?;
+        if !canonical.starts_with(root) {
+            anyhow::bail!("path resolves outside the workspace");
+        }
+        Ok(canonical)
     }
-    let value = value.replace("${workspaceFolder}", root.to_string_lossy().as_ref());
-    if value.contains("${") {
-        anyhow::bail!("unsupported or incomplete substitution");
-    }
-    let candidate = PathBuf::from(value);
-    let candidate = if candidate.is_absolute() {
-        candidate
-    } else {
-        root.join(candidate)
-    };
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|_| anyhow::anyhow!("path does not exist"))?;
-    if !canonical.starts_with(root) {
-        anyhow::bail!("path resolves outside the workspace");
-    }
-    Ok(canonical)
-}
 
-fn stable_id(workspace: &str, name: &str, kind: &str) -> String {
-    revision(format!("{workspace}\0{name}\0{kind}").as_bytes())
-}
-fn revision(bytes: &[u8]) -> String {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut h);
-    format!("{:016x}", h.finish())
-}
+    fn stable_id(&self, name: &str, kind: &str) -> String {
+        Self::revision(format!("{}\0{name}\0{kind}", self.workspace_id).as_bytes())
+    }
 
-fn strip_jsonc(input: &str) -> anyhow::Result<String> {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut string = false;
-    let mut escaped = false;
-    while let Some(c) = chars.next() {
-        if string {
-            out.push(c);
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                string = false;
-            }
-            continue;
-        }
-        if c == '"' {
-            string = true;
-            out.push(c);
-            continue;
-        }
-        if c == '/' && chars.peek() == Some(&'/') {
-            chars.next();
-            for n in chars.by_ref() {
-                if n == '\n' {
-                    out.push('\n');
-                    break;
-                }
-            }
-            continue;
-        }
-        if c == '/' && chars.peek() == Some(&'*') {
-            chars.next();
-            let mut closed = false;
-            while let Some(n) = chars.next() {
-                if n == '\n' {
-                    out.push('\n');
-                }
-                if n == '*' && chars.peek() == Some(&'/') {
-                    chars.next();
-                    closed = true;
-                    break;
-                }
-            }
-            if !closed {
-                anyhow::bail!("unterminated block comment");
-            }
-            continue;
-        }
-        out.push(c);
+    fn revision(bytes: &[u8]) -> String {
+        // Fixed FNV-1a avoids the implementation-defined behavior of DefaultHasher
+        // and makes revisions stable across Forge processes.
+        let hash = bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+        format!("{hash:016x}")
     }
-    if string {
-        anyhow::bail!("unterminated string");
-    }
-    // JSONC permits trailing commas. Remove them outside strings.
-    let mut result = String::with_capacity(out.len());
-    let mut iter = out.chars().peekable();
-    let mut in_string = false;
-    let mut escape = false;
-    while let Some(c) = iter.next() {
-        if in_string {
-            result.push(c);
-            if escape {
-                escape = false
-            } else if c == '\\' {
-                escape = true
-            } else if c == '"' {
-                in_string = false
-            };
-            continue;
-        }
-        if c == '"' {
-            in_string = true;
-            result.push(c);
-            continue;
-        }
-        if c == ',' {
-            let mut look = iter.clone();
-            while matches!(look.peek(), Some(x) if x.is_whitespace()) {
-                look.next();
-            }
-            if matches!(look.peek(), Some(']') | Some('}')) {
-                continue;
-            }
-        }
-        result.push(c);
-    }
-    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn workspace() -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("forge-debug-config-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("main.go"), "package main\nfunc main() {}\n").unwrap();
+        root
+    }
+
+    fn parse_workspace(root: &Path, input: &str) -> LoadedConfigurations {
+        let workspace_id = "workspace-a".to_owned();
+        ConfigurationLoader::new(root, &workspace_id)
+            .parse(input.as_bytes())
+            .unwrap()
+    }
+
     #[test]
-    fn jsonc_comments_and_trailing_commas() {
-        let value: serde_json::Value =
-            serde_json::from_str(&strip_jsonc("{ // c\n \"a\": [1,], /* x */ }").unwrap()).unwrap();
-        assert_eq!(value["a"][0], 1);
+    fn parses_plain_json_without_configuration_policy() {
+        let root = workspace();
+        let loaded = parse_workspace(
+            &root,
+            r#"{
+                "configurations": [{
+                    "name": "Go server",
+                    "type": "forge-go",
+                    "program": "${workspaceFolder}/main.go",
+                    "cwd": "${workspaceFolder}",
+                    "args": ["${env:PORT}"],
+                    "env": {"BAD=NAME": "8080"},
+                    "futureExtension": true
+                }]
+            }"#,
+        );
+        let summary = &loaded.public.configurations[0];
+        assert!(summary.valid);
+        assert_eq!(summary.name, "Go server");
+        assert_eq!(summary.kind, "forge-go");
+        assert_eq!(summary.request, "launch");
+        assert!(summary.warnings.is_empty());
+        assert!(
+            serde_json::to_string(summary)
+                .unwrap()
+                .contains("Go server")
+        );
+        assert!(!serde_json::to_string(summary).unwrap().contains("PORT"));
+        let resolved = loaded.resolved.get(&summary.id).unwrap();
+        assert_eq!(
+            resolved.program,
+            root.join("main.go").canonicalize().unwrap()
+        );
+        assert_eq!(resolved.cwd, root.canonicalize().unwrap());
+        assert_eq!(resolved.env["BAD=NAME"], "8080");
+        assert_eq!(resolved.args, ["${env:PORT}"]);
+        assert!(!resolved.stop_on_entry);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_json_and_paths_outside_the_workspace() {
+        let root = workspace();
+        let outside = root
+            .parent()
+            .unwrap()
+            .join(format!("outside-{}.go", uuid::Uuid::new_v4()));
+        std::fs::write(&outside, "package main").unwrap();
+        let input = format!(
+            r#"{{"configurations":[{{"name":"Escape","type":"forge-go","program":"{}"}}]}}"#,
+            outside.display()
+        );
+        let workspace_id = "workspace-a".to_owned();
+        let loader = ConfigurationLoader::new(&root, &workspace_id);
+        assert!(loader.parse(input.as_bytes()).is_err());
+        assert!(
+            loader
+                .parse(
+                    br#"{"configurations": [ // JSONC is not supported
+            ]}"#
+                )
+                .is_err()
+        );
+        assert!(loader.parse(br#"{"configurations": [],}"#).is_err());
+        std::fs::remove_file(outside).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

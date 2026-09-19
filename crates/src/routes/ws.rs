@@ -689,6 +689,23 @@ async fn dispatch(
             Ok(())
         }
 
+        ClientMessage::DebugSessionSubscribe {
+            workspace_id,
+            session_id,
+        } => {
+            authorize(state, &client_id, &workspace_id).await?;
+            let updates = state.debug.subscribe(&workspace_id, &session_id)?;
+            register_debug_session_subscription(
+                state,
+                &client_id,
+                connection_id,
+                workspace_id,
+                session_id,
+                updates,
+            );
+            Ok(())
+        }
+
         ClientMessage::LspRequest {
             workspace_id,
             scope,
@@ -1003,6 +1020,9 @@ async fn cleanup_connection_resources(
     for entry in handle.doc_forwarders.iter() {
         entry.value().abort();
     }
+    for entry in handle.debug_forwarders.iter() {
+        entry.value().abort();
+    }
 
     let subscriptions: Vec<_> = handle
         .subscribed_documents
@@ -1139,6 +1159,50 @@ async fn send_save_result(
         })
         .await
         .ok();
+}
+
+/// Replaces any existing forwarder for this session on the connection. A watch
+/// receiver carries the complete latest snapshot, so subscribe and reconnect
+/// never depend on observing every intermediate adapter event.
+fn register_debug_session_subscription(
+    state: &AppState,
+    client_id: &ClientId,
+    connection_id: u64,
+    workspace_id: WorkspaceId,
+    session_id: String,
+    mut updates: tokio::sync::watch::Receiver<crate::debug::SessionSnapshot>,
+) {
+    let Some(client_handle) = state.clients.get(client_id) else {
+        return;
+    };
+    if client_handle.connection_id != connection_id {
+        return;
+    }
+    let sender = client_handle.document_tx.clone();
+    if let Some((_, forwarder)) = client_handle.debug_forwarders.remove(&session_id) {
+        forwarder.abort();
+    }
+    let forwarder_session_id = session_id.clone();
+    let forwarder = tokio::spawn(async move {
+        loop {
+            let snapshot = updates.borrow().clone();
+            if sender
+                .send(ServerMessage::DebugSessionUpdated {
+                    workspace_id: workspace_id.clone(),
+                    session_id: forwarder_session_id.clone(),
+                    session: snapshot,
+                })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            if updates.changed().await.is_err() {
+                return;
+            }
+        }
+    });
+    client_handle.debug_forwarders.insert(session_id, forwarder);
 }
 
 /// Spawns a task forwarding this doc's broadcast events to one client's

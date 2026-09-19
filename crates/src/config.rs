@@ -7,6 +7,10 @@ use std::{
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
+/// Temporary development default for the restricted adapter environment.
+/// Deployments should set `FORGE_DEBUG_ADAPTER_PATH` explicitly.
+pub const DEFAULT_DEBUG_ADAPTER_PATH: &str = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:/usr/local/opt/llvm/bin";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentConfig {
     pub id: String,
@@ -20,10 +24,17 @@ pub struct WorkspaceConfig {
     pub root: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugAdapterConfig {
+    pub path: String,
+    pub home: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
     pub environment: EnvironmentConfig,
+    pub debug_adapter: DebugAdapterConfig,
     pub workspaces: Vec<WorkspaceConfig>,
     pub default_workspace_id: String,
 }
@@ -45,6 +56,14 @@ impl Config {
             .unwrap_or_else(|| "8080".into())
             .parse()
             .context("PORT must be a valid TCP port")?;
+        let debug_adapter = DebugAdapterConfig {
+            path: get("FORGE_DEBUG_ADAPTER_PATH")
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_DEBUG_ADAPTER_PATH.into()),
+            home: get("FORGE_DEBUG_ADAPTER_HOME")
+                .or_else(|| get("HOME"))
+                .filter(|value| !value.is_empty()),
+        };
 
         let Some(json) = get("FORGE_WORKSPACES_JSON") else {
             let base = get("BASE_DIRECTORY").context(
@@ -57,6 +76,7 @@ impl Config {
                     id: "local".into(),
                     name: "Local projects".into(),
                 },
+                debug_adapter,
                 workspaces: vec![WorkspaceConfig {
                     id: "default".into(),
                     name: "Default workspace".into(),
@@ -124,6 +144,7 @@ impl Config {
         Ok(Self {
             port,
             environment,
+            debug_adapter,
             workspaces,
             default_workspace_id,
         })
@@ -211,6 +232,7 @@ mod tests {
         let config = parse(values).unwrap();
         assert_eq!(config.default_workspace_id, "two");
         assert_eq!(config.workspaces.len(), 2);
+        assert_eq!(config.debug_adapter.path, DEFAULT_DEBUG_ADAPTER_PATH);
         std::fs::remove_dir_all(root).unwrap();
     }
 

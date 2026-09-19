@@ -100,6 +100,7 @@ impl AppState {
                 )
             })
             .collect();
+        let debug = crate::debug::DebugService::new(config.debug_adapter.clone());
         Self {
             config: Arc::new(config),
             workspaces: Arc::new(workspaces),
@@ -107,7 +108,7 @@ impl AppState {
             terminals: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
-            debug: crate::debug::DebugService::new(),
+            debug,
             next_connection_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -134,6 +135,7 @@ pub struct ClientConnectionHandle {
     /// client's sender. Must be aborted on unsubscribe/disconnect or
     /// they'll leak and keep sending to a dead channel forever.
     pub doc_forwarders: DashMap<(WorkspaceId, FileId), JoinHandle<()>>,
+    pub debug_forwarders: DashMap<String, JoinHandle<()>>,
 }
 
 impl ClientConnectionHandle {
@@ -145,6 +147,7 @@ impl ClientConnectionHandle {
             open_terminals: DashSet::new(),
             authorized_workspaces: DashSet::new(),
             doc_forwarders: DashMap::new(),
+            debug_forwarders: DashMap::new(),
         }
     }
 }
@@ -249,6 +252,10 @@ mod tests {
             environment: EnvironmentConfig {
                 id: "test".into(),
                 name: "Test".into(),
+            },
+            debug_adapter: crate::config::DebugAdapterConfig {
+                path: crate::config::DEFAULT_DEBUG_ADAPTER_PATH.into(),
+                home: None,
             },
             workspaces: vec![
                 WorkspaceConfig {

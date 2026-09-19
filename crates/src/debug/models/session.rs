@@ -3,7 +3,7 @@ use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Public lifecycle of a Forge-owned debug session.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
     Creating,
@@ -18,7 +18,7 @@ pub enum SessionState {
 }
 
 /// Bounded, sanitized output retained in a session snapshot.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputChunk {
     pub sequence: u64,
@@ -27,7 +27,7 @@ pub struct OutputChunk {
 }
 
 /// Durable public view of a debug session.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
     pub session_id: String,

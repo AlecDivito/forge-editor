@@ -42,5 +42,5 @@ export const useLspRuntimeStore = create<LspRuntimeState>((set) => ({
     }
     return { output: [...state.output, item].slice(-1000) };
   }),
-  clearOutput: () => set({ output: [] }),
+  clearOutput: () => set({ notices: [], output: [] }),
 }));

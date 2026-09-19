@@ -1,13 +1,10 @@
-use super::{AdapterCommand, AdapterTransport, DebugStrategy, common_launch};
-use crate::debug::ResolvedConfiguration;
-use serde_json::Value;
+use super::{AdapterCommand, AdapterTransport, DebugStrategy};
+use crate::debug::{LaunchArguments, ResolvedConfiguration};
+use std::path::Path;
 
 pub(super) struct RustStrategy;
 
 impl DebugStrategy for RustStrategy {
-    fn type_id(&self) -> &'static str {
-        "forge-rust"
-    }
     fn display_name(&self) -> &'static str {
         "LLDB (Rust)"
     }
@@ -19,7 +16,11 @@ impl DebugStrategy for RustStrategy {
             adapter_id: "lldb",
         }
     }
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> Value {
-        common_launch(configuration)
+    fn launch_arguments(
+        &self,
+        configuration: &ResolvedConfiguration,
+        _debug_output: Option<&Path>,
+    ) -> LaunchArguments {
+        LaunchArguments::from(configuration)
     }
 }

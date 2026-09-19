@@ -1,12 +1,11 @@
 "use client";
-import { IGridviewPanelProps } from "dockview-react";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Plus, RotateCcw, Square, Trash2, X, ChevronsDown } from "lucide-react";
 import { selectedWorkspace, useWorkspaceStore } from "@/lib/workspaces";
 import { TerminalView } from "./TerminalView";
 import { TerminalSession, terminalRegistry } from "./terminal.registry";
 
-export default function TerminalRegion({ api }: IGridviewPanelProps) {
+export default function TerminalRegion({ onHide }: { onHide?: () => void }) {
   const sessions = useSyncExternalStore(
     terminalRegistry.subscribe,
     terminalRegistry.getSnapshot,
@@ -114,7 +113,7 @@ export default function TerminalRegion({ api }: IGridviewPanelProps) {
             onClick={() => active && void terminalRegistry.terminate(active)}>
             <Square size={13} />
           </Tool>
-          <Tool label="Hide terminal" onClick={() => api.setVisible(false)}>
+          <Tool label="Hide terminal" onClick={() => onHide?.()}>
             <ChevronsDown size={15} />
           </Tool>
         </div>

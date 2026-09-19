@@ -3,13 +3,12 @@
 import FileViewerController from "@/components/panels/filesystem/filesystem";
 import { Orientation } from "dockview";
 import Chat from "./chat";
-import TerminalRegion from "./panels/terminal/TerminalRegion";
+import BottomPanelRegion, { bottomPanelSelectEvent } from "./panels/bottom/BottomPanelRegion";
 import CommandPallet from "./panels/commandPallet/CommandPallet";
 
 import { GridviewReact, GridviewReadyEvent } from "dockview-react";
 import CodeViewerController from "./panels/code/CodeViewerController";
 import { useLspEventRouter } from "@/lib/ws/use-lsp-event-router";
-import { LspNotifications } from "./notifications/LspNotifications";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { selectedWorkspace, useWorkspaceStore } from "@/lib/workspaces";
 import { terminalRegistry } from "./panels/terminal/terminal.registry";
@@ -17,7 +16,7 @@ import { terminalRegistry } from "./panels/terminal/terminal.registry";
 const components = {
   filesystem: FileViewerController,
   code: CodeViewerController,
-  terminal: TerminalRegion,
+  bottomPanel: BottomPanelRegion,
   chat: Chat,
 };
 
@@ -29,14 +28,15 @@ const VSCodeLayout = () => {
     terminalRegistry.getSnapshot,
     terminalRegistry.getSnapshot,
   );
-  const terminalPanel = useRef<{ setVisible(visible: boolean): void } | null>(null);
+  const bottomPanel = useRef<{ setVisible(visible: boolean): void } | null>(null);
   useEffect(() => {
     const showTerminal = (event: KeyboardEvent) => {
       const isTerminalShortcut =
         (event.metaKey && event.key.toLowerCase() === "j") || (event.ctrlKey && event.key === "`");
       if (isTerminalShortcut) {
         event.preventDefault();
-        terminalPanel.current?.setVisible(true);
+        bottomPanel.current?.setVisible(true);
+        window.dispatchEvent(new CustomEvent(bottomPanelSelectEvent, { detail: "terminal" }));
         const active = terminals.at(-1);
         if (active) terminalRegistry.focus(active);
         else if (workspace) void terminalRegistry.create(workspace.id).catch(() => undefined);
@@ -149,21 +149,20 @@ const VSCodeLayout = () => {
     // });
     // chat.api.setVisible(false);
 
-    const terminal = event.api.addPanel({
-      id: "terminal",
-      component: "terminal",
+    const bottom = event.api.addPanel({
+      id: "bottom-panel",
+      component: "bottomPanel",
       params: {},
       size: 280,
       position: { referencePanel: "code", direction: "below" },
     });
-    terminalPanel.current = terminal.api;
-    terminal.api.setVisible(false);
+    bottomPanel.current = bottom.api;
+    bottom.api.setVisible(false);
   };
 
   return (
     <div className="flex h-screen">
       <CommandPallet />
-      <LspNotifications />
       <GridviewReact components={components} onReady={onReady} orientation={Orientation.VERTICAL} />
     </div>
   );

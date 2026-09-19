@@ -1,5 +1,6 @@
 use std::{
     path::Path,
+    process::Stdio,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -38,9 +39,11 @@ pub fn start(state: AppState) -> anyhow::Result<Vec<RecommendedWatcher>> {
                     if paths.is_empty() {
                         return;
                     }
-                    let affects_git = paths
-                        .iter()
-                        .any(|path| path_affects_git(&callback_root, path));
+                    let git_repository_present = callback_state
+                        .workspace(&callback_workspace_id)
+                        .is_ok_and(|workspace| workspace.git_repository_present);
+                    let affects_git =
+                        workspace_paths_affect_git(git_repository_present, &callback_root, &paths);
 
                     // notify preserves both sides of an atomic rename on its
                     // native backends. Route that through the authoritative
@@ -194,13 +197,21 @@ fn path_affects_git(root: &Path, file_id: &str) -> bool {
         .current_dir(root)
         .args(["check-ignore", "--quiet", "--", relative])
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
 }
 
+fn workspace_paths_affect_git(git_repository_present: bool, root: &Path, paths: &[String]) -> bool {
+    git_repository_present && paths.iter().any(|path| path_affects_git(root, path))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RenamePairer, is_complete_rename, path_affects_git, relative_file_id};
+    use super::{
+        RenamePairer, is_complete_rename, path_affects_git, relative_file_id,
+        workspace_paths_affect_git,
+    };
     use notify::{
         EventKind,
         event::{ModifyKind, RenameMode},
@@ -266,6 +277,16 @@ mod tests {
         assert!(!path_affects_git(&root, "/build/output.js"));
         assert!(path_affects_git(&root, "/src/main.rs"));
         assert!(path_affects_git(&root, "/.git/index"));
+        assert!(!workspace_paths_affect_git(
+            false,
+            &root,
+            &["/src/main.rs".into()]
+        ));
+        assert!(workspace_paths_affect_git(
+            true,
+            &root,
+            &["/src/main.rs".into()]
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
 }
