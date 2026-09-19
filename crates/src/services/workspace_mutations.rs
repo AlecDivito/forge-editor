@@ -502,7 +502,10 @@ mod tests {
                     id: "test".into(),
                     name: "Test".into(),
                 },
-                debug_adapter_path: crate::config::DEFAULT_DEBUG_ADAPTER_PATH.into(),
+                debug_adapter: crate::config::DebugAdapterConfig {
+                    path: crate::config::DEFAULT_DEBUG_ADAPTER_PATH.into(),
+                    home: None,
+                },
                 workspaces: vec![WorkspaceConfig {
                     id: "workspace".into(),
                     name: "Workspace".into(),

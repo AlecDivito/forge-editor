@@ -1,5 +1,6 @@
 use super::{AdapterCommand, AdapterTransport, DebugStrategy};
 use crate::debug::{LaunchArguments, ResolvedConfiguration};
+use std::path::Path;
 
 pub(super) struct RustStrategy;
 
@@ -15,7 +16,11 @@ impl DebugStrategy for RustStrategy {
             adapter_id: "lldb",
         }
     }
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> LaunchArguments {
+    fn launch_arguments(
+        &self,
+        configuration: &ResolvedConfiguration,
+        _debug_output: Option<&Path>,
+    ) -> LaunchArguments {
         LaunchArguments::from(configuration)
     }
 }

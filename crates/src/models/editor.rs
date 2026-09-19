@@ -311,6 +311,11 @@ pub enum ClientMessage {
         terminal_id: TerminalId,
     },
 
+    DebugSessionSubscribe {
+        workspace_id: WorkspaceId,
+        session_id: String,
+    },
+
     LspRequest {
         workspace_id: WorkspaceId,
         scope: LspScope,
@@ -438,6 +443,10 @@ impl std::fmt::Display for ClientMessage {
                 f,
                 "TerminalTerminate({request_id}, {workspace_id}, {terminal_id})"
             ),
+            ClientMessage::DebugSessionSubscribe {
+                workspace_id,
+                session_id,
+            } => write!(f, "DebugSessionSubscribe({workspace_id}, {session_id})"),
 
             ClientMessage::LspRequest {
                 workspace_id,
@@ -591,6 +600,12 @@ pub enum ServerMessage {
         message: String,
     },
 
+    DebugSessionUpdated {
+        workspace_id: WorkspaceId,
+        session_id: String,
+        session: crate::debug::SessionSnapshot,
+    },
+
     LspResponse {
         request_id: uuid::Uuid,
         result: serde_json::Value,
@@ -696,6 +711,40 @@ mod tests {
             }
             _ => panic!("decoded wrong message kind"),
         }
+    }
+
+    #[test]
+    fn debug_session_subscription_and_snapshot_round_trip() {
+        let subscribe: ClientMessage = serde_json::from_value(serde_json::json!({
+            "kind": "DebugSessionSubscribe",
+            "workspace_id": "workspace",
+            "session_id": "session"
+        }))
+        .unwrap();
+        assert!(matches!(
+            subscribe,
+            ClientMessage::DebugSessionSubscribe { .. }
+        ));
+
+        let message = ServerMessage::DebugSessionUpdated {
+            workspace_id: "workspace".into(),
+            session_id: "session".into(),
+            session: crate::debug::SessionSnapshot {
+                session_id: "session".into(),
+                workspace_id: "workspace".into(),
+                configuration_id: "configuration".into(),
+                configuration_name: "Configuration".into(),
+                state: crate::debug::SessionState::Running,
+                event_cursor: 4,
+                output: vec![],
+                exit_code: None,
+                error: None,
+                capabilities: crate::debug::PublicCapabilities::default(),
+            },
+        };
+        let json = serde_json::to_string(&message).unwrap();
+        let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, ServerMessage::DebugSessionUpdated { .. }));
     }
 
     #[test]

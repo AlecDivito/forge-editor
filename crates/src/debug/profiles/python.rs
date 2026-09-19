@@ -16,7 +16,11 @@ impl DebugStrategy for PythonStrategy {
             adapter_id: "python",
         }
     }
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> LaunchArguments {
+    fn launch_arguments(
+        &self,
+        configuration: &ResolvedConfiguration,
+        _debug_output: Option<&std::path::Path>,
+    ) -> LaunchArguments {
         LaunchArguments::from(configuration)
             .with_adapter_field("console", json!("internalConsole"))
             .with_adapter_field("justMyCode", json!(true))

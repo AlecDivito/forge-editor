@@ -3,6 +3,80 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, path::PathBuf};
 
+/// A Forge-issued DAP request sequence number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct DapRequestId(u64);
+
+impl DapRequestId {
+    pub(crate) fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+/// DAP requests currently issued by Forge, including their ID and typed payload.
+#[derive(Debug)]
+pub(crate) enum DapRequest {
+    Initialize {
+        id: DapRequestId,
+        arguments: InitializeArguments,
+    },
+    Launch {
+        id: DapRequestId,
+        arguments: LaunchArguments,
+    },
+    ConfigurationDone {
+        id: DapRequestId,
+        arguments: EmptyArguments,
+    },
+    Disconnect {
+        id: DapRequestId,
+        arguments: DisconnectArguments,
+    },
+}
+
+impl DapRequest {
+    pub(crate) fn id(&self) -> DapRequestId {
+        match self {
+            Self::Initialize { id, .. }
+            | Self::Launch { id, .. }
+            | Self::ConfigurationDone { id, .. }
+            | Self::Disconnect { id, .. } => *id,
+        }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::Initialize { .. } => "initialize",
+            Self::Launch { .. } => "launch",
+            Self::ConfigurationDone { .. } => "configurationDone",
+            Self::Disconnect { .. } => "disconnect",
+        }
+    }
+}
+
+impl Serialize for DapRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Initialize { id, arguments } => {
+                Request::new(*id, self.name(), arguments).serialize(serializer)
+            }
+            Self::Launch { id, arguments } => {
+                Request::new(*id, self.name(), arguments).serialize(serializer)
+            }
+            Self::ConfigurationDone { id, arguments } => {
+                Request::new(*id, self.name(), arguments).serialize(serializer)
+            }
+            Self::Disconnect { id, arguments } => {
+                Request::new(*id, self.name(), arguments).serialize(serializer)
+            }
+        }
+    }
+}
+
 /// Arguments Forge sends in the DAP `initialize` request.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,19 +146,30 @@ pub(crate) struct DisconnectArguments {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct Request<A> {
-    pub(crate) seq: u64,
+struct Request<A> {
+    pub(crate) seq: DapRequestId,
     #[serde(rename = "type")]
     pub(crate) kind: &'static str,
     pub(crate) command: &'static str,
     pub(crate) arguments: A,
 }
 
+impl<A> Request<A> {
+    fn new(seq: DapRequestId, command: &'static str, arguments: A) -> Self {
+        Self {
+            seq,
+            kind: "request",
+            command,
+            arguments,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct Response {
     #[serde(rename = "type")]
     pub(crate) kind: String,
-    pub(crate) request_seq: u64,
+    pub(crate) request_seq: DapRequestId,
     pub(crate) success: bool,
     #[serde(default)]
     pub(crate) message: Option<String>,

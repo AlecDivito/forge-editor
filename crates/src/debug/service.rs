@@ -1,9 +1,10 @@
 use super::{
     ConfigurationList, CreateSession, SessionSnapshot, SessionState, config, strategy_for,
 };
-use crate::{actors::DebugSessionActor, models::WorkspaceId};
+use crate::{actors::DebugSessionActor, config::DebugAdapterConfig, models::WorkspaceId};
 use dashmap::DashMap;
 use std::sync::Arc;
+use tokio::sync::watch;
 use uuid::Uuid;
 
 /// Application-facing debug API: configuration discovery and session lookup.
@@ -12,14 +13,14 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct DebugService {
     sessions: Arc<DashMap<String, Arc<DebugSessionActor>>>,
-    adapter_path: String,
+    adapter: DebugAdapterConfig,
 }
 
 impl DebugService {
-    pub fn new(adapter_path: String) -> Self {
+    pub fn new(adapter: DebugAdapterConfig) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
-            adapter_path,
+            adapter,
         }
     }
 
@@ -93,7 +94,7 @@ impl DebugService {
             snapshot.clone(),
             configuration,
             strategy,
-            self.adapter_path.clone(),
+            self.adapter.clone(),
         );
         self.sessions.insert(session_id, actor);
         Ok(snapshot)
@@ -110,6 +111,19 @@ impl DebugService {
             .ok_or_else(|| anyhow::anyhow!("debug session not found"))?
             .clone();
         actor.snapshot(workspace).await
+    }
+
+    pub fn subscribe(
+        &self,
+        workspace: &WorkspaceId,
+        session: &str,
+    ) -> anyhow::Result<watch::Receiver<SessionSnapshot>> {
+        let actor = self
+            .sessions
+            .get(session)
+            .ok_or_else(|| anyhow::anyhow!("debug session not found"))?
+            .clone();
+        actor.subscribe(workspace)
     }
 
     pub async fn stop(

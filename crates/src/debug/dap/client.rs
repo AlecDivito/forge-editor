@@ -1,9 +1,8 @@
 use super::{reader::DapReader, writer::DapWriter};
 use crate::debug::{
-    DisconnectArguments, EmptyArguments, Event, InitializeArguments, LaunchArguments, Request,
-    Response,
+    DapRequest, DapRequestId, DisconnectArguments, EmptyArguments, Event, InitializeArguments,
+    LaunchArguments, Response,
 };
-use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -12,9 +11,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub(crate) struct DapClient<R, W> {
     reader: DapReader<R>,
     writer: DapWriter<W>,
-    next_sequence: u64,
+    next_request_id: u64,
     pending_events: VecDeque<Event>,
-    pending_responses: HashMap<u64, Response>,
+    pending_responses: HashMap<DapRequestId, Response>,
 }
 
 impl<R, W> DapClient<R, W>
@@ -26,7 +25,7 @@ where
         Self {
             reader: DapReader::new(reader),
             writer: DapWriter::new(writer),
-            next_sequence: 1,
+            next_request_id: 1,
             pending_events: VecDeque::new(),
             pending_responses: HashMap::new(),
         }
@@ -36,7 +35,8 @@ where
         &mut self,
         arguments: InitializeArguments,
     ) -> anyhow::Result<()> {
-        self.request("initialize", arguments).await
+        let id = self.next_id();
+        self.request(DapRequest::Initialize { id, arguments }).await
     }
 
     /// Sends launch and configurationDone before awaiting either response.
@@ -47,17 +47,26 @@ where
         &mut self,
         arguments: LaunchArguments,
     ) -> anyhow::Result<()> {
-        let launch = self.send_request("launch", arguments).await?;
-        let configuration_done = self
-            .send_request("configurationDone", EmptyArguments {})
-            .await?;
+        let launch_cmd = DapRequest::Launch {
+            id: self.next_id(),
+            arguments,
+        };
+        let launch = self.send_request(launch_cmd).await?;
+        let config_cmd = DapRequest::ConfigurationDone {
+            id: self.next_id(),
+            arguments: EmptyArguments {},
+        };
+        let configuration_done = self.send_request(config_cmd).await?;
         self.wait_for_response(launch).await?;
         self.wait_for_response(configuration_done).await
     }
 
     pub(crate) async fn disconnect(&mut self, terminate_debuggee: bool) -> anyhow::Result<()> {
-        self.request("disconnect", DisconnectArguments { terminate_debuggee })
-            .await
+        let disconnect_cmd = DapRequest::Disconnect {
+            id: self.next_id(),
+            arguments: DisconnectArguments { terminate_debuggee },
+        };
+        self.request(disconnect_cmd).await
     }
 
     pub(crate) async fn next_event(&mut self) -> anyhow::Result<Option<Event>> {
@@ -74,36 +83,25 @@ where
         }
     }
 
-    async fn request<A: Serialize>(
-        &mut self,
-        command: &'static str,
-        arguments: A,
-    ) -> anyhow::Result<()> {
-        let sequence = self.send_request(command, arguments).await?;
-        self.wait_for_response(sequence).await
+    async fn request(&mut self, request: DapRequest) -> anyhow::Result<()> {
+        let request = self.send_request(request).await?;
+        self.wait_for_response(request).await
     }
 
-    async fn send_request<A: Serialize>(
-        &mut self,
-        command: &'static str,
-        arguments: A,
-    ) -> anyhow::Result<u64> {
-        let sequence = self.next_sequence;
-        self.next_sequence += 1;
-        self.writer
-            .write(&Request {
-                seq: sequence,
-                kind: "request",
-                command,
-                arguments,
-            })
-            .await?;
-        Ok(sequence)
+    async fn send_request(&mut self, request: DapRequest) -> anyhow::Result<DapRequest> {
+        self.writer.write(&request).await?;
+        Ok(request)
     }
 
-    async fn wait_for_response(&mut self, sequence: u64) -> anyhow::Result<()> {
-        if let Some(response) = self.pending_responses.remove(&sequence) {
-            return response_result(response, sequence);
+    fn next_id(&mut self) -> DapRequestId {
+        let id = DapRequestId::new(self.next_request_id);
+        self.next_request_id += 1;
+        id
+    }
+
+    async fn wait_for_response(&mut self, request: DapRequest) -> anyhow::Result<()> {
+        if let Some(response) = self.pending_responses.remove(&request.id()) {
+            return response_result(response, request);
         }
         loop {
             let message = self
@@ -119,22 +117,23 @@ where
                 Ok(response) if response.kind == "response" => response,
                 _ => continue,
             };
-            if response.request_seq != sequence {
+            if response.request_seq != request.id() {
                 self.pending_responses
                     .insert(response.request_seq, response);
                 continue;
             }
-            return response_result(response, sequence);
+            return response_result(response, request);
         }
     }
 }
 
-fn response_result(response: Response, sequence: u64) -> anyhow::Result<()> {
+fn response_result(response: Response, request: DapRequest) -> anyhow::Result<()> {
     if response.success {
         return Ok(());
     }
     anyhow::bail!(
-        "debug adapter rejected request {sequence}: {}",
+        "debug adapter rejected {}: {}",
+        request.name(),
         response.message.unwrap_or_else(|| "unknown error".into())
     );
 }

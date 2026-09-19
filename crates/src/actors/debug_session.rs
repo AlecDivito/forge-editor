@@ -1,15 +1,16 @@
 use crate::{
+    config::DebugAdapterConfig,
     debug::{
         AdapterCommand, AdapterTransport, DebugStrategy, Event, InitializeArguments,
         LaunchArguments, OutputChunk, ResolvedConfiguration, SessionSnapshot, SessionState, dap,
     },
     models::WorkspaceId,
 };
-use std::{process::Stdio, sync::Arc, time::Duration};
+use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
     process::{Child, ChildStderr, Command},
-    sync::Mutex,
+    sync::{Mutex, watch},
 };
 
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
@@ -18,7 +19,9 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 #[derive(Debug)]
 pub struct DebugSessionActor {
     workspace_id: WorkspaceId,
+    session_id: String,
     record: Mutex<Record>,
+    updates: watch::Sender<SessionSnapshot>,
 }
 
 #[derive(Debug)]
@@ -63,23 +66,21 @@ impl DebugSessionActor {
         snapshot: SessionSnapshot,
         configuration: ResolvedConfiguration,
         strategy: Box<dyn DebugStrategy>,
-        adapter_path: String,
+        adapter: DebugAdapterConfig,
     ) -> Arc<Self> {
+        let (updates, _) = watch::channel(snapshot.clone());
         let actor = Arc::new(Self {
             workspace_id: snapshot.workspace_id.clone(),
+            session_id: snapshot.session_id.clone(),
             record: Mutex::new(Record {
                 snapshot,
                 child: None,
                 stop: false,
                 output_bytes: 0,
             }),
+            updates,
         });
-        tokio::spawn(Self::run(
-            actor.clone(),
-            configuration,
-            strategy,
-            adapter_path,
-        ));
+        tokio::spawn(Self::run(actor.clone(), configuration, strategy, adapter));
         actor
     }
 
@@ -101,6 +102,16 @@ impl DebugSessionActor {
         Ok(self.record.lock().await.snapshot.clone())
     }
 
+    pub fn subscribe(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> anyhow::Result<watch::Receiver<SessionSnapshot>> {
+        if self.workspace_id != *workspace {
+            anyhow::bail!("debug session not found")
+        }
+        Ok(self.updates.subscribe())
+    }
+
     pub async fn stop(&self, workspace: &WorkspaceId) -> anyhow::Result<SessionSnapshot> {
         if self.workspace_id != *workspace {
             anyhow::bail!("debug session not found")
@@ -115,6 +126,7 @@ impl DebugSessionActor {
             if let Some(child) = record.child.as_mut() {
                 let _ = child.start_kill();
             }
+            self.publish(&record);
         }
         Ok(record.snapshot.clone())
     }
@@ -123,13 +135,44 @@ impl DebugSessionActor {
         actor: Arc<Self>,
         configuration: ResolvedConfiguration,
         strategy: Box<dyn DebugStrategy>,
-        adapter_path: String,
+        adapter: DebugAdapterConfig,
+    ) {
+        let debug_output = strategy.debug_output_path(&actor.session_id);
+        if let Some(path) = debug_output.as_deref()
+            && let Err(error) = Self::prepare_debug_output(path).await
+        {
+            actor
+                .fail(&format!(
+                    "The debug build artifact could not be prepared: {error}"
+                ))
+                .await;
+            return;
+        }
+        Self::run_session(
+            actor.clone(),
+            configuration,
+            strategy,
+            adapter,
+            debug_output.as_deref(),
+        )
+        .await;
+        if let Some(path) = debug_output {
+            Self::remove_debug_output(&path).await;
+        }
+    }
+
+    async fn run_session(
+        actor: Arc<Self>,
+        configuration: ResolvedConfiguration,
+        strategy: Box<dyn DebugStrategy>,
+        adapter: DebugAdapterConfig,
+        debug_output: Option<&Path>,
     ) {
         actor.transition(SessionState::SpawningAdapter).await;
 
-        let adapter = strategy.command();
+        let adapter_command = strategy.command();
         let (child, input, output, stderr) =
-            match Self::spawn_adapter(&adapter, &configuration.cwd, &adapter_path).await {
+            match Self::spawn_adapter(&adapter_command, &configuration.cwd, &adapter).await {
                 Ok(connection) => connection,
                 Err(error) => {
                     actor
@@ -147,11 +190,17 @@ impl DebugSessionActor {
         }
 
         let mut client = dap::DapClient::new(output, input);
-        if !actor.initialize(&mut client, &adapter.adapter_id).await {
+        if !actor
+            .initialize(&mut client, &adapter_command.adapter_id)
+            .await
+        {
             return;
         }
         if !actor
-            .launch(&mut client, strategy.launch_arguments(&configuration))
+            .launch(
+                &mut client,
+                strategy.launch_arguments(&configuration, debug_output),
+            )
             .await
         {
             return;
@@ -167,12 +216,12 @@ impl DebugSessionActor {
         R: tokio::io::AsyncRead + Unpin,
         W: tokio::io::AsyncWrite + Unpin,
     {
-        if client
+        if let Err(error) = client
             .initialize(InitializeArguments::forge(adapter_id))
             .await
-            .is_err()
         {
-            self.fail("Debug adapter did not initialize.").await;
+            self.fail(&format!("Debug adapter initialization failed: {error}"))
+                .await;
             return false;
         }
         true
@@ -189,8 +238,9 @@ impl DebugSessionActor {
     {
         self.transition(SessionState::Launching).await;
         self.transition(SessionState::Configuring).await;
-        if client.launch_and_configure(arguments).await.is_err() {
-            self.fail("The debug target could not be launched.").await;
+        if let Err(error) = client.launch_and_configure(arguments).await {
+            self.fail(&format!("The debug target could not be launched: {error}"))
+                .await;
             return false;
         }
         true
@@ -226,20 +276,27 @@ impl DebugSessionActor {
         let mut record = self.record.lock().await;
         match event {
             Event::Output { category, output } => record.append_output(&category, output),
-            Event::Exited { exit_code } => record.snapshot.exit_code = exit_code,
+            Event::Exited { exit_code } => {
+                record.snapshot.exit_code = exit_code;
+                record.snapshot.event_cursor += 1;
+            }
             Event::Terminated => record.transition(SessionState::Terminated),
             _ => {}
         }
+        self.publish(&record);
     }
 
     async fn transition(&self, state: SessionState) {
-        self.record.lock().await.transition(state);
+        let mut record = self.record.lock().await;
+        record.transition(state);
+        self.publish(&record);
     }
 
     async fn attach(&self, child: Child) {
         let mut record = self.record.lock().await;
         record.child = Some(child);
         record.transition(SessionState::Initializing);
+        self.publish(&record);
     }
 
     async fn stop_requested(&self) -> bool {
@@ -254,6 +311,7 @@ impl DebugSessionActor {
         if !matches!(record.snapshot.state, SessionState::Failed) {
             record.transition(SessionState::Terminated);
         }
+        self.publish(&record);
     }
 
     async fn fail(&self, message: &str) {
@@ -263,6 +321,7 @@ impl DebugSessionActor {
             let _ = child.start_kill();
         }
         record.transition(SessionState::Failed);
+        self.publish(&record);
     }
 
     async fn drain_stderr(actor: Arc<Self>, mut stderr: ChildStderr) {
@@ -274,18 +333,42 @@ impl DebugSessionActor {
                 return;
             }
             let text = String::from_utf8_lossy(&buffer[..count]).replace('\r', "");
-            actor.record.lock().await.append_output("adapter", text);
+            let mut record = actor.record.lock().await;
+            record.append_output("adapter", text);
+            actor.publish(&record);
+        }
+    }
+
+    fn publish(&self, record: &Record) {
+        self.updates.send_replace(record.snapshot.clone());
+    }
+
+    async fn prepare_debug_output(path: &Path) -> anyhow::Result<()> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("debug build artifact has no parent directory"))?;
+        tokio::fs::create_dir_all(parent).await?;
+        Ok(())
+    }
+
+    async fn remove_debug_output(path: &Path) {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "could not remove debug build artifact")
+            }
         }
     }
 
     async fn spawn_adapter(
         adapter: &AdapterCommand,
         cwd: &std::path::Path,
-        adapter_path: &str,
+        config: &DebugAdapterConfig,
     ) -> anyhow::Result<(Child, DapOutput, DapInput, Option<ChildStderr>)> {
         match &adapter.transport {
             AdapterTransport::Stdio => {
-                let mut command = Self::adapter_process(adapter, cwd, adapter_path);
+                let mut command = Self::adapter_process(adapter, cwd, config);
                 command.stdin(Stdio::piped()).stdout(Stdio::piped());
                 let mut child = command.spawn()?;
                 let input = child
@@ -304,7 +387,7 @@ impl DebugSessionActor {
                 let address = listener.local_addr()?;
                 drop(listener);
                 let port = address.port().to_string();
-                let mut command = Self::adapter_process(adapter, cwd, adapter_path);
+                let mut command = Self::adapter_process(adapter, cwd, config);
                 command.args(
                     arguments
                         .iter()
@@ -334,7 +417,7 @@ impl DebugSessionActor {
     fn adapter_process(
         adapter: &AdapterCommand,
         cwd: &std::path::Path,
-        adapter_path: &str,
+        config: &DebugAdapterConfig,
     ) -> Command {
         let mut command = Command::new(&adapter.executable);
         command
@@ -344,8 +427,11 @@ impl DebugSessionActor {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .env_clear()
-            .env("PATH", adapter_path)
+            .env("PATH", &config.path)
             .kill_on_drop(true);
+        if let Some(home) = &config.home {
+            command.env("HOME", home);
+        }
         command
     }
 }

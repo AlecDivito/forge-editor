@@ -22,7 +22,11 @@ impl DebugStrategy for NodeStrategy {
             adapter_id: "pwa-node",
         }
     }
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> LaunchArguments {
+    fn launch_arguments(
+        &self,
+        configuration: &ResolvedConfiguration,
+        _debug_output: Option<&std::path::Path>,
+    ) -> LaunchArguments {
         LaunchArguments::from(configuration).with_adapter_field("type", json!("pwa-node"))
     }
 }

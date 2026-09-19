@@ -5,6 +5,7 @@ mod python;
 mod rust;
 
 use super::{LaunchArguments, PublicCapabilities, ResolvedConfiguration};
+use std::path::{Path, PathBuf};
 
 pub use factory::strategy_for;
 
@@ -35,5 +36,15 @@ pub trait DebugStrategy: Send + Sync {
         PublicCapabilities::default()
     }
     fn command(&self) -> AdapterCommand;
-    fn launch_arguments(&self, configuration: &ResolvedConfiguration) -> LaunchArguments;
+    /// Returns a Forge-managed path for an adapter build artifact, when the
+    /// adapter supports one. The actor creates its parent and removes the
+    /// artifact after the session.
+    fn debug_output_path(&self, _session_id: &str) -> Option<PathBuf> {
+        None
+    }
+    fn launch_arguments(
+        &self,
+        configuration: &ResolvedConfiguration,
+        debug_output: Option<&Path>,
+    ) -> LaunchArguments;
 }
