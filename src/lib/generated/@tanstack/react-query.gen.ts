@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getStatus, listFiles, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
-import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getStatus, listFiles, listModels, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
+import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -53,6 +53,27 @@ export const getEnvironmentOptions = (options?: Options<GetEnvironmentData>) => 
         return data;
     },
     queryKey: getEnvironmentQueryKey(options)
+});
+
+export const listModelsQueryKey = (options?: Options<ListModelsData>) => createQueryKey('listModels', options);
+
+/**
+ * List models from the configured OpenAI-compatible backend.
+ *
+ * The backend is included only when both OPENAI_API_BASE_URL and
+ * OPENAI_API_KEY are configured. Credentials never leave this process.
+ */
+export const listModelsOptions = (options?: Options<ListModelsData>) => queryOptions<ListModelsResponse, AxiosError<DefaultError>, ListModelsResponse, ReturnType<typeof listModelsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listModels({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listModelsQueryKey(options)
 });
 
 export const listFilesQueryKey = (options: Options<ListFilesData>) => createQueryKey('listFiles', options);

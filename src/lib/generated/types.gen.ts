@@ -4,6 +4,17 @@ export type ClientOptions = {
     baseURL: 'http://localhost:8080' | (string & {});
 };
 
+export type AgentModelCatalog = {
+    configured: boolean;
+    models: Array<AgentModelDescriptor>;
+};
+
+export type AgentModelDescriptor = {
+    id: string;
+    label: string;
+    provider: string;
+};
+
 export type ConfigurationList = {
     configurations: Array<ConfigurationSummary>;
     diagnostics: Array<DebugDiagnostic>;
@@ -394,6 +405,29 @@ export type GetEnvironmentResponses = {
 };
 
 export type GetEnvironmentResponse = GetEnvironmentResponses[keyof GetEnvironmentResponses];
+
+export type ListModelsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/agent/models';
+};
+
+export type ListModelsErrors = {
+    /**
+     * The configured backend could not be contacted or returned an invalid response
+     */
+    502: unknown;
+};
+
+export type ListModelsResponses = {
+    /**
+     * The available model catalog or an unconfigured catalog
+     */
+    200: AgentModelCatalog;
+};
+
+export type ListModelsResponse = ListModelsResponses[keyof ListModelsResponses];
 
 export type ListFilesData = {
     body?: never;

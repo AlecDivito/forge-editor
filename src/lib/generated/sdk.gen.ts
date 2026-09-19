@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -21,6 +21,18 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 export const getEnvironment = <ThrowOnError extends boolean = false>(options?: Options<GetEnvironmentData, ThrowOnError>) => (options?.client ?? client).get<GetEnvironmentResponses, unknown, ThrowOnError>({
     responseType: 'json',
     url: '/api/environment',
+    ...options
+});
+
+/**
+ * List models from the configured OpenAI-compatible backend.
+ *
+ * The backend is included only when both OPENAI_API_BASE_URL and
+ * OPENAI_API_KEY are configured. Credentials never leave this process.
+ */
+export const listModels = <ThrowOnError extends boolean = false>(options?: Options<ListModelsData, ThrowOnError>) => (options?.client ?? client).get<ListModelsResponses, ListModelsErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/models',
     ...options
 });
 

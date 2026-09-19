@@ -4,18 +4,20 @@ import { ImagePlus, SendHorizonal, X } from "lucide-react";
 import { useRef } from "react";
 import { useAgentComposer } from "../hooks/use-agent-composer.hook";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
-import { agentModels } from "../types/agent-harness.types";
+import { ModelSelector } from "./ModelSelector";
 
 export function AgentComposer() {
   const activeConversationId = useAgentHarnessStore((state) => state.activeConversationId);
   const conversation = useAgentHarnessStore((state) =>
     state.conversations.find((item) => item.id === activeConversationId),
   );
-  const setModel = useAgentHarnessStore((state) => state.setModel);
   const fileInput = useRef<HTMLInputElement>(null);
   const composer = useAgentComposer(activeConversationId);
   if (!conversation) return null;
-  const canSend = Boolean(composer.draft.trim() || composer.attachments.length) && conversation.status !== "streaming";
+  const canSend =
+    Boolean(composer.draft.trim() || composer.attachments.length) &&
+    Boolean(conversation.model) &&
+    conversation.status !== "streaming";
 
   return (
     <form onSubmit={composer.submit} className="shrink-0 border-t border-border bg-card p-3">
@@ -70,17 +72,7 @@ export function AgentComposer() {
         />
         <div className="flex items-center justify-between gap-2 pt-1">
           <div className="flex min-w-0 items-center gap-1">
-            <select
-              value={conversation.model}
-              onChange={(event) => setModel(conversation.id, event.target.value)}
-              className="h-7 max-w-36 truncate rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
-              aria-label="Model">
-              {agentModels.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <ModelSelector />
             <input
               ref={fileInput}
               type="file"

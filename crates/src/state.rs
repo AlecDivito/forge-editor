@@ -263,6 +263,7 @@ mod tests {
                 },
             ],
             default_workspace_id: "one".into(),
+            openai_compatible: None,
         });
         assert_eq!(
             state

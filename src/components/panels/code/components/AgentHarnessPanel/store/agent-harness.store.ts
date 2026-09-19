@@ -1,13 +1,13 @@
 import { nanoid } from "nanoid";
 import { create } from "zustand";
-import { AgentConversation, AgentMessage, ConversationStatus } from "../types/agent-harness.types";
+import { AgentConversation, AgentMessage, AgentModelSelection, ConversationStatus } from "../types/agent-harness.types";
 
 const makeConversation = (): AgentConversation => ({
   id: nanoid(),
   title: "New conversation",
   createdAt: Date.now(),
   isOpen: true,
-  model: "default",
+  model: null,
   status: "idle",
   messages: [],
 });
@@ -18,7 +18,7 @@ type AgentHarnessState = {
   createConversation: () => void;
   selectConversation: (id: string) => void;
   closeConversation: (id: string) => void;
-  setModel: (id: string, model: string) => void;
+  setModel: (id: string, model: AgentModelSelection | null) => void;
   addMessage: (id: string, message: AgentMessage) => void;
   setConversationStatus: (id: string, status: ConversationStatus) => void;
 };

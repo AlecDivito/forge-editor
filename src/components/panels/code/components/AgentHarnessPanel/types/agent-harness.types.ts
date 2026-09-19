@@ -11,18 +11,31 @@ export type AgentMessage = {
   attachments?: AgentAttachment[];
 };
 export type ConversationStatus = "idle" | "streaming";
+
+/** A model identity is provider-scoped; its display label is never used as an API identifier. */
+export type AgentModelSelection = {
+  id: string;
+  label: string;
+  provider: string;
+};
+
+/** The provider/model portion of the future AgentPrompt WebSocket operation. */
+export type AgentProcessingRequest = {
+  conversationId: string;
+  prompt: string;
+  model: {
+    id: string;
+    provider: string;
+  };
+  attachments: AgentAttachment[];
+};
+
 export type AgentConversation = {
   id: string;
   title: string;
   createdAt: number;
   isOpen: boolean;
-  model: string;
+  model: AgentModelSelection | null;
   status: ConversationStatus;
   messages: AgentMessage[];
 };
-
-export const agentModels = [
-  { id: "default", label: "Choose a model" },
-  { id: "claude-sonnet", label: "Claude Sonnet" },
-  { id: "gpt-5", label: "GPT-5" },
-] as const;

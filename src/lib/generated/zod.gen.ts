@@ -4,6 +4,17 @@ import * as z from 'zod';
 
 import { FsFileType, SessionState } from './types.gen';
 
+export const zAgentModelDescriptor = z.object({
+    id: z.string(),
+    label: z.string(),
+    provider: z.string()
+});
+
+export const zAgentModelCatalog = z.object({
+    configured: z.boolean(),
+    models: z.array(zAgentModelDescriptor)
+});
+
 export const zCreateSession = z.object({
     activeFileId: z.string().nullish(),
     configurationId: z.string(),
@@ -268,6 +279,11 @@ export const zWorkspaceQuery = z.object({
 });
 
 export const zGetEnvironmentResponse = zEnvironmentSnapshot;
+
+/**
+ * The available model catalog or an unconfigured catalog
+ */
+export const zListModelsResponse = zAgentModelCatalog;
 
 export const zListFilesQuery = z.object({
     workspace_id: z.string(),

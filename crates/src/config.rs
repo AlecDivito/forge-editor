@@ -20,12 +20,35 @@ pub struct WorkspaceConfig {
     pub root: PathBuf,
 }
 
+#[derive(Clone)]
+pub struct OpenAiCompatibleConfig {
+    pub base_url: String,
+    api_key: String,
+}
+
+impl std::fmt::Debug for OpenAiCompatibleConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OpenAiCompatibleConfig")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"[redacted]")
+            .finish()
+    }
+}
+
+impl OpenAiCompatibleConfig {
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
     pub environment: EnvironmentConfig,
     pub workspaces: Vec<WorkspaceConfig>,
     pub default_workspace_id: String,
+    pub openai_compatible: Option<OpenAiCompatibleConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +68,19 @@ impl Config {
             .unwrap_or_else(|| "8080".into())
             .parse()
             .context("PORT must be a valid TCP port")?;
+        let openai_compatible = match (
+            get("OPENAI_API_BASE_URL").filter(|value| !value.trim().is_empty()),
+            get("OPENAI_API_KEY").filter(|value| !value.trim().is_empty()),
+        ) {
+            (Some(base_url), Some(api_key)) => Some(OpenAiCompatibleConfig { base_url, api_key }),
+            (Some(_), None) | (None, Some(_)) => {
+                tracing::warn!(
+                    "OPENAI_API_BASE_URL and OPENAI_API_KEY must both be set; the model provider is disabled"
+                );
+                None
+            }
+            (None, None) => None,
+        };
 
         let Some(json) = get("FORGE_WORKSPACES_JSON") else {
             let base = get("BASE_DIRECTORY").context(
@@ -63,6 +99,7 @@ impl Config {
                     root: canonical_directory(Path::new(&base), "BASE_DIRECTORY")?,
                 }],
                 default_workspace_id: "default".into(),
+                openai_compatible,
             });
         };
 
@@ -126,6 +163,7 @@ impl Config {
             environment,
             workspaces,
             default_workspace_id,
+            openai_compatible,
         })
     }
 }

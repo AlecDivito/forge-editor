@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod editor;
 pub mod environment;
 pub mod file;
@@ -8,6 +9,7 @@ pub mod rpc;
 pub mod search;
 pub mod workspace_mutation;
 
+pub use agent::*;
 pub use editor::*;
 pub use environment::*;
 pub use file::*;

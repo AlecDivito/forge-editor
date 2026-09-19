@@ -508,6 +508,7 @@ mod tests {
                     root: root.clone(),
                 }],
                 default_workspace_id: "workspace".into(),
+                openai_compatible: None,
             }),
             root,
         )
