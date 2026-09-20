@@ -8,8 +8,8 @@ use tokio::{fs, io::AsyncWriteExt};
 use crate::{
     config::OpenAiCompatibleConfig,
     models::{
-        AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
-        AiSessionSummary, ChatCompletionRequest, ChatMessage, OpenAiChatMessage,
+        AI_SESSION_RECORD_VERSION, AiSession, AiSessionFailure, AiSessionMetadata, AiSessionModel,
+        AiSessionRecord, AiSessionSummary, ChatCompletionRequest, ChatMessage, OpenAiChatMessage,
     },
     util::time::now_ms,
 };
@@ -81,6 +81,7 @@ impl AiSessionService {
         let session = AiSession {
             metadata: metadata.clone(),
             messages: Vec::new(),
+            failures: Vec::new(),
         };
         self.append_to_path(
             &path,
@@ -105,13 +106,8 @@ impl AiSessionService {
     }
 
     /// Ask the selected model for a short human-facing session title.
-    /// A local prompt-derived title remains the fallback when the backend is
-    /// unavailable or returns unusable content.
-    pub async fn generate_title(&self, model: &AiSessionModel, prompt: &str) -> String {
-        let fallback = title_from_prompt(prompt);
-        let Some(config) = self.model_backend.as_ref() else {
-            return fallback;
-        };
+    pub async fn generate_title(&self, model: &AiSessionModel, prompt: &str) -> Option<String> {
+        let config = self.model_backend.as_ref()?;
         let endpoint = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
         let request = ChatCompletionRequest {
             model: model.model_id.clone(),
@@ -152,7 +148,7 @@ impl AiSessionService {
                 .ok_or(())
         }
         .await;
-        result.unwrap_or(fallback)
+        result.ok()
     }
 
     fn load_sessions(&self) -> anyhow::Result<()> {
@@ -240,6 +236,7 @@ fn replay_session(session_id: &str, contents: &str) -> Result<AiSession, String>
                 session = Some(AiSession {
                     metadata,
                     messages: Vec::new(),
+                    failures: Vec::new(),
                 });
             }
             (Some(session), record) => apply_record(session, session_id, record)?,
@@ -269,10 +266,21 @@ fn apply_record(
             version,
             role,
             content,
+            thinking,
             ..
-        } if version == AI_SESSION_RECORD_VERSION => {
-            session.messages.push(ChatMessage { role, content })
-        }
+        } if version == AI_SESSION_RECORD_VERSION => session.messages.push(ChatMessage {
+            role,
+            content,
+            thinking,
+        }),
+        AiSessionRecord::Failure {
+            version,
+            message,
+            created_at_ms,
+        } if version == AI_SESSION_RECORD_VERSION => session.failures.push(AiSessionFailure {
+            message,
+            created_at_ms,
+        }),
         AiSessionRecord::SessionCreated { .. } => {
             return Err("The AI session storage has multiple creation records".to_owned());
         }
@@ -294,19 +302,6 @@ fn validate_session_id(session_id: &str) -> Result<(), String> {
         return Err("The AI session id is invalid".to_owned());
     }
     Ok(())
-}
-
-pub fn title_from_prompt(prompt: &str) -> String {
-    let normalized = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut title = normalized.chars().take(60).collect::<String>();
-    if normalized.chars().count() > 60 {
-        title.push('…');
-    }
-    if title.is_empty() {
-        DEFAULT_SESSION_TITLE.to_owned()
-    } else {
-        title
-    }
 }
 
 #[derive(Deserialize)]
@@ -343,7 +338,7 @@ fn normalize_title(content: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AiSessionService, DEFAULT_SESSION_TITLE, replay_session, title_from_prompt};
+    use super::{AiSessionService, DEFAULT_SESSION_TITLE, replay_session};
     use crate::models::{AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, ChatRole};
 
     #[test]
@@ -362,7 +357,20 @@ mod tests {
                 version: AI_SESSION_RECORD_VERSION,
                 role: ChatRole::User,
                 content: "Fix the widget".into(),
+                thinking: None,
                 created_at_ms: 2,
+            },
+            AiSessionRecord::Message {
+                version: AI_SESSION_RECORD_VERSION,
+                role: ChatRole::Assistant,
+                content: "Done".into(),
+                thinking: Some("I inspected the widget state first.".into()),
+                created_at_ms: 3,
+            },
+            AiSessionRecord::Failure {
+                version: AI_SESSION_RECORD_VERSION,
+                message: "The next response stream was interrupted".into(),
+                created_at_ms: 4,
             },
         ];
         let mut contents = records
@@ -373,12 +381,12 @@ mod tests {
             .join("\n");
         contents.push_str("\n{\"type\":");
         let session = replay_session("conversation-1", &contents).unwrap();
-        assert_eq!(session.messages.len(), 1);
-    }
-
-    #[test]
-    fn makes_a_unicode_safe_title() {
-        assert_eq!(title_from_prompt("  Fix\nthis  "), "Fix this");
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(
+            session.messages[1].thinking.as_deref(),
+            Some("I inspected the widget state first.")
+        );
+        assert_eq!(session.failures.len(), 1);
     }
 
     #[test]
@@ -407,6 +415,7 @@ mod tests {
                 version: AI_SESSION_RECORD_VERSION,
                 role: ChatRole::User,
                 content: "The zebra renderer is broken".into(),
+                thinking: None,
                 created_at_ms: 3,
             },
         ];

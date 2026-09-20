@@ -7,8 +7,8 @@ use crate::{
     config::OpenAiCompatibleConfig,
     models::{
         AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
-        ChatCompletionChunk, ChatCompletionRequest, ChatMessage, ChatRole, OpenAiChatMessage,
-        ServerMessage,
+        AssistantResponse, ChatCompletionChunk, ChatCompletionRequest, ChatMessage, ChatRole,
+        OpenAiChatMessage, ServerMessage,
     },
     services::ai_session::AiSessionService,
     util::time::now_ms,
@@ -83,7 +83,7 @@ impl AiSessionActor {
                             model_id,
                             prompt,
                             session,
-                            &sessions,
+                            sessions.clone(),
                             recipient,
                         )
                         .await;
@@ -136,26 +136,29 @@ async fn run_prompt(
     model_id: String,
     prompt: String,
     session: &mut AiSession,
-    sessions: &AiSessionService,
+    sessions: Arc<AiSessionService>,
     recipient: mpsc::Sender<ServerMessage>,
 ) {
-    let failure = |message: &str| ServerMessage::AgentError {
-        request_id: request_id.clone(),
-        conversation_id: session_id.to_owned(),
-        message: message.to_owned(),
-    };
     if provider != "openai-compatible" {
-        recipient
-            .send(failure("The selected model provider is not configured"))
-            .await
-            .ok();
+        send_failure(
+            session_id,
+            &request_id,
+            "The selected model provider is not configured",
+            &sessions,
+            &recipient,
+        )
+        .await;
         return;
     }
     let Some(config) = config else {
-        recipient
-            .send(failure("No OpenAI-compatible model backend is configured"))
-            .await
-            .ok();
+        send_failure(
+            session_id,
+            &request_id,
+            "No OpenAI-compatible model backend is configured",
+            &sessions,
+            &recipient,
+        )
+        .await;
         return;
     };
     if model_id.trim().is_empty()
@@ -163,10 +166,14 @@ async fn run_prompt(
         || prompt.trim().is_empty()
         || prompt.len() > 100_000
     {
-        recipient
-            .send(failure("The selected model or chat transcript is invalid"))
-            .await
-            .ok();
+        send_failure(
+            session_id,
+            &request_id,
+            "The selected model or chat transcript is invalid",
+            &sessions,
+            &recipient,
+        )
+        .await;
         return;
     }
 
@@ -187,35 +194,21 @@ async fn run_prompt(
         .sum::<usize>()
         + prompt.len();
     if session.messages.len() >= 100 || prospective_message_bytes > 100_000 {
-        recipient
-            .send(failure("The in-memory chat transcript exceeds its limit"))
-            .await
-            .ok();
+        send_failure(
+            session_id,
+            &request_id,
+            "The in-memory chat transcript exceeds its limit",
+            &sessions,
+            &recipient,
+        )
+        .await;
         return;
     }
 
     let model = AiSessionModel { provider, model_id };
-    if session.metadata.title == "New conversation" {
-        let title = sessions.generate_title(&model, &prompt).await;
-        match sessions
-            .append(
-                session_id,
-                AiSessionRecord::SessionNamed {
-                    version: AI_SESSION_RECORD_VERSION,
-                    title: title.clone(),
-                    updated_at_ms: now_ms(),
-                },
-            )
-            .await
-        {
-            Ok(()) => {}
-            Err(message) => {
-                recipient.send(failure(&message)).await.ok();
-                return;
-            }
-        }
-        session.metadata.title = title;
-    }
+    let should_generate_title = sessions
+        .get(session_id)
+        .is_some_and(|session| session.metadata.title == "New conversation");
 
     if session.metadata.model.as_ref() != Some(&model) {
         match sessions
@@ -231,7 +224,7 @@ async fn run_prompt(
         {
             Ok(()) => {}
             Err(message) => {
-                recipient.send(failure(&message)).await.ok();
+                send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
                 return;
             }
         }
@@ -244,6 +237,7 @@ async fn run_prompt(
                 version: AI_SESSION_RECORD_VERSION,
                 role: ChatRole::User,
                 content: prompt.clone(),
+                thinking: None,
                 created_at_ms: now_ms(),
             },
         )
@@ -251,14 +245,53 @@ async fn run_prompt(
     {
         Ok(()) => {}
         Err(message) => {
-            recipient.send(failure(&message)).await.ok();
+            send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
             return;
         }
     }
-    session.messages.push(crate::models::ChatMessage {
+    session.messages.push(ChatMessage {
         role: ChatRole::User,
-        content: prompt,
+        content: prompt.clone(),
+        thinking: None,
     });
+    if should_generate_title {
+        let title_session_id = session_id.to_owned();
+        let title_request_id = request_id.clone();
+        let title_model = model.clone();
+        let title_prompt = prompt.clone();
+        let title_sessions = sessions.clone();
+        let title_recipient = recipient.clone();
+        tokio::spawn(async move {
+            let Some(title) = title_sessions
+                .generate_title(&title_model, &title_prompt)
+                .await
+            else {
+                return;
+            };
+            if let Err(error) = title_sessions
+                .append(
+                    &title_session_id,
+                    AiSessionRecord::SessionNamed {
+                        version: AI_SESSION_RECORD_VERSION,
+                        title: title.clone(),
+                        updated_at_ms: now_ms(),
+                    },
+                )
+                .await
+            {
+                tracing::warn!(session_id = title_session_id, %error, "could not persist AI session title");
+                return;
+            }
+            title_recipient
+                .send(ServerMessage::AgentSessionNamed {
+                    request_id: title_request_id,
+                    conversation_id: title_session_id,
+                    title,
+                })
+                .await
+                .ok();
+        });
+    }
     match stream_openai_compatible(
         config,
         &model.model_id,
@@ -270,25 +303,27 @@ async fn run_prompt(
     .await
     {
         Ok(response) => {
-            if !response.is_empty() {
+            if !response.content.is_empty() || response.thinking.is_some() {
                 if let Err(message) = sessions
                     .append(
                         session_id,
                         AiSessionRecord::Message {
                             version: AI_SESSION_RECORD_VERSION,
                             role: ChatRole::Assistant,
-                            content: response.clone(),
+                            content: response.content.clone(),
+                            thinking: response.thinking.clone(),
                             created_at_ms: now_ms(),
                         },
                     )
                     .await
                 {
-                    recipient.send(failure(&message)).await.ok();
+                    send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
                     return;
                 }
-                session.messages.push(crate::models::ChatMessage {
+                session.messages.push(ChatMessage {
                     role: ChatRole::Assistant,
-                    content: response,
+                    content: response.content,
+                    thinking: response.thinking,
                 });
             }
             recipient
@@ -300,16 +335,40 @@ async fn run_prompt(
                 .ok();
         }
         Err(message) => {
-            recipient
-                .send(ServerMessage::AgentError {
-                    request_id,
-                    conversation_id: session_id.to_owned(),
-                    message,
-                })
-                .await
-                .ok();
+            send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
         }
     }
+}
+
+async fn send_failure(
+    session_id: &str,
+    request_id: &str,
+    message: &str,
+    sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
+) {
+    let message = match sessions
+        .append(
+            session_id,
+            AiSessionRecord::Failure {
+                version: AI_SESSION_RECORD_VERSION,
+                message: message.to_owned(),
+                created_at_ms: now_ms(),
+            },
+        )
+        .await
+    {
+        Ok(()) => message.to_owned(),
+        Err(storage_error) => storage_error,
+    };
+    recipient
+        .send(ServerMessage::AgentError {
+            request_id: request_id.to_owned(),
+            conversation_id: session_id.to_owned(),
+            message,
+        })
+        .await
+        .ok();
 }
 
 async fn ensure_session<'a>(
@@ -330,7 +389,7 @@ async fn stream_openai_compatible(
     conversation_id: &str,
     request_id: &str,
     sender: mpsc::Sender<ServerMessage>,
-) -> Result<String, String> {
+) -> Result<AssistantResponse, String> {
     let endpoint = chat_completions_endpoint(&config.base_url)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(90))
@@ -363,17 +422,34 @@ async fn stream_openai_compatible(
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut response_text = String::new();
+    let mut thinking = String::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| "The model response stream was interrupted".to_owned())?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(event) = take_event(&mut buffer) {
             if event == "[DONE]" {
-                return Ok(response_text);
+                return Ok(AssistantResponse::new(response_text, thinking));
             }
             let chunk: ChatCompletionChunk = serde_json::from_str(&event)
                 .map_err(|_| "The model backend returned an invalid stream event".to_owned())?;
             for choice in chunk.choices {
+                if let Some(reasoning) = choice
+                    .delta
+                    .reasoning
+                    .or(choice.delta.reasoning_content)
+                    .filter(|reasoning| !reasoning.is_empty())
+                {
+                    thinking.push_str(&reasoning);
+                }
                 if let Some(text) = choice.delta.content.filter(|text| !text.is_empty()) {
+                    let text = if response_text.is_empty() {
+                        text.trim_start().to_owned()
+                    } else {
+                        text
+                    };
+                    if text.is_empty() {
+                        continue;
+                    }
                     response_text.push_str(&text);
                     if sender
                         .send(ServerMessage::AgentTextDelta {
@@ -384,13 +460,13 @@ async fn stream_openai_compatible(
                         .await
                         .is_err()
                     {
-                        return Ok(response_text);
+                        return Ok(AssistantResponse::new(response_text, thinking));
                     }
                 }
             }
         }
     }
-    Ok(response_text)
+    Err("The model response stream ended before completion".to_owned())
 }
 
 fn chat_completions_endpoint(base_url: &str) -> Result<reqwest::Url, String> {
@@ -415,7 +491,10 @@ fn take_event(buffer: &mut String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{AiSessionActor, chat_completions_endpoint, take_event};
-    use crate::{models::ServerMessage, services::ai_session::AiSessionService};
+    use crate::{
+        models::{AssistantResponse, ServerMessage},
+        services::ai_session::AiSessionService,
+    };
     use std::sync::Arc;
     use tokio::{sync::mpsc, time::Duration};
 
@@ -470,5 +549,18 @@ mod tests {
             Some("{\"choices\": []}")
         );
         assert_eq!(take_event(&mut buffer).as_deref(), Some("[DONE]"));
+    }
+
+    #[test]
+    fn trims_assistant_content_and_retains_thinking() {
+        let response = AssistantResponse::new(
+            "\n\n  The fix is ready.\n".into(),
+            "\n first inspect the state \n".into(),
+        );
+        assert_eq!(response.content, "The fix is ready.");
+        assert_eq!(
+            response.thinking.as_deref(),
+            Some("first inspect the state")
+        );
     }
 }

@@ -63,20 +63,21 @@ export function ConversationTranscript() {
   const conversation = useAgentHarnessStore((state) =>
     state.conversations.find((item) => item.id === activeConversationId),
   );
-  if (!conversation) return null;
+  const messages = conversation?.messages ?? [];
+  const isStreaming = conversation?.status === "streaming";
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor" scrollPreviousItemPeek={48}>
       <MessageScroller className="flex-1">
         <MessageScrollerViewport className="px-3 py-4">
           <MessageScrollerContent
             className="mx-auto w-full max-w-2xl gap-4"
-            aria-busy={conversation.status === "streaming"}>
-            {conversation.messages.map((message) => (
+            aria-busy={isStreaming}>
+            {messages.map((message) => (
               <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.role === "user"}>
                 <TranscriptMessage message={message} />
               </MessageScrollerItem>
             ))}
-            {conversation.status === "streaming" && (
+            {isStreaming && (
               <MessageScrollerItem messageId="streaming" className="px-1">
                 <Marker aria-live="polite" className="text-xs">
                   <MarkerIcon>

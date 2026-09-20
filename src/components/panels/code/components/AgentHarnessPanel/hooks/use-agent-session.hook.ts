@@ -1,4 +1,4 @@
-import { getSessionOptions, getSessionQueryKey } from "@/lib/generated/@tanstack/react-query.gen";
+import { getSessionOptions } from "@/lib/generated/@tanstack/react-query.gen";
 import type { AiSession } from "@/lib/generated/types.gen";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { nanoid } from "nanoid";
@@ -31,12 +31,11 @@ export function useAgentSession() {
   const hydrateSession = useAgentHarnessStore((state) => state.hydrateSession);
   return useMutation({
     mutationFn: (sessionId: string) =>
-      queryClient.fetchQuery({
+      queryClient.query({
         ...getSessionOptions({ path: { session_id: sessionId } }),
         staleTime: 30_000,
       }),
-    onSuccess: (session, sessionId) => {
-      queryClient.setQueryData(getSessionQueryKey({ path: { session_id: sessionId } }), session);
+    onSuccess: (session) => {
       hydrateSession(toConversation(session));
     },
   });

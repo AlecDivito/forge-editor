@@ -1,4 +1,6 @@
 import { socket } from "@/lib/ws/connection";
+import { listSessionsQueryKey } from "@/lib/generated/@tanstack/react-query.gen";
+import { useQueryClient } from "@tanstack/react-query";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect } from "react";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
@@ -12,24 +14,33 @@ type StartChatInput = {
 };
 
 export function useAgentChat() {
+  const queryClient = useQueryClient();
   const addMessage = useAgentHarnessStore((state) => state.addMessage);
   const appendMessageText = useAgentHarnessStore((state) => state.appendMessageText);
   const setConversationStatus = useAgentHarnessStore((state) => state.setConversationStatus);
+  const setConversationTitle = useAgentHarnessStore((state) => state.setConversationTitle);
 
   useEffect(() => {
     const unsubscribe = socket.subscribe((message) => {
       switch (message.kind) {
+        case "AgentSessionStarted":
+          queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+          break;
         case "AgentStarted":
           setConversationStatus(message.conversation_id, "streaming");
           break;
         case "AgentTextDelta":
           appendMessageText(message.conversation_id, message.request_id, message.text);
           break;
+        case "AgentSessionNamed":
+          setConversationTitle(message.conversation_id, message.title);
+          queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+          break;
         case "AgentCompleted":
           setConversationStatus(message.conversation_id, "idle");
           break;
         case "AgentError":
-          appendMessageText(message.conversation_id, message.request_id, `\n\n${message.message}`);
+          appendMessageText(message.conversation_id, message.request_id, message.message);
           setConversationStatus(message.conversation_id, "idle");
           break;
       }
@@ -37,21 +48,13 @@ export function useAgentChat() {
     return () => {
       unsubscribe();
     };
-  }, [appendMessageText, setConversationStatus]);
+  }, [appendMessageText, queryClient, setConversationStatus, setConversationTitle]);
 
   const startChat = useCallback(
     ({ conversationId, prompt, attachments, model }: StartChatInput) => {
       const requestId = nanoid();
       addMessage(conversationId, { id: nanoid(), role: "user", text: prompt, attachments });
 
-      if (!socket.send({ kind: "AgentSessionStart", request_id: nanoid(), conversation_id: conversationId })) {
-        addMessage(conversationId, {
-          id: requestId,
-          role: "assistant",
-          text: "Forge is not connected. Reconnect and try again.",
-        });
-        return false;
-      }
       if (
         !socket.send({
           kind: "AgentPrompt",

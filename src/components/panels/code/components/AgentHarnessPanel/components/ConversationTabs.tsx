@@ -2,17 +2,18 @@ import { Button } from "@/components/ui/button";
 import { Clock3, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
+import { useCreateAgentSession } from "../hooks/use-create-agent-session.hook";
 import { useAgentSession } from "../hooks/use-agent-session.hook";
 import { useAgentSessions } from "../hooks/use-agent-sessions.hook";
 
 export function ConversationTabs() {
   const activeConversationId = useAgentHarnessStore((state) => state.activeConversationId);
   const conversations = useAgentHarnessStore((state) => state.conversations);
-  const onCreate = useAgentHarnessStore((state) => state.createConversation);
   const onSelect = useAgentHarnessStore((state) => state.selectConversation);
   const onClose = useAgentHarnessStore((state) => state.closeConversation);
-  const { data: sessionSummaries = [], groups } = useAgentSessions();
+  const { groups } = useAgentSessions();
   const loadSession = useAgentSession();
+  const { createSession, isCreating } = useCreateAgentSession();
   const loadingSessionId = loadSession.isPending ? loadSession.variables : null;
   const [historyOpen, setHistoryOpen] = useState(false);
   const openConversations = conversations.filter((conversation) => conversation.isOpen);
@@ -68,8 +69,8 @@ export function ConversationTabs() {
                     key={conversation.id}
                     type="button"
                     onClick={() => {
-                      const isBackendSession = sessionSummaries.some((summary) => summary.metadata.id === conversation.id);
-                      if (!isBackendSession || conversation.messages.length) {
+                      const isLoaded = conversations.some((item) => item.id === conversation.id && item.isOpen);
+                      if (isLoaded) {
                         onSelect(conversation.id);
                         setHistoryOpen(false);
                       } else {
@@ -88,7 +89,13 @@ export function ConversationTabs() {
           </div>
         )}
       </div>
-      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={onCreate} title="New conversation">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7 shrink-0"
+        onClick={() => createSession()}
+        disabled={isCreating}
+        title="New conversation">
         <Plus className="size-4" />
         <span className="sr-only">New conversation</span>
       </Button>

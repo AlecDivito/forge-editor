@@ -658,6 +658,11 @@ pub enum ServerMessage {
         conversation_id: String,
         text: String,
     },
+    AgentSessionNamed {
+        request_id: String,
+        conversation_id: String,
+        title: String,
+    },
     AgentCompleted {
         request_id: String,
         conversation_id: String,

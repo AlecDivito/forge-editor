@@ -17,6 +17,8 @@ pub enum ChatRole {
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -45,6 +47,26 @@ pub struct ChatCompletionChoice {
 #[derive(Deserialize)]
 pub struct ChatCompletionDelta {
     pub content: Option<String>,
+    #[serde(default)]
+    pub reasoning: Option<String>,
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
+}
+
+/// A completed assistant turn, including provider reasoning kept separately
+/// from the visible response content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssistantResponse {
+    pub content: String,
+    pub thinking: Option<String>,
+}
+
+impl AssistantResponse {
+    pub fn new(content: String, thinking: String) -> Self {
+        let content = content.trim().to_owned();
+        let thinking = (!thinking.trim().is_empty()).then(|| thinking.trim().to_owned());
+        Self { content, thinking }
+    }
 }
 
 /// A model selection retained with a durable session.
@@ -88,6 +110,13 @@ pub enum AiSessionRecord {
         version: u8,
         role: ChatRole,
         content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
+        created_at_ms: u64,
+    },
+    Failure {
+        version: u8,
+        message: String,
         created_at_ms: u64,
     },
 }
@@ -97,6 +126,15 @@ pub enum AiSessionRecord {
 pub struct AiSession {
     pub metadata: AiSessionMetadata,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<AiSessionFailure>,
+}
+
+/// A failed model turn retained separately from the transcript.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AiSessionFailure {
+    pub message: String,
+    pub created_at_ms: u64,
 }
 
 /// The compact representation returned when listing sessions.

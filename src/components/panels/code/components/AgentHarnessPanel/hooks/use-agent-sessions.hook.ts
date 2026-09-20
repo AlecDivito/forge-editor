@@ -1,6 +1,5 @@
 import { listSessionsOptions } from "@/lib/generated/@tanstack/react-query.gen";
 import { useQuery } from "@tanstack/react-query";
-import { useAgentHarnessStore } from "../store/agent-harness.store";
 import { AgentConversation } from "../types/agent-harness.types";
 
 /** Loads the durable session summaries used by the history menu. */
@@ -10,13 +9,9 @@ export function useAgentSessions() {
     retry: false,
     staleTime: 30_000,
   });
-  const conversations = useAgentHarnessStore((state) => state.conversations);
   const summaries = query.data ?? [];
-  const localById = new Map(conversations.map((conversation) => [conversation.id, conversation]));
-  const backendIds = new Set(summaries.map((summary) => summary.metadata.id));
   const historyConversations = summaries.map(
-    (summary) =>
-      localById.get(summary.metadata.id) ?? {
+    (summary) => ({
         id: summary.metadata.id,
         title: summary.metadata.title || "New conversation",
         createdAt: summary.metadata.created_at_ms,
@@ -30,13 +25,9 @@ export function useAgentSessions() {
           : null,
         status: "idle" as const,
         messages: [],
-      },
+      }),
   );
-  const mergedConversations = [
-    ...historyConversations,
-    ...conversations.filter((conversation) => !backendIds.has(conversation.id)),
-  ];
-  return { ...query, historyConversations: mergedConversations, groups: groupConversations(mergedConversations) };
+  return { ...query, historyConversations, groups: groupConversations(historyConversations) };
 }
 
 function groupConversations(conversations: AgentConversation[]) {

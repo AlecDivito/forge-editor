@@ -1,9 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ImagePlus, SendHorizonal, X } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useAgentComposer } from "../hooks/use-agent-composer.hook";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
+import { AgentModelSelection } from "../types/agent-harness.types";
 import { ModelSelector } from "./ModelSelector";
 
 export function AgentComposer() {
@@ -11,10 +12,16 @@ export function AgentComposer() {
   const conversation = useAgentHarnessStore((state) =>
     state.conversations.find((item) => item.id === activeConversationId),
   );
+  const setModel = useAgentHarnessStore((state) => state.setModel);
   const fileInput = useRef<HTMLInputElement>(null);
-  const composer = useAgentComposer(activeConversationId);
-  if (!conversation) return null;
-  const canSend = Boolean(composer.draft.trim()) && Boolean(conversation.model) && conversation.status !== "streaming";
+  const [pendingModel, setPendingModel] = useState<AgentModelSelection | null>(null);
+  const selectedModel = conversation?.model ?? pendingModel;
+  const composer = useAgentComposer(activeConversationId, selectedModel);
+  const canSend =
+    Boolean(composer.draft.trim()) &&
+    Boolean(selectedModel) &&
+    conversation?.status !== "streaming" &&
+    !composer.isCreating;
 
   return (
     <form onSubmit={composer.submit} className="shrink-0 border-t border-border bg-card p-3">
@@ -63,13 +70,19 @@ export function AgentComposer() {
           }}
           placeholder="Ask about your workspace"
           rows={3}
-          disabled={conversation.status === "streaming"}
+          disabled={conversation?.status === "streaming" || composer.isCreating}
           className="min-h-0 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
           aria-label="Agent prompt"
         />
         <div className="flex items-center justify-between gap-2 pt-1">
           <div className="flex min-w-0 items-center gap-1">
-            <ModelSelector />
+            <ModelSelector
+              model={selectedModel}
+              onModelChange={(model) => {
+                if (conversation) setModel(conversation.id, model);
+                else setPendingModel(model);
+              }}
+            />
             <input
               ref={fileInput}
               type="file"

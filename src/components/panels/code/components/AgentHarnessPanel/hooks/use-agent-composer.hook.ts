@@ -1,13 +1,15 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import { useAgentChat } from "./use-agent-chat.hook";
+import { useCreateAgentSession } from "./use-create-agent-session.hook";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
-import { AgentAttachment } from "../types/agent-harness.types";
+import { AgentAttachment, AgentModelSelection } from "../types/agent-harness.types";
 
 const isImage = (file: File) => file.type.startsWith("image/");
 
-export function useAgentComposer(conversationId: string) {
+export function useAgentComposer(conversationId: string | null, model: AgentModelSelection | null) {
   const { startChat } = useAgentChat();
+  const { createSession, isCreating } = useCreateAgentSession();
   const conversation = useAgentHarnessStore((state) => state.conversations.find((item) => item.id === conversationId));
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
@@ -59,8 +61,10 @@ export function useAgentComposer(conversationId: string) {
   };
   const send = () => {
     const text = draft.trim();
-    if (!text || !conversation?.model) return false;
-    startChat({ conversationId, prompt: text, attachments, model: conversation.model });
+    if (!text || !model || isCreating) return false;
+    const sendPrompt = (id: string) => startChat({ conversationId: id, prompt: text, attachments, model });
+    const sent = conversation ? sendPrompt(conversation.id) : createSession(sendPrompt);
+    if (!sent) return false;
     setDraft("");
     setAttachments([]);
     return true;
@@ -73,6 +77,7 @@ export function useAgentComposer(conversationId: string) {
     attachments,
     draft,
     isDragging,
+    isCreating,
     onDrop,
     onDragEnter: () => setIsDragging(true),
     onDragLeave: () => setIsDragging(false),

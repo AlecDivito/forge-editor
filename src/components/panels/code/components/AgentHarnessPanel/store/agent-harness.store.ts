@@ -1,38 +1,22 @@
-import { nanoid } from "nanoid";
 import { create } from "zustand";
 import { AgentConversation, AgentMessage, AgentModelSelection, ConversationStatus } from "../types/agent-harness.types";
 
-const makeConversation = (): AgentConversation => ({
-  id: nanoid(),
-  title: "New conversation",
-  createdAt: Date.now(),
-  isOpen: true,
-  model: null,
-  status: "idle",
-  messages: [],
-});
-
 type AgentHarnessState = {
-  activeConversationId: string;
+  activeConversationId: string | null;
   conversations: AgentConversation[];
-  createConversation: () => void;
   selectConversation: (id: string) => void;
   closeConversation: (id: string) => void;
   setModel: (id: string, model: AgentModelSelection | null) => void;
   addMessage: (id: string, message: AgentMessage) => void;
   appendMessageText: (conversationId: string, messageId: string, text: string) => void;
+  setConversationTitle: (id: string, title: string) => void;
   setConversationStatus: (id: string, status: ConversationStatus) => void;
   hydrateSession: (conversation: AgentConversation) => void;
 };
-const initialConversation = makeConversation();
 
 export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
-  activeConversationId: initialConversation.id,
-  conversations: [initialConversation],
-  createConversation: () => {
-    const conversation = makeConversation();
-    set((state) => ({ activeConversationId: conversation.id, conversations: [...state.conversations, conversation] }));
-  },
+  activeConversationId: null,
+  conversations: [],
   selectConversation: (activeConversationId) =>
     set((state) => ({
       activeConversationId,
@@ -46,12 +30,8 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
         conversation.id === id ? { ...conversation, isOpen: false } : conversation,
       );
       const remaining = conversations.filter((conversation) => conversation.isOpen);
-      if (!remaining.length) {
-        const conversation = makeConversation();
-        return { activeConversationId: conversation.id, conversations: [...conversations, conversation] };
-      }
       return {
-        activeConversationId: state.activeConversationId === id ? remaining.at(-1)!.id : state.activeConversationId,
+        activeConversationId: state.activeConversationId === id ? (remaining.at(-1)?.id ?? null) : state.activeConversationId,
         conversations,
       };
     });
@@ -69,8 +49,6 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
           ? conversation
           : {
               ...conversation,
-              title:
-                conversation.messages.length === 0 && message.text ? message.text.slice(0, 36) : conversation.title,
               messages: [...conversation.messages, message],
             },
       ),
@@ -86,6 +64,12 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
                 message.id === messageId ? { ...message, text: `${message.text}${text}` } : message,
               ),
             },
+      ),
+    })),
+  setConversationTitle: (id, title) =>
+    set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id === id ? { ...conversation, title } : conversation,
       ),
     })),
   setConversationStatus: (id, status) =>

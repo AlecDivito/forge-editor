@@ -1,27 +1,30 @@
+import { useEffect } from "react";
 import { useAgentModels } from "../hooks/use-agent-models.hook";
-import { useAgentHarnessStore } from "../store/agent-harness.store";
+import { AgentModelSelection } from "../types/agent-harness.types";
 
 function modelOptionValue(provider: string, id: string) {
   return JSON.stringify([provider, id]);
 }
 
-export function ModelSelector() {
-  const activeConversationId = useAgentHarnessStore((state) => state.activeConversationId);
-  const conversation = useAgentHarnessStore((state) =>
-    state.conversations.find((item) => item.id === activeConversationId),
-  );
-  const setModel = useAgentHarnessStore((state) => state.setModel);
+type ModelSelectorProps = {
+  model: AgentModelSelection | null;
+  onModelChange: (model: AgentModelSelection | null) => void;
+};
+
+export function ModelSelector({ model, onModelChange }: ModelSelectorProps) {
   const modelsQuery = useAgentModels();
   const models = modelsQuery.data?.models ?? [];
 
-  if (!conversation) return null;
+  useEffect(() => {
+    if (!model && models[0]) onModelChange(models[0]);
+  }, [model, models, onModelChange]);
 
   return (
     <select
-      value={conversation.model ? modelOptionValue(conversation.model.provider, conversation.model.id) : ""}
+      value={model ? modelOptionValue(model.provider, model.id) : ""}
       onChange={(event) => {
         const model = models.find((item) => modelOptionValue(item.provider, item.id) === event.target.value);
-        setModel(conversation.id, model ?? null);
+        onModelChange(model ?? null);
       }}
       disabled={modelsQuery.isLoading || !modelsQuery.data?.configured || !models.length}
       className="h-7 max-w-36 truncate rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
