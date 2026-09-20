@@ -10,23 +10,22 @@ export function useAgentSessions() {
     staleTime: 30_000,
   });
   const summaries = query.data ?? [];
-  const historyConversations = summaries.map(
-    (summary) => ({
-        id: summary.metadata.id,
-        title: summary.metadata.title || "New conversation",
-        createdAt: summary.metadata.created_at_ms,
-        isOpen: false,
-        model: summary.metadata.model
-          ? {
-              id: summary.metadata.model.model_id,
-              label: summary.metadata.model.model_id,
-              provider: summary.metadata.model.provider,
-            }
-          : null,
-        status: "idle" as const,
-        messages: [],
-      }),
-  );
+  const historyConversations = summaries.map((summary) => ({
+    id: summary.metadata.id,
+    title: summary.metadata.title || "New conversation",
+    createdAt: summary.metadata.created_at_ms,
+    isOpen: false,
+    model: summary.metadata.model
+      ? {
+          id: summary.metadata.model.model_id,
+          label: summary.metadata.model.model_id,
+          provider: summary.metadata.model.provider,
+        }
+      : null,
+    status: "idle" as const,
+    messages: [],
+    toolActivities: [],
+  }));
   return { ...query, historyConversations, groups: groupConversations(historyConversations) };
 }
 

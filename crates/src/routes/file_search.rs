@@ -54,7 +54,17 @@ async fn search_file_names_impl(
     query: FileNameSearchQuery,
 ) -> Result<impl IntoResponse, AppError> {
     let workspaces = workspace_roots(&state, query.workspace_id.as_deref())?;
-    let mut cancellation = SearchCancellation::new();
+    let response =
+        search_file_names_in_workspaces(workspaces, query, SearchCancellation::new()).await?;
+    Ok(Json(response))
+}
+
+/// Shared cancellable file-name search used by the HTTP API and agent tools.
+pub(crate) async fn search_file_names_in_workspaces(
+    workspaces: Vec<(String, PathBuf)>,
+    query: FileNameSearchQuery,
+    mut cancellation: SearchCancellation,
+) -> Result<FileNameSearchResponse, AppError> {
     let cancelled = cancellation.flag();
     let response = tokio::task::spawn_blocking(move || {
         let mut results = Vec::new();
@@ -79,10 +89,10 @@ async fn search_file_names_impl(
     .await
     .map_err(|err| AppError::String(format!("file search task failed: {err}")))??;
     cancellation.disarm();
-    Ok(Json(response))
+    Ok(response)
 }
 
-fn search_file_names_blocking(
+pub(crate) fn search_file_names_blocking(
     workspace_id: &str,
     base_dir: &Path,
     query: &FileNameSearchQuery,
@@ -175,7 +185,19 @@ async fn search_files_impl(
         .map(|(id, _)| open_file_paths(&state, id, query.open_files_only))
         .collect::<Vec<_>>();
 
-    let mut cancellation = SearchCancellation::new();
+    let response =
+        search_files_in_workspaces(workspaces, open_files, query, SearchCancellation::new())
+            .await?;
+    Ok(Json(response))
+}
+
+/// Shared cancellable content search used by the HTTP API and agent tools.
+pub(crate) async fn search_files_in_workspaces(
+    workspaces: Vec<(String, PathBuf)>,
+    open_files: Vec<Option<HashSet<PathBuf>>>,
+    query: FsSearchQuery,
+    mut cancellation: SearchCancellation,
+) -> Result<FsSearchResponse, AppError> {
     let cancelled = cancellation.flag();
     let response = tokio::task::spawn_blocking(move || {
         let mut results = Vec::new();
@@ -207,10 +229,10 @@ async fn search_files_impl(
     .map_err(|err| AppError::String(format!("search task failed: {err}")))??;
     cancellation.disarm();
 
-    Ok(Json(response))
+    Ok(response)
 }
 
-fn search_files_blocking(
+pub(crate) fn search_files_blocking(
     workspace_id: &str,
     base_dir: &Path,
     query: &FsSearchQuery,

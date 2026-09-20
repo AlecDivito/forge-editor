@@ -12,6 +12,14 @@ export type AgentMessage = {
 };
 export type ConversationStatus = "idle" | "streaming";
 
+export type AgentToolActivity = {
+  id: string;
+  requestId: string;
+  name: string;
+  arguments: unknown;
+  status: "running" | "completed" | "error";
+};
+
 /** A model identity is provider-scoped; its display label is never used as an API identifier. */
 export type AgentModelSelection = {
   id: string;
@@ -27,4 +35,5 @@ export type AgentConversation = {
   model: AgentModelSelection | null;
   status: ConversationStatus;
   messages: AgentMessage[];
+  toolActivities: AgentToolActivity[];
 };

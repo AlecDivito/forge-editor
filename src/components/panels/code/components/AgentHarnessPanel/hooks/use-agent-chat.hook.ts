@@ -19,6 +19,9 @@ export function useAgentChat() {
   const appendMessageText = useAgentHarnessStore((state) => state.appendMessageText);
   const setConversationStatus = useAgentHarnessStore((state) => state.setConversationStatus);
   const setConversationTitle = useAgentHarnessStore((state) => state.setConversationTitle);
+  const startToolActivity = useAgentHarnessStore((state) => state.startToolActivity);
+  const completeToolActivity = useAgentHarnessStore((state) => state.completeToolActivity);
+  const failRunningToolActivities = useAgentHarnessStore((state) => state.failRunningToolActivities);
 
   useEffect(() => {
     const unsubscribe = socket.subscribe((message) => {
@@ -32,6 +35,17 @@ export function useAgentChat() {
         case "AgentTextDelta":
           appendMessageText(message.conversation_id, message.request_id, message.text);
           break;
+        case "AgentToolStarted":
+          startToolActivity(message.conversation_id, {
+            id: message.tool_call_id,
+            requestId: message.request_id,
+            name: message.name,
+            arguments: message.arguments,
+          });
+          break;
+        case "AgentToolCompleted":
+          completeToolActivity(message.conversation_id, message.tool_call_id, message.is_error);
+          break;
         case "AgentSessionNamed":
           setConversationTitle(message.conversation_id, message.title);
           queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
@@ -41,6 +55,7 @@ export function useAgentChat() {
           break;
         case "AgentError":
           appendMessageText(message.conversation_id, message.request_id, message.message);
+          failRunningToolActivities(message.conversation_id, message.request_id);
           setConversationStatus(message.conversation_id, "idle");
           break;
       }
@@ -48,7 +63,15 @@ export function useAgentChat() {
     return () => {
       unsubscribe();
     };
-  }, [appendMessageText, queryClient, setConversationStatus, setConversationTitle]);
+  }, [
+    appendMessageText,
+    completeToolActivity,
+    failRunningToolActivities,
+    queryClient,
+    setConversationStatus,
+    setConversationTitle,
+    startToolActivity,
+  ]);
 
   const startChat = useCallback(
     ({ conversationId, prompt, attachments, model }: StartChatInput) => {

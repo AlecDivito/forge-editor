@@ -23,6 +23,7 @@ const toConversation = (session: AiSession): AgentConversation => ({
     role: message.role,
     text: message.content,
   })),
+  toolActivities: [],
 });
 
 /** Restores one durable conversation into the local harness store on demand. */

@@ -658,6 +658,19 @@ pub enum ServerMessage {
         conversation_id: String,
         text: String,
     },
+    AgentToolStarted {
+        request_id: String,
+        conversation_id: String,
+        tool_call_id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    AgentToolCompleted {
+        request_id: String,
+        conversation_id: String,
+        tool_call_id: String,
+        is_error: bool,
+    },
     AgentSessionNamed {
         request_id: String,
         conversation_id: String,

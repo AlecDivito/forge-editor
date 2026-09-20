@@ -139,9 +139,21 @@ impl AppState {
                     session_id,
                     self.config.openai_compatible.clone(),
                     self.ai_sessions.clone(),
+                    self.agent_tool_context(),
                 )
             })
             .clone()
+    }
+
+    fn agent_tool_context(&self) -> crate::agent::tools::ToolContext {
+        crate::agent::tools::ToolContext::new(
+            self.config
+                .workspaces
+                .iter()
+                .map(|workspace| (workspace.id.clone(), workspace.root.clone()))
+                .collect(),
+            self.open_files.clone(),
+        )
     }
 }
 

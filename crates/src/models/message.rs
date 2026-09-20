@@ -1,5 +1,6 @@
 use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::agent::error::AgentFailureCode;
 
@@ -28,12 +29,51 @@ pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<OpenAiChatMessage>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OpenAiToolDefinition>>,
+    /// Provider-specific OpenAI-compatible request options. vLLM uses this
+    /// for chat-template controls such as Qwen's thinking mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpenAiChatMessage {
-    pub role: &'static str,
-    pub content: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OpenAiToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OpenAiToolDefinition {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: OpenAiToolFunction,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OpenAiToolFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OpenAiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: OpenAiToolCallFunction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OpenAiToolCallFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +93,21 @@ pub struct ChatCompletionDelta {
     pub reasoning: Option<String>,
     #[serde(default)]
     pub reasoning_content: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Vec<OpenAiToolCallDelta>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAiToolCallDelta {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<OpenAiToolCallFunctionDelta>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAiToolCallFunctionDelta {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 /// A completed assistant turn, including provider reasoning kept separately
@@ -61,13 +116,18 @@ pub struct ChatCompletionDelta {
 pub struct AssistantResponse {
     pub content: String,
     pub thinking: Option<String>,
+    pub tool_calls: Vec<OpenAiToolCall>,
 }
 
 impl AssistantResponse {
     pub fn new(content: String, thinking: String) -> Self {
         let content = content.trim().to_owned();
         let thinking = (!thinking.trim().is_empty()).then(|| thinking.trim().to_owned());
-        Self { content, thinking }
+        Self {
+            content,
+            thinking,
+            tool_calls: Vec::new(),
+        }
     }
 }
 
@@ -116,6 +176,20 @@ pub enum AiSessionRecord {
         thinking: Option<String>,
         created_at_ms: u64,
     },
+    ToolCall {
+        version: u8,
+        tool_call_id: String,
+        name: String,
+        arguments: Value,
+        created_at_ms: u64,
+    },
+    ToolResult {
+        version: u8,
+        tool_call_id: String,
+        content: String,
+        is_error: bool,
+        created_at_ms: u64,
+    },
     Failure {
         version: u8,
         /// A stable machine-readable category. Older session files omit it.
@@ -136,7 +210,27 @@ pub struct AiSession {
     pub metadata: AiSessionMetadata,
     pub messages: Vec<ChatMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<AiSessionToolCall>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_results: Vec<AiSessionToolResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failures: Vec<AiSessionFailure>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AiSessionToolCall {
+    pub tool_call_id: String,
+    pub name: String,
+    pub arguments: Value,
+    pub created_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AiSessionToolResult {
+    pub tool_call_id: String,
+    pub content: String,
+    pub is_error: bool,
+    pub created_at_ms: u64,
 }
 
 /// A failed model turn retained separately from the transcript.

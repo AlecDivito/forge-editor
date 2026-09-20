@@ -83,6 +83,8 @@ impl AiSessionService {
         let session = AiSession {
             metadata: metadata.clone(),
             messages: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
             failures: Vec::new(),
         };
         self.append_records(
@@ -117,38 +119,96 @@ impl AiSessionService {
             return Ok(None);
         };
         let endpoint = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+        let started_at = std::time::Instant::now();
+        tracing::debug!(
+            model_id = %model.model_id,
+            endpoint = %endpoint,
+            prompt_bytes = prompt.len(),
+            timeout_seconds = 20_u64,
+            "starting AI session title request"
+        );
         let request = ChatCompletionRequest {
             model: model.model_id.clone(),
             messages: vec![
                 OpenAiChatMessage {
-                    role: "system",
-                    content: "Create a concise 3-6 word title for the user's request. Return only the title, with no quotes or punctuation.".to_string(),
+                    role: "system".to_owned(),
+                    content: Some("Create a concise 3-6 word title for the user's request. Return only the title, with no quotes or punctuation.".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
                 OpenAiChatMessage {
-                    role: "user",
-                    content: prompt.to_owned(),
+                    role: "user".to_owned(),
+                    content: Some(prompt.to_owned()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             ],
             stream: false,
+            tools: None,
+            // A title is metadata, not an agent reasoning task. Qwen/vLLM can
+            // otherwise spend most of the short request budget in <think>.
+            chat_template_kwargs: Some(serde_json::json!({ "enable_thinking": false })),
         };
         let result = async {
             let response = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(20))
                 .build()
-                .map_err(|error| format!("could not create title client: {error}"))?
+                .map_err(|error| {
+                    tracing::error!(error = ?error, "could not create AI session title client");
+                    format!("could not create title client: {error:?}")
+                })?
                 .post(endpoint)
                 .bearer_auth(config.api_key())
                 .json(&request)
                 .send()
                 .await
-                .map_err(|error| format!("title request failed: {error}"))?;
+                .map_err(|error| {
+                    tracing::error!(
+                        error = ?error,
+                        is_timeout = error.is_timeout(),
+                        is_connect = error.is_connect(),
+                        elapsed_ms = started_at.elapsed().as_millis() as u64,
+                        "AI session title request failed"
+                    );
+                    format!("title request failed: {error:?}")
+                })?;
+            let status = response.status();
             if !response.status().is_success() {
-                return Err(format!("title request returned HTTP {}", response.status()));
+                let body = response.text().await.unwrap_or_default();
+                let body_preview = body.chars().take(2_000).collect::<String>();
+                tracing::error!(
+                    %status,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    body_preview,
+                    "AI session title request was rejected"
+                );
+                return Err(format!(
+                    "title request returned HTTP {status}: {body_preview}"
+                ));
             }
-            let response = response
-                .json::<TitleCompletionResponse>()
-                .await
-                .map_err(|error| format!("invalid title response: {error}"))?;
+            let body = response.bytes().await.map_err(|error| {
+                tracing::error!(error = ?error, "could not read AI session title response body");
+                format!("could not read title response body: {error:?}")
+            })?;
+            let response =
+                serde_json::from_slice::<TitleCompletionResponse>(&body).map_err(|error| {
+                    let body_preview = String::from_utf8_lossy(&body)
+                        .chars()
+                        .take(2_000)
+                        .collect::<String>();
+                    tracing::error!(
+                        error = ?error,
+                        elapsed_ms = started_at.elapsed().as_millis() as u64,
+                        body_preview,
+                        "AI session title response was invalid"
+                    );
+                    format!("invalid title response: {error:?}; body: {body_preview}")
+                })?;
+            tracing::debug!(
+                elapsed_ms = started_at.elapsed().as_millis() as u64,
+                choices = response.choices.len(),
+                "AI session title request completed"
+            );
             Ok(response
                 .choices
                 .into_iter()
@@ -240,6 +300,8 @@ fn replay_session(session_id: &str, contents: &str) -> Result<AiSession, String>
                 session = Some(AiSession {
                     metadata,
                     messages: Vec::new(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
                     failures: Vec::new(),
                 });
             }
@@ -277,6 +339,36 @@ fn apply_record(
             content,
             thinking,
         }),
+        AiSessionRecord::ToolCall {
+            version,
+            tool_call_id,
+            name,
+            arguments,
+            created_at_ms,
+        } if version == AI_SESSION_RECORD_VERSION => {
+            session.tool_calls.push(crate::models::AiSessionToolCall {
+                tool_call_id,
+                name,
+                arguments,
+                created_at_ms,
+            })
+        }
+        AiSessionRecord::ToolResult {
+            version,
+            tool_call_id,
+            content,
+            is_error,
+            created_at_ms,
+        } if version == AI_SESSION_RECORD_VERSION => {
+            session
+                .tool_results
+                .push(crate::models::AiSessionToolResult {
+                    tool_call_id,
+                    content,
+                    is_error,
+                    created_at_ms,
+                })
+        }
         AiSessionRecord::Failure {
             version,
             code,
@@ -378,12 +470,26 @@ mod tests {
                 thinking: Some("I inspected the widget state first.".into()),
                 created_at_ms: 3,
             },
+            AiSessionRecord::ToolCall {
+                version: AI_SESSION_RECORD_VERSION,
+                tool_call_id: "call-1".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({ "path": "src/widget.rs" }),
+                created_at_ms: 4,
+            },
+            AiSessionRecord::ToolResult {
+                version: AI_SESSION_RECORD_VERSION,
+                tool_call_id: "call-1".into(),
+                content: "{\"content\":\"widget\"}".into(),
+                is_error: false,
+                created_at_ms: 5,
+            },
             AiSessionRecord::Failure {
                 version: AI_SESSION_RECORD_VERSION,
                 code: AgentFailureCode::ModelStreamFailed,
                 message: "The next response stream was interrupted".into(),
                 detail: Some("connection reset by peer".into()),
-                created_at_ms: 4,
+                created_at_ms: 6,
             },
         ];
         let mut contents = records
@@ -400,6 +506,9 @@ mod tests {
             Some("I inspected the widget state first.")
         );
         assert_eq!(session.failures.len(), 1);
+        assert_eq!(session.tool_calls.len(), 1);
+        assert_eq!(session.tool_calls[0].tool_call_id, "call-1");
+        assert_eq!(session.tool_results.len(), 1);
     }
 
     #[test]

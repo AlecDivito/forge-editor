@@ -1,7 +1,7 @@
 mod agent;
 mod debug;
 mod environment;
-mod file_search;
+pub(crate) mod file_search;
 mod file_system;
 mod git;
 mod ws;

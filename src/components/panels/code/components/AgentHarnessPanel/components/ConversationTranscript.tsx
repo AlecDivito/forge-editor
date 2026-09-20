@@ -18,6 +18,7 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { Loader2, Wrench } from "lucide-react";
+import { ToolActivityTimeline } from "./ToolActivityTimeline";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
 import { AgentMessage } from "../types/agent-harness.types";
 
@@ -69,11 +70,16 @@ export function ConversationTranscript() {
     <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor" scrollPreviousItemPeek={48}>
       <MessageScroller className="flex-1">
         <MessageScrollerViewport className="px-3 py-4">
-          <MessageScrollerContent
-            className="mx-auto w-full max-w-2xl gap-4"
-            aria-busy={isStreaming}>
+          <MessageScrollerContent className="mx-auto w-full max-w-2xl gap-4" aria-busy={isStreaming}>
             {messages.map((message) => (
               <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.role === "user"}>
+                {message.role === "assistant" ? (
+                  <ToolActivityTimeline
+                    activities={
+                      conversation?.toolActivities.filter((activity) => activity.requestId === message.id) ?? []
+                    }
+                  />
+                ) : null}
                 <TranscriptMessage message={message} />
               </MessageScrollerItem>
             ))}

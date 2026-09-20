@@ -381,6 +381,21 @@ export type ServerMessage =
   | { kind: "AgentSessionStarted"; request_id: string; conversation_id: string }
   | { kind: "AgentStarted"; request_id: string; conversation_id: string }
   | { kind: "AgentTextDelta"; request_id: string; conversation_id: string; text: string }
+  | {
+      kind: "AgentToolStarted";
+      request_id: string;
+      conversation_id: string;
+      tool_call_id: string;
+      name: string;
+      arguments: unknown;
+    }
+  | {
+      kind: "AgentToolCompleted";
+      request_id: string;
+      conversation_id: string;
+      tool_call_id: string;
+      is_error: boolean;
+    }
   | { kind: "AgentSessionNamed"; request_id: string; conversation_id: string; title: string }
   | { kind: "AgentCompleted"; request_id: string; conversation_id: string }
   | { kind: "AgentError"; request_id: string; conversation_id: string; message: string }

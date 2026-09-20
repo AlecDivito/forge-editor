@@ -413,7 +413,7 @@ impl DocumentActor {
 
         let (content, target_revision, persisted_revision, location) = {
             let _state_guard = self.state_lock.lock().await;
-            let content = self.content_snapshot().await;
+            let content = self.content().await;
             let target_revision = self.revision.load(Ordering::Acquire);
             let persisted_revision = self.persisted_revision.load(Ordering::Acquire);
             let location = self.location.read().await.clone();
@@ -630,7 +630,7 @@ impl DocumentActor {
         self.doc.read().await.transact().state_vector()
     }
 
-    async fn content_snapshot(&self) -> String {
+    pub async fn content(&self) -> String {
         let doc = self.doc.read().await;
         let txn = doc.transact();
         txn.get_text("content")
@@ -658,7 +658,7 @@ impl DocumentActor {
         if self.lsp_opened.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let text = self.content_snapshot().await;
+        let text = self.content().await;
         *self.last_synced_text.write().await = text.clone();
         let uri = self.lsp_uri().await;
         lsp.notify(
@@ -678,7 +678,7 @@ impl DocumentActor {
     /// Full-document sync. Call this from a debounced flush task, never
     /// on every keystroke — see the "why full sync" note from earlier.
     pub async fn sync_to_lsp(&self, lsp: &LspServerActor) -> anyhow::Result<()> {
-        let new_text = self.content_snapshot().await;
+        let new_text = self.content().await;
         let mut last = self.last_synced_text.write().await;
 
         if *last == new_text {
@@ -1039,7 +1039,7 @@ mod tests {
             .expect("apply deletion");
 
         assert_eq!(actor.generation(), 1);
-        assert_eq!(actor.content_snapshot().await, " text");
+        assert_eq!(actor.content().await, " text");
         assert!(matches!(
             events.recv().await.expect("update event"),
             DocEvent::Update { .. }

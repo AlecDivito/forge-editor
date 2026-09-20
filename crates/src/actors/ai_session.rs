@@ -5,11 +5,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     agent::error::AgentFailureCode,
+    agent::tools::{ToolContext, ToolRegistry},
     config::OpenAiCompatibleConfig,
     models::{
         AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
         AssistantResponse, ChatCompletionChunk, ChatCompletionRequest, ChatMessage, ChatRole,
-        OpenAiChatMessage, ServerMessage,
+        OpenAiChatMessage, OpenAiToolCall, OpenAiToolCallFunction, ServerMessage,
     },
     services::ai_session::AiSessionService,
     util::time::now_ms,
@@ -50,6 +51,7 @@ impl AiSessionActor {
         session_id: String,
         config: Option<OpenAiCompatibleConfig>,
         sessions: Arc<AiSessionService>,
+        tool_context: ToolContext,
     ) -> Arc<Self> {
         let (commands, mut receiver) = mpsc::channel(8);
         let actor_commands = commands.clone();
@@ -95,6 +97,7 @@ impl AiSessionActor {
                             sessions.clone(),
                             recipient,
                             actor_commands.clone(),
+                            tool_context.clone(),
                         )
                         .await;
                     }
@@ -209,6 +212,7 @@ async fn run_prompt(
     sessions: Arc<AiSessionService>,
     recipient: mpsc::Sender<ServerMessage>,
     commands: mpsc::Sender<AiSessionCommand>,
+    tool_context: ToolContext,
 ) {
     if provider != "openai-compatible" {
         send_failure(
@@ -370,17 +374,169 @@ async fn run_prompt(
             }
         });
     }
-    match stream_openai_compatible(
-        config,
-        &model.model_id,
-        &session.messages,
-        session_id,
-        &request_id,
-        recipient.clone(),
-    )
-    .await
-    {
-        Ok(response) => {
+    let tools = ToolRegistry::read_only();
+    let mut provider_messages = session
+        .messages
+        .iter()
+        .map(|message| OpenAiChatMessage {
+            role: match message.role {
+                ChatRole::User => "user".to_owned(),
+                ChatRole::Assistant => "assistant".to_owned(),
+            },
+            content: Some(message.content.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+        })
+        .collect::<Vec<_>>();
+    for _round in 0..8 {
+        let response = match stream_openai_compatible(
+            config,
+            &model.model_id,
+            &provider_messages,
+            &tools,
+            session_id,
+            &request_id,
+            recipient.clone(),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(message) => {
+                send_failure(
+                    session_id,
+                    &request_id,
+                    AgentFailureCode::ModelStreamFailed,
+                    &message,
+                    &sessions,
+                    &recipient,
+                )
+                .await;
+                return;
+            }
+        };
+        if !response.tool_calls.is_empty() {
+            provider_messages.push(OpenAiChatMessage {
+                role: "assistant".to_owned(),
+                content: (!response.content.is_empty()).then_some(response.content),
+                tool_calls: Some(response.tool_calls.clone()),
+                tool_call_id: None,
+            });
+            for call in response.tool_calls {
+                if call.id.trim().is_empty() || call.function.name.trim().is_empty() {
+                    send_failure(
+                        session_id,
+                        &request_id,
+                        AgentFailureCode::ModelStreamFailed,
+                        "The model emitted a tool call without a stable ID or name",
+                        &sessions,
+                        &recipient,
+                    )
+                    .await;
+                    return;
+                }
+                let arguments = serde_json::from_str(&call.function.arguments)
+                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
+                if let Err(error) = sessions
+                    .append(
+                        session_id,
+                        AiSessionRecord::ToolCall {
+                            version: AI_SESSION_RECORD_VERSION,
+                            tool_call_id: call.id.clone(),
+                            name: call.function.name.clone(),
+                            arguments: arguments.clone(),
+                            created_at_ms: now_ms(),
+                        },
+                    )
+                    .await
+                {
+                    send_failure(
+                        session_id,
+                        &request_id,
+                        AgentFailureCode::StorageWriteFailed,
+                        &error,
+                        &sessions,
+                        &recipient,
+                    )
+                    .await;
+                    return;
+                }
+                session.tool_calls.push(crate::models::AiSessionToolCall {
+                    tool_call_id: call.id.clone(),
+                    name: call.function.name.clone(),
+                    arguments: arguments.clone(),
+                    created_at_ms: now_ms(),
+                });
+                let _ = recipient
+                    .send(ServerMessage::AgentToolStarted {
+                        request_id: request_id.clone(),
+                        conversation_id: session_id.to_owned(),
+                        tool_call_id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        arguments: arguments.clone(),
+                    })
+                    .await;
+                let result = tools
+                    .execute(tool_context.clone(), &call.function.name, arguments)
+                    .await;
+                if result.is_error {
+                    record_internal_failure(
+                        session_id,
+                        AgentFailureCode::ToolExecutionFailed,
+                        format!("tool {} failed: {}", call.function.name, result.content),
+                        &sessions,
+                    )
+                    .await;
+                }
+                if let Err(error) = sessions
+                    .append(
+                        session_id,
+                        AiSessionRecord::ToolResult {
+                            version: AI_SESSION_RECORD_VERSION,
+                            tool_call_id: call.id.clone(),
+                            content: result.content.clone(),
+                            is_error: result.is_error,
+                            created_at_ms: now_ms(),
+                        },
+                    )
+                    .await
+                {
+                    send_failure(
+                        session_id,
+                        &request_id,
+                        AgentFailureCode::StorageWriteFailed,
+                        &error,
+                        &sessions,
+                        &recipient,
+                    )
+                    .await;
+                    return;
+                }
+                session
+                    .tool_results
+                    .push(crate::models::AiSessionToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: result.content.clone(),
+                        is_error: result.is_error,
+                        created_at_ms: now_ms(),
+                    });
+                let _ = recipient
+                    .send(ServerMessage::AgentToolCompleted {
+                        request_id: request_id.clone(),
+                        conversation_id: session_id.to_owned(),
+                        tool_call_id: call.id.clone(),
+                        is_error: result.is_error,
+                    })
+                    .await;
+                provider_messages.push(OpenAiChatMessage {
+                    role: "tool".to_owned(),
+                    content: Some(result.content),
+                    tool_calls: None,
+                    tool_call_id: Some(call.id),
+                });
+            }
+            continue;
+        }
+        {
             if !response.content.is_empty() || response.thinking.is_some() {
                 if let Err(message) = sessions
                     .append(
@@ -419,19 +575,18 @@ async fn run_prompt(
                 })
                 .await
                 .ok();
-        }
-        Err(message) => {
-            send_failure(
-                session_id,
-                &request_id,
-                AgentFailureCode::ModelStreamFailed,
-                &message,
-                &sessions,
-                &recipient,
-            )
-            .await;
+            return;
         }
     }
+    send_failure(
+        session_id,
+        &request_id,
+        AgentFailureCode::TranscriptLimit,
+        "The agent exceeded its maximum tool-call rounds",
+        &sessions,
+        &recipient,
+    )
+    .await;
 }
 
 async fn send_failure(
@@ -521,7 +676,8 @@ async fn ensure_session<'a>(
 async fn stream_openai_compatible(
     config: &OpenAiCompatibleConfig,
     model_id: &str,
-    messages: &[ChatMessage],
+    messages: &[OpenAiChatMessage],
+    tools: &ToolRegistry,
     conversation_id: &str,
     request_id: &str,
     sender: mpsc::Sender<ServerMessage>,
@@ -536,17 +692,10 @@ async fn stream_openai_compatible(
         .bearer_auth(config.api_key())
         .json(&ChatCompletionRequest {
             model: model_id.to_owned(),
-            messages: messages
-                .iter()
-                .map(|message| OpenAiChatMessage {
-                    role: match message.role {
-                        ChatRole::User => "user",
-                        ChatRole::Assistant => "assistant",
-                    },
-                    content: message.content.clone(),
-                })
-                .collect(),
+            messages: messages.to_vec(),
             stream: true,
+            tools: Some(tools.definitions()),
+            chat_template_kwargs: None,
         })
         .send()
         .await
@@ -559,13 +708,18 @@ async fn stream_openai_compatible(
     let mut buffer = String::new();
     let mut response_text = String::new();
     let mut thinking = String::new();
+    let mut tool_calls = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk =
             chunk.map_err(|e| format!("The model response stream was interrupted {:?}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(event) = take_event(&mut buffer) {
             if event == "[DONE]" {
-                return Ok(AssistantResponse::new(response_text, thinking));
+                return Ok(AssistantResponse {
+                    content: response_text.trim().to_owned(),
+                    thinking: (!thinking.trim().is_empty()).then(|| thinking.trim().to_owned()),
+                    tool_calls,
+                });
             }
             let chunk: ChatCompletionChunk = serde_json::from_str(&event).map_err(|e| {
                 format!("The model backend returned an invalid stream event {:?}", e)
@@ -599,6 +753,30 @@ async fn stream_openai_compatible(
                         .is_err()
                     {
                         return Ok(AssistantResponse::new(response_text, thinking));
+                    }
+                }
+                for delta in choice.delta.tool_calls {
+                    while tool_calls.len() <= delta.index {
+                        tool_calls.push(OpenAiToolCall {
+                            id: String::new(),
+                            kind: "function",
+                            function: OpenAiToolCallFunction {
+                                name: String::new(),
+                                arguments: String::new(),
+                            },
+                        });
+                    }
+                    let call = &mut tool_calls[delta.index];
+                    if let Some(id) = delta.id {
+                        call.id = id;
+                    }
+                    if let Some(function) = delta.function {
+                        if let Some(name) = function.name {
+                            call.function.name = name;
+                        }
+                        if let Some(arguments) = function.arguments {
+                            call.function.arguments.push_str(&arguments);
+                        }
                     }
                 }
             }
@@ -642,7 +820,12 @@ mod tests {
             std::env::temp_dir().join(format!("forge-ai-session-test-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
         let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
-        let actor = AiSessionActor::spawn("conversation-1".into(), None, sessions);
+        let actor = AiSessionActor::spawn(
+            "conversation-1".into(),
+            None,
+            sessions,
+            crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
+        );
         let (sender, mut receiver) = mpsc::channel(1);
         actor
             .prompt(
