@@ -15,6 +15,52 @@ export type AgentModelDescriptor = {
     provider: string;
 };
 
+export type AgentSessionPath = {
+    /**
+     * Opaque conversation ID used to address the durable session.
+     */
+    session_id: string;
+};
+
+export type AgentSessionSearchQuery = {
+    /**
+     * Case-insensitive text matched against session titles and message content.
+     */
+    query?: string | null;
+};
+
+export type AiSession = {
+    messages: Array<ChatMessage>;
+    metadata: AiSessionMetadata;
+};
+
+export type AiSessionMetadata = {
+    title: string;
+    created_at_ms: number;
+    id: string;
+    model?: AiSessionModel | null;
+};
+
+export type AiSessionModel = {
+    model_id: string;
+    provider: string;
+};
+
+export type AiSessionSummary = {
+    message_count: number;
+    metadata: AiSessionMetadata;
+};
+
+export type ChatMessage = {
+    content: string;
+    role: ChatRole;
+};
+
+export enum ChatRole {
+    USER = 'user',
+    ASSISTANT = 'assistant'
+}
+
 export type ConfigurationList = {
     configurations: Array<ConfigurationSummary>;
     diagnostics: Array<DebugDiagnostic>;
@@ -428,6 +474,55 @@ export type ListModelsResponses = {
 };
 
 export type ListModelsResponse = ListModelsResponses[keyof ListModelsResponses];
+
+export type ListSessionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Case-insensitive text matched against session titles and message content.
+         */
+        query?: string | null;
+    };
+    url: '/api/agent/sessions';
+};
+
+export type ListSessionsResponses = {
+    /**
+     * The durable session summaries
+     */
+    200: Array<AiSessionSummary>;
+};
+
+export type ListSessionsResponse = ListSessionsResponses[keyof ListSessionsResponses];
+
+export type GetSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Opaque conversation ID used to address the durable session.
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/agent/sessions/{session_id}';
+};
+
+export type GetSessionErrors = {
+    /**
+     * The requested session does not exist
+     */
+    404: unknown;
+};
+
+export type GetSessionResponses = {
+    /**
+     * The complete durable session
+     */
+    200: AiSession;
+};
+
+export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
 
 export type ListFilesData = {
     body?: never;
@@ -934,7 +1029,7 @@ export type StopSessionResponses = {
 
 export type StopSessionResponse = StopSessionResponses[keyof StopSessionResponses];
 
-export type GetSessionData = {
+export type GetSession2Data = {
     body?: never;
     path: {
         /**
@@ -950,18 +1045,18 @@ export type GetSessionData = {
     url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}';
 };
 
-export type GetSessionErrors = {
+export type GetSession2Errors = {
     /**
      * Unknown workspace or session
      */
     400: unknown;
 };
 
-export type GetSessionResponses = {
+export type GetSession2Responses = {
     /**
      * Current lifecycle, output, and exit snapshot
      */
     200: SessionSnapshot;
 };
 
-export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
+export type GetSession2Response = GetSession2Responses[keyof GetSession2Responses];

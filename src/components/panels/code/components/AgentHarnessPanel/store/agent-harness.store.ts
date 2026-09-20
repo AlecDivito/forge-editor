@@ -22,6 +22,7 @@ type AgentHarnessState = {
   addMessage: (id: string, message: AgentMessage) => void;
   appendMessageText: (conversationId: string, messageId: string, text: string) => void;
   setConversationStatus: (id: string, status: ConversationStatus) => void;
+  hydrateSession: (conversation: AgentConversation) => void;
 };
 const initialConversation = makeConversation();
 
@@ -93,4 +94,14 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
         conversation.id === id ? { ...conversation, status } : conversation,
       ),
     })),
+  hydrateSession: (conversation) =>
+    set((state) => {
+      const exists = state.conversations.some((item) => item.id === conversation.id);
+      return {
+        activeConversationId: conversation.id,
+        conversations: exists
+          ? state.conversations.map((item) => (item.id === conversation.id ? conversation : item))
+          : [...state.conversations, conversation],
+      };
+    }),
 }));

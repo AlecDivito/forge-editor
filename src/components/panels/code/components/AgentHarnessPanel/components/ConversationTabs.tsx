@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Clock3, Plus, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
-import { AgentConversation } from "../types/agent-harness.types";
+import { useAgentSession } from "../hooks/use-agent-session.hook";
+import { useAgentSessions } from "../hooks/use-agent-sessions.hook";
 
 export function ConversationTabs() {
   const activeConversationId = useAgentHarnessStore((state) => state.activeConversationId);
@@ -10,8 +11,10 @@ export function ConversationTabs() {
   const onCreate = useAgentHarnessStore((state) => state.createConversation);
   const onSelect = useAgentHarnessStore((state) => state.selectConversation);
   const onClose = useAgentHarnessStore((state) => state.closeConversation);
+  const { data: sessionSummaries = [], groups } = useAgentSessions();
+  const loadSession = useAgentSession();
+  const loadingSessionId = loadSession.isPending ? loadSession.variables : null;
   const [historyOpen, setHistoryOpen] = useState(false);
-  const groups = useMemo(() => groupConversations(conversations), [conversations]);
   const openConversations = conversations.filter((conversation) => conversation.isOpen);
   return (
     <div className="flex min-w-0 items-center border-b border-border bg-card px-2">
@@ -65,11 +68,19 @@ export function ConversationTabs() {
                     key={conversation.id}
                     type="button"
                     onClick={() => {
-                      onSelect(conversation.id);
-                      setHistoryOpen(false);
+                      const isBackendSession = sessionSummaries.some((summary) => summary.metadata.id === conversation.id);
+                      if (!isBackendSession || conversation.messages.length) {
+                        onSelect(conversation.id);
+                        setHistoryOpen(false);
+                      } else {
+                        loadSession.mutate(conversation.id, {
+                          onSuccess: () => setHistoryOpen(false),
+                        });
+                      }
                     }}
+                    disabled={loadingSessionId === conversation.id}
                     className={`flex w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted ${conversation.id === activeConversationId ? "bg-muted font-medium text-foreground" : "text-foreground"}`}>
-                    <span className="truncate">{conversation.title}</span>
+                    <span className="truncate">{loadingSessionId === conversation.id ? "Loading…" : conversation.title}</span>
                   </button>
                 ))}
               </div>
@@ -82,26 +93,5 @@ export function ConversationTabs() {
         <span className="sr-only">New conversation</span>
       </Button>
     </div>
-  );
-}
-
-function groupConversations(conversations: AgentConversation[]) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const groups = new Map<string, AgentConversation[]>([
-    ["Today", []],
-    ["1 day ago", []],
-    ["7 days ago", []],
-    ["Remaining", []],
-  ]);
-  for (const conversation of conversations) {
-    const created = new Date(conversation.createdAt);
-    created.setHours(0, 0, 0, 0);
-    const daysAgo = Math.floor((today.getTime() - created.getTime()) / 86_400_000);
-    const label = daysAgo <= 0 ? "Today" : daysAgo === 1 ? "1 day ago" : daysAgo <= 7 ? "7 days ago" : "Remaining";
-    groups.get(label)?.push(conversation);
-  }
-  return Array.from(groups, ([label, groupedConversations]) => ({ label, conversations: groupedConversations })).filter(
-    (group) => group.conversations.length,
   );
 }

@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getStatus, listFiles, listModels, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
-import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listSessions, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
+import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListSessionsData, ListSessionsResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -74,6 +74,45 @@ export const listModelsOptions = (options?: Options<ListModelsData>) => queryOpt
         return data;
     },
     queryKey: listModelsQueryKey(options)
+});
+
+export const listSessionsQueryKey = (options?: Options<ListSessionsData>) => createQueryKey('listSessions', options);
+
+/**
+ * List durable AI sessions already loaded by the session service.
+ *
+ * The optional `query` parameter searches both titles and completed message
+ * content without rereading JSONL files.
+ */
+export const listSessionsOptions = (options?: Options<ListSessionsData>) => queryOptions<ListSessionsResponse, AxiosError<DefaultError>, ListSessionsResponse, ReturnType<typeof listSessionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listSessions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listSessionsQueryKey(options)
+});
+
+export const getSessionQueryKey = (options: Options<GetSessionData>) => createQueryKey('getSession', options);
+
+/**
+ * Get a complete durable AI conversation for frontend restoration.
+ */
+export const getSessionOptions = (options: Options<GetSessionData>) => queryOptions<GetSessionResponse, AxiosError<DefaultError>, GetSessionResponse, ReturnType<typeof getSessionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getSession({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getSessionQueryKey(options)
 });
 
 export const listFilesQueryKey = (options: Options<ListFilesData>) => createQueryKey('listFiles', options);
@@ -445,7 +484,7 @@ export const stopSessionMutation = (options?: Partial<Options<StopSessionData>>)
     return mutationOptions;
 };
 
-export const getSessionQueryKey = (options: Options<GetSessionData>) => createQueryKey('getSession', options);
+export const getSession2QueryKey = (options: Options<GetSession2Data>) => createQueryKey('getSession2', options);
 
 /**
  * Retrieve the current public snapshot of a debug session.
@@ -454,9 +493,9 @@ export const getSessionQueryKey = (options: Options<GetSessionData>) => createQu
  * session belonging to another workspace is reported as unavailable rather
  * than disclosing its existence.
  */
-export const getSessionOptions = (options: Options<GetSessionData>) => queryOptions<GetSessionResponse, AxiosError<DefaultError>, GetSessionResponse, ReturnType<typeof getSessionQueryKey>>({
+export const getSession2Options = (options: Options<GetSession2Data>) => queryOptions<GetSession2Response, AxiosError<DefaultError>, GetSession2Response, ReturnType<typeof getSession2QueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
-        const { data } = await getSession({
+        const { data } = await getSession2({
             ...options,
             ...queryKey[0],
             signal,
@@ -464,5 +503,5 @@ export const getSessionOptions = (options: Options<GetSessionData>) => queryOpti
         });
         return data;
     },
-    queryKey: getSessionQueryKey(options)
+    queryKey: getSession2QueryKey(options)
 });

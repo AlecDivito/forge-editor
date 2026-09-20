@@ -2,7 +2,7 @@
 
 import * as z from 'zod';
 
-import { FsFileType, SessionState } from './types.gen';
+import { ChatRole, FsFileType, SessionState } from './types.gen';
 
 export const zAgentModelDescriptor = z.object({
     id: z.string(),
@@ -13,6 +13,43 @@ export const zAgentModelDescriptor = z.object({
 export const zAgentModelCatalog = z.object({
     configured: z.boolean(),
     models: z.array(zAgentModelDescriptor)
+});
+
+export const zAgentSessionPath = z.object({
+    session_id: z.string()
+});
+
+export const zAgentSessionSearchQuery = z.object({
+    query: z.string().nullish()
+});
+
+export const zAiSessionModel = z.object({
+    model_id: z.string(),
+    provider: z.string()
+});
+
+export const zAiSessionMetadata = z.object({
+    title: z.string(),
+    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    id: z.string(),
+    model: zAiSessionModel.nullish()
+});
+
+export const zAiSessionSummary = z.object({
+    message_count: z.int().gte(0),
+    metadata: zAiSessionMetadata
+});
+
+export const zChatRole = z.enum(ChatRole);
+
+export const zChatMessage = z.object({
+    content: z.string(),
+    role: zChatRole
+});
+
+export const zAiSession = z.object({
+    messages: z.array(zChatMessage),
+    metadata: zAiSessionMetadata
 });
 
 export const zCreateSession = z.object({
@@ -285,6 +322,24 @@ export const zGetEnvironmentResponse = zEnvironmentSnapshot;
  */
 export const zListModelsResponse = zAgentModelCatalog;
 
+export const zListSessionsQuery = z.object({
+    query: z.string().nullish()
+});
+
+/**
+ * The durable session summaries
+ */
+export const zListSessionsResponse = z.array(zAiSessionSummary);
+
+export const zGetSessionPath = z.object({
+    session_id: z.string()
+});
+
+/**
+ * The complete durable session
+ */
+export const zGetSessionResponse = zAiSession;
+
 export const zListFilesQuery = z.object({
     workspace_id: z.string(),
     path: z.string(),
@@ -464,7 +519,7 @@ export const zStopSessionPath = z.object({
  */
 export const zStopSessionResponse = zSessionSnapshot;
 
-export const zGetSessionPath = z.object({
+export const zGetSession2Path = z.object({
     session_id: z.string(),
     workspace_id: z.string()
 });
@@ -472,4 +527,4 @@ export const zGetSessionPath = z.object({
 /**
  * Current lifecycle, output, and exit snapshot
  */
-export const zGetSessionResponse = zSessionSnapshot;
+export const zGetSession2Response = zSessionSnapshot;

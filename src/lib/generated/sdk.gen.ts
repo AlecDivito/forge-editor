@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListSessionsData, ListSessionsResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -33,6 +33,27 @@ export const getEnvironment = <ThrowOnError extends boolean = false>(options?: O
 export const listModels = <ThrowOnError extends boolean = false>(options?: Options<ListModelsData, ThrowOnError>) => (options?.client ?? client).get<ListModelsResponses, ListModelsErrors, ThrowOnError>({
     responseType: 'json',
     url: '/api/agent/models',
+    ...options
+});
+
+/**
+ * List durable AI sessions already loaded by the session service.
+ *
+ * The optional `query` parameter searches both titles and completed message
+ * content without rereading JSONL files.
+ */
+export const listSessions = <ThrowOnError extends boolean = false>(options?: Options<ListSessionsData, ThrowOnError>) => (options?.client ?? client).get<ListSessionsResponses, unknown, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/sessions',
+    ...options
+});
+
+/**
+ * Get a complete durable AI conversation for frontend restoration.
+ */
+export const getSession = <ThrowOnError extends boolean = false>(options: Options<GetSessionData, ThrowOnError>) => (options.client ?? client).get<GetSessionResponses, GetSessionErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/sessions/{session_id}',
     ...options
 });
 
@@ -254,7 +275,7 @@ export const stopSession = <ThrowOnError extends boolean = false>(options: Optio
  * session belonging to another workspace is reported as unavailable rather
  * than disclosing its existence.
  */
-export const getSession = <ThrowOnError extends boolean = false>(options: Options<GetSessionData, ThrowOnError>) => (options.client ?? client).get<GetSessionResponses, GetSessionErrors, ThrowOnError>({
+export const getSession2 = <ThrowOnError extends boolean = false>(options: Options<GetSession2Data, ThrowOnError>) => (options.client ?? client).get<GetSession2Responses, GetSession2Errors, ThrowOnError>({
     responseType: 'json',
     url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}',
     ...options
