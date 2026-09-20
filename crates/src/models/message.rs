@@ -20,8 +20,46 @@ pub enum ChatRole {
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
+    /// Timestamp of the settled JSONL message record. This lets restored
+    /// clients interleave messages with durable tool events correctly.
+    #[serde(default)]
+    pub created_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<AiTokenUsage>,
+}
+
+/// Token accounting reported by an OpenAI-compatible model backend.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AiTokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+}
+
+impl AiTokenUsage {
+    pub fn add_assign(&mut self, other: &Self) {
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
+        self.total_tokens += other.total_tokens;
+        self.cached_tokens = self
+            .cached_tokens
+            .zip(other.cached_tokens)
+            .map(|(left, right)| left + right)
+            .or(self.cached_tokens)
+            .or(other.cached_tokens);
+        self.reasoning_tokens = self
+            .reasoning_tokens
+            .zip(other.reasoning_tokens)
+            .map(|(left, right)| left + right)
+            .or(self.reasoning_tokens)
+            .or(other.reasoning_tokens);
+    }
 }
 
 #[derive(Serialize)]
@@ -35,6 +73,13 @@ pub struct ChatCompletionRequest {
     /// for chat-template controls such as Qwen's thinking mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<OpenAiStreamOptions>,
+}
+
+#[derive(Serialize)]
+pub struct OpenAiStreamOptions {
+    pub include_usage: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -79,6 +124,47 @@ pub struct OpenAiToolCallFunction {
 #[derive(Deserialize)]
 pub struct ChatCompletionChunk {
     pub choices: Vec<ChatCompletionChoice>,
+    #[serde(default)]
+    pub usage: Option<OpenAiUsage>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAiUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+    #[serde(default)]
+    pub completion_tokens_details: Option<OpenAiCompletionTokensDetails>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAiCompletionTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: Option<u64>,
+}
+
+impl From<OpenAiUsage> for AiTokenUsage {
+    fn from(usage: OpenAiUsage) -> Self {
+        Self {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+            cached_tokens: usage
+                .prompt_tokens_details
+                .and_then(|details| details.cached_tokens),
+            reasoning_tokens: usage
+                .completion_tokens_details
+                .and_then(|details| details.reasoning_tokens),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -117,6 +203,7 @@ pub struct AssistantResponse {
     pub content: String,
     pub thinking: Option<String>,
     pub tool_calls: Vec<OpenAiToolCall>,
+    pub usage: Option<AiTokenUsage>,
 }
 
 impl AssistantResponse {
@@ -127,6 +214,7 @@ impl AssistantResponse {
             content,
             thinking,
             tool_calls: Vec::new(),
+            usage: None,
         }
     }
 }
@@ -174,6 +262,8 @@ pub enum AiSessionRecord {
         content: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thinking: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<AiTokenUsage>,
         created_at_ms: u64,
     },
     ToolCall {

@@ -671,6 +671,11 @@ pub enum ServerMessage {
         tool_call_id: String,
         is_error: bool,
     },
+    AgentUsage {
+        request_id: String,
+        conversation_id: String,
+        usage: crate::models::AiTokenUsage,
+    },
     AgentSessionNamed {
         request_id: String,
         conversation_id: String,

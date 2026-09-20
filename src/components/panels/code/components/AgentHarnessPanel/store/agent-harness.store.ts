@@ -3,6 +3,7 @@ import {
   AgentConversation,
   AgentMessage,
   AgentModelSelection,
+  AgentTokenUsage,
   AgentToolActivity,
   ConversationStatus,
 } from "../types/agent-harness.types";
@@ -15,6 +16,7 @@ type AgentHarnessState = {
   setModel: (id: string, model: AgentModelSelection | null) => void;
   addMessage: (id: string, message: AgentMessage) => void;
   appendMessageText: (conversationId: string, messageId: string, text: string) => void;
+  setMessageUsage: (conversationId: string, messageId: string, usage: AgentTokenUsage) => void;
   setConversationTitle: (id: string, title: string) => void;
   setConversationStatus: (id: string, status: ConversationStatus) => void;
   startToolActivity: (conversationId: string, activity: Omit<AgentToolActivity, "status">) => void;
@@ -72,6 +74,19 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
               ...conversation,
               messages: conversation.messages.map((message) =>
                 message.id === messageId ? { ...message, text: `${message.text}${text}` } : message,
+              ),
+            },
+      ),
+    })),
+  setMessageUsage: (conversationId, messageId, usage) =>
+    set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id !== conversationId
+          ? conversation
+          : {
+              ...conversation,
+              messages: conversation.messages.map((message) =>
+                message.id === messageId ? { ...message, usage } : message,
               ),
             },
       ),

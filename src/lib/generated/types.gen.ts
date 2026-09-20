@@ -4,6 +4,25 @@ export type ClientOptions = {
     baseURL: 'http://localhost:8080' | (string & {});
 };
 
+export enum AgentFailureCode {
+    INVALID_PROVIDER = 'invalid_provider',
+    MISSING_MODEL_BACKEND = 'missing_model_backend',
+    INVALID_PROMPT = 'invalid_prompt',
+    TRANSCRIPT_LIMIT = 'transcript_limit',
+    MODEL_CLIENT_INITIALIZATION_FAILED = 'model_client_initialization_failed',
+    MODEL_CATALOG_REQUEST_FAILED = 'model_catalog_request_failed',
+    MODEL_CATALOG_REJECTED = 'model_catalog_rejected',
+    MODEL_CATALOG_INVALID_RESPONSE = 'model_catalog_invalid_response',
+    INVALID_MODEL_BACKEND_URL = 'invalid_model_backend_url',
+    MODEL_STREAM_FAILED = 'model_stream_failed',
+    TOOL_EXECUTION_FAILED = 'tool_execution_failed',
+    STORAGE_WRITE_FAILED = 'storage_write_failed',
+    TITLE_GENERATION_FAILED = 'title_generation_failed',
+    TITLE_PERSIST_FAILED = 'title_persist_failed',
+    SESSION_UNAVAILABLE = 'session_unavailable',
+    UNKNOWN = 'unknown'
+}
+
 export type AgentModelCatalog = {
     configured: boolean;
     models: Array<AgentModelDescriptor>;
@@ -30,8 +49,17 @@ export type AgentSessionSearchQuery = {
 };
 
 export type AiSession = {
+    failures?: Array<AiSessionFailure>;
     messages: Array<ChatMessage>;
     metadata: AiSessionMetadata;
+    tool_calls?: Array<AiSessionToolCall>;
+    tool_results?: Array<AiSessionToolResult>;
+};
+
+export type AiSessionFailure = {
+    code?: AgentFailureCode;
+    created_at_ms: number;
+    message: string;
 };
 
 export type AiSessionMetadata = {
@@ -51,9 +79,37 @@ export type AiSessionSummary = {
     metadata: AiSessionMetadata;
 };
 
+export type AiSessionToolCall = {
+    created_at_ms: number;
+    name: string;
+    tool_call_id: string;
+};
+
+export type AiSessionToolResult = {
+    content: string;
+    created_at_ms: number;
+    is_error: boolean;
+    tool_call_id: string;
+};
+
+export type AiTokenUsage = {
+    cached_tokens?: number | null;
+    completion_tokens: number;
+    prompt_tokens: number;
+    reasoning_tokens?: number | null;
+    total_tokens: number;
+};
+
 export type ChatMessage = {
     content: string;
+    /**
+     * Timestamp of the settled JSONL message record. This lets restored
+     * clients interleave messages with durable tool events correctly.
+     */
+    created_at_ms?: number;
     role: ChatRole;
+    thinking?: string | null;
+    usage?: AiTokenUsage | null;
 };
 
 export enum ChatRole {
@@ -437,6 +493,21 @@ export enum SessionState {
 
 export type WorkspaceQuery = {
     workspace_id: string;
+};
+
+export type AiSessionWritable = {
+    failures?: Array<AiSessionFailureWritable>;
+    messages: Array<ChatMessage>;
+    metadata: AiSessionMetadata;
+    tool_calls?: Array<AiSessionToolCall>;
+    tool_results?: Array<AiSessionToolResult>;
+};
+
+export type AiSessionFailureWritable = {
+    code?: AgentFailureCode;
+    created_at_ms: number;
+    detail?: string | null;
+    message: string;
 };
 
 export type GetEnvironmentData = {

@@ -2,7 +2,9 @@
 
 import * as z from 'zod';
 
-import { ChatRole, FsFileType, SessionState } from './types.gen';
+import { AgentFailureCode, ChatRole, FsFileType, SessionState } from './types.gen';
+
+export const zAgentFailureCode = z.enum(AgentFailureCode);
 
 export const zAgentModelDescriptor = z.object({
     id: z.string(),
@@ -23,6 +25,12 @@ export const zAgentSessionSearchQuery = z.object({
     query: z.string().nullish()
 });
 
+export const zAiSessionFailure = z.object({
+    code: zAgentFailureCode.optional().default('unknown'),
+    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    message: z.string()
+});
+
 export const zAiSessionModel = z.object({
     model_id: z.string(),
     provider: z.string()
@@ -40,16 +48,43 @@ export const zAiSessionSummary = z.object({
     metadata: zAiSessionMetadata
 });
 
+export const zAiSessionToolCall = z.object({
+    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    name: z.string(),
+    tool_call_id: z.string()
+});
+
+export const zAiSessionToolResult = z.object({
+    content: z.string(),
+    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    is_error: z.boolean(),
+    tool_call_id: z.string()
+});
+
+export const zAiTokenUsage = z.object({
+    cached_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).nullish(),
+    completion_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    prompt_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    reasoning_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).nullish(),
+    total_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' })
+});
+
 export const zChatRole = z.enum(ChatRole);
 
 export const zChatMessage = z.object({
     content: z.string(),
-    role: zChatRole
+    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).optional().default(BigInt(0)),
+    role: zChatRole,
+    thinking: z.string().nullish(),
+    usage: zAiTokenUsage.nullish()
 });
 
 export const zAiSession = z.object({
+    failures: z.array(zAiSessionFailure).optional(),
     messages: z.array(zChatMessage),
-    metadata: zAiSessionMetadata
+    metadata: zAiSessionMetadata,
+    tool_calls: z.array(zAiSessionToolCall).optional(),
+    tool_results: z.array(zAiSessionToolResult).optional()
 });
 
 export const zCreateSession = z.object({
@@ -313,6 +348,21 @@ export const zSessionSnapshot = z.object({
 
 export const zWorkspaceQuery = z.object({
     workspace_id: z.string()
+});
+
+export const zAiSessionFailureWritable = z.object({
+    code: zAgentFailureCode.optional().default('unknown'),
+    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    detail: z.string().nullish(),
+    message: z.string()
+});
+
+export const zAiSessionWritable = z.object({
+    failures: z.array(zAiSessionFailureWritable).optional(),
+    messages: z.array(zChatMessage),
+    metadata: zAiSessionMetadata,
+    tool_calls: z.array(zAiSessionToolCall).optional(),
+    tool_results: z.array(zAiSessionToolResult).optional()
 });
 
 export const zGetEnvironmentResponse = zEnvironmentSnapshot;

@@ -30,6 +30,13 @@ export type TerminalExit = { code?: number; signal?: string };
 export type TerminalErrorCode =
   "invalid_request" | "not_found" | "forbidden" | "limit_exceeded" | "spawn_failed" | "invalid_state";
 export type LanguageId = string & { readonly __brand: "LanguageId" };
+export type AgentTokenUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_tokens?: number;
+  reasoning_tokens?: number;
+};
 
 export type LspScope = { kind: "document"; file_id: FileId } | { kind: "workspace"; language_id?: LanguageId };
 
@@ -395,6 +402,12 @@ export type ServerMessage =
       conversation_id: string;
       tool_call_id: string;
       is_error: boolean;
+    }
+  | {
+      kind: "AgentUsage";
+      request_id: string;
+      conversation_id: string;
+      usage: AgentTokenUsage;
     }
   | { kind: "AgentSessionNamed"; request_id: string; conversation_id: string; title: string }
   | { kind: "AgentCompleted"; request_id: string; conversation_id: string }

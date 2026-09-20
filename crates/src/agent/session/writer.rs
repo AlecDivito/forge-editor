@@ -137,6 +137,7 @@ mod tests {
                 role: ChatRole::User,
                 content: "first".into(),
                 thinking: None,
+                usage: None,
                 created_at_ms: 1,
             }])
             .await
@@ -147,6 +148,7 @@ mod tests {
                 role: ChatRole::Assistant,
                 content: "second".into(),
                 thinking: None,
+                usage: None,
                 created_at_ms: 2,
             }])
             .await

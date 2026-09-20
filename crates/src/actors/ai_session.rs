@@ -9,8 +9,8 @@ use crate::{
     config::OpenAiCompatibleConfig,
     models::{
         AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
-        AssistantResponse, ChatCompletionChunk, ChatCompletionRequest, ChatMessage, ChatRole,
-        OpenAiChatMessage, OpenAiToolCall, OpenAiToolCallFunction, ServerMessage,
+        AiTokenUsage, AssistantResponse, ChatCompletionChunk, ChatCompletionRequest, ChatMessage,
+        ChatRole, OpenAiChatMessage, OpenAiToolCall, OpenAiToolCallFunction, ServerMessage,
     },
     services::ai_session::AiSessionService,
     util::time::now_ms,
@@ -325,6 +325,7 @@ async fn run_prompt(
                 role: ChatRole::User,
                 content: prompt.clone(),
                 thinking: None,
+                usage: None,
                 created_at_ms: now_ms(),
             },
         )
@@ -347,7 +348,9 @@ async fn run_prompt(
     session.messages.push(ChatMessage {
         role: ChatRole::User,
         content: prompt.clone(),
+        created_at_ms: now_ms(),
         thinking: None,
+        usage: None,
     });
     if should_generate_title {
         let title_request_id = request_id.clone();
@@ -388,6 +391,8 @@ async fn run_prompt(
             tool_call_id: None,
         })
         .collect::<Vec<_>>();
+    let mut operation_usage = AiTokenUsage::default();
+    let mut reported_usage = false;
     for _round in 0..8 {
         let response = match stream_openai_compatible(
             config,
@@ -414,6 +419,10 @@ async fn run_prompt(
                 return;
             }
         };
+        if let Some(usage) = response.usage.as_ref() {
+            operation_usage.add_assign(usage);
+            reported_usage = true;
+        }
         if !response.tool_calls.is_empty() {
             provider_messages.push(OpenAiChatMessage {
                 role: "assistant".to_owned(),
@@ -546,6 +555,7 @@ async fn run_prompt(
                             role: ChatRole::Assistant,
                             content: response.content.clone(),
                             thinking: response.thinking.clone(),
+                            usage: reported_usage.then(|| operation_usage.clone()),
                             created_at_ms: now_ms(),
                         },
                     )
@@ -565,8 +575,19 @@ async fn run_prompt(
                 session.messages.push(ChatMessage {
                     role: ChatRole::Assistant,
                     content: response.content,
+                    created_at_ms: now_ms(),
                     thinking: response.thinking,
+                    usage: reported_usage.then(|| operation_usage.clone()),
                 });
+            }
+            if reported_usage {
+                let _ = recipient
+                    .send(ServerMessage::AgentUsage {
+                        request_id: request_id.clone(),
+                        conversation_id: session_id.to_owned(),
+                        usage: operation_usage,
+                    })
+                    .await;
             }
             recipient
                 .send(ServerMessage::AgentCompleted {
@@ -696,6 +717,9 @@ async fn stream_openai_compatible(
             stream: true,
             tools: Some(tools.definitions()),
             chat_template_kwargs: None,
+            stream_options: Some(crate::models::OpenAiStreamOptions {
+                include_usage: true,
+            }),
         })
         .send()
         .await
@@ -709,6 +733,7 @@ async fn stream_openai_compatible(
     let mut response_text = String::new();
     let mut thinking = String::new();
     let mut tool_calls = Vec::new();
+    let mut usage = None;
     while let Some(chunk) = stream.next().await {
         let chunk =
             chunk.map_err(|e| format!("The model response stream was interrupted {:?}", e))?;
@@ -719,11 +744,15 @@ async fn stream_openai_compatible(
                     content: response_text.trim().to_owned(),
                     thinking: (!thinking.trim().is_empty()).then(|| thinking.trim().to_owned()),
                     tool_calls,
+                    usage,
                 });
             }
             let chunk: ChatCompletionChunk = serde_json::from_str(&event).map_err(|e| {
                 format!("The model backend returned an invalid stream event {:?}", e)
             })?;
+            if let Some(chunk_usage) = chunk.usage {
+                usage = Some(chunk_usage.into());
+            }
             for choice in chunk.choices {
                 if let Some(reasoning) = choice
                     .delta

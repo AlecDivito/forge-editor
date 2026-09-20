@@ -8,7 +8,17 @@ export type AgentMessage = {
   id: string;
   role: "assistant" | "user" | "tool";
   text: string;
+  createdAt: number;
   attachments?: AgentAttachment[];
+  usage?: AgentTokenUsage;
+};
+
+export type AgentTokenUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens?: number;
+  reasoningTokens?: number;
 };
 export type ConversationStatus = "idle" | "streaming";
 
@@ -17,6 +27,7 @@ export type AgentToolActivity = {
   requestId: string;
   name: string;
   arguments: unknown;
+  createdAt: number;
   status: "running" | "completed" | "error";
 };
 

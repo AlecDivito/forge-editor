@@ -148,6 +148,7 @@ impl AiSessionService {
             // A title is metadata, not an agent reasoning task. Qwen/vLLM can
             // otherwise spend most of the short request budget in <think>.
             chat_template_kwargs: Some(serde_json::json!({ "enable_thinking": false })),
+            stream_options: None,
         };
         let result = async {
             let response = reqwest::Client::builder()
@@ -333,11 +334,15 @@ fn apply_record(
             role,
             content,
             thinking,
+            usage,
+            created_at_ms,
             ..
         } if version == AI_SESSION_RECORD_VERSION => session.messages.push(ChatMessage {
             role,
             content,
             thinking,
+            usage,
+            created_at_ms,
         }),
         AiSessionRecord::ToolCall {
             version,
@@ -441,7 +446,9 @@ mod tests {
     use super::{AiSessionService, DEFAULT_SESSION_TITLE, replay_session};
     use crate::{
         agent::error::AgentFailureCode,
-        models::{AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, ChatRole},
+        models::{
+            AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, AiTokenUsage, ChatRole,
+        },
     };
 
     #[test]
@@ -461,6 +468,7 @@ mod tests {
                 role: ChatRole::User,
                 content: "Fix the widget".into(),
                 thinking: None,
+                usage: None,
                 created_at_ms: 2,
             },
             AiSessionRecord::Message {
@@ -468,6 +476,13 @@ mod tests {
                 role: ChatRole::Assistant,
                 content: "Done".into(),
                 thinking: Some("I inspected the widget state first.".into()),
+                usage: Some(AiTokenUsage {
+                    prompt_tokens: 24,
+                    completion_tokens: 12,
+                    total_tokens: 36,
+                    cached_tokens: Some(8),
+                    reasoning_tokens: Some(4),
+                }),
                 created_at_ms: 3,
             },
             AiSessionRecord::ToolCall {
@@ -505,6 +520,8 @@ mod tests {
             session.messages[1].thinking.as_deref(),
             Some("I inspected the widget state first.")
         );
+        assert_eq!(session.messages[1].usage.as_ref().unwrap().total_tokens, 36);
+        assert_eq!(session.messages[1].created_at_ms, 3);
         assert_eq!(session.failures.len(), 1);
         assert_eq!(session.tool_calls.len(), 1);
         assert_eq!(session.tool_calls[0].tool_call_id, "call-1");
@@ -538,6 +555,7 @@ mod tests {
                 role: ChatRole::User,
                 content: "The zebra renderer is broken".into(),
                 thinking: None,
+                usage: None,
                 created_at_ms: 3,
             },
         ];

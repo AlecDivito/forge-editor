@@ -17,6 +17,7 @@ export function useAgentChat() {
   const queryClient = useQueryClient();
   const addMessage = useAgentHarnessStore((state) => state.addMessage);
   const appendMessageText = useAgentHarnessStore((state) => state.appendMessageText);
+  const setMessageUsage = useAgentHarnessStore((state) => state.setMessageUsage);
   const setConversationStatus = useAgentHarnessStore((state) => state.setConversationStatus);
   const setConversationTitle = useAgentHarnessStore((state) => state.setConversationTitle);
   const startToolActivity = useAgentHarnessStore((state) => state.startToolActivity);
@@ -41,10 +42,20 @@ export function useAgentChat() {
             requestId: message.request_id,
             name: message.name,
             arguments: message.arguments,
+            createdAt: Date.now(),
           });
           break;
         case "AgentToolCompleted":
           completeToolActivity(message.conversation_id, message.tool_call_id, message.is_error);
+          break;
+        case "AgentUsage":
+          setMessageUsage(message.conversation_id, message.request_id, {
+            promptTokens: message.usage.prompt_tokens,
+            completionTokens: message.usage.completion_tokens,
+            totalTokens: message.usage.total_tokens,
+            cachedTokens: message.usage.cached_tokens,
+            reasoningTokens: message.usage.reasoning_tokens,
+          });
           break;
         case "AgentSessionNamed":
           setConversationTitle(message.conversation_id, message.title);
@@ -70,13 +81,14 @@ export function useAgentChat() {
     queryClient,
     setConversationStatus,
     setConversationTitle,
+    setMessageUsage,
     startToolActivity,
   ]);
 
   const startChat = useCallback(
     ({ conversationId, prompt, attachments, model }: StartChatInput) => {
       const requestId = nanoid();
-      addMessage(conversationId, { id: nanoid(), role: "user", text: prompt, attachments });
+      addMessage(conversationId, { id: nanoid(), role: "user", text: prompt, attachments, createdAt: Date.now() });
 
       if (
         !socket.send({
@@ -92,10 +104,11 @@ export function useAgentChat() {
           id: requestId,
           role: "assistant",
           text: "Forge disconnected before the prompt could be sent.",
+          createdAt: Date.now(),
         });
         return false;
       }
-      addMessage(conversationId, { id: requestId, role: "assistant", text: "" });
+      addMessage(conversationId, { id: requestId, role: "assistant", text: "", createdAt: Date.now() });
       setConversationStatus(conversationId, "streaming");
       return true;
     },
