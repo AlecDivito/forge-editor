@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent::error::AgentFailureCode;
+use crate::agent::operation::{OperationSnapshot, OperationTransition};
 
 /// The on-disk JSONL schema version for durable AI session records.
 pub const AI_SESSION_RECORD_VERSION: u8 = 1;
@@ -256,6 +257,10 @@ pub enum AiSessionRecord {
         model: AiSessionModel,
         updated_at_ms: u64,
     },
+    OperationTransition {
+        version: u8,
+        transition: OperationTransition,
+    },
     Message {
         version: u8,
         role: ChatRole,
@@ -298,6 +303,8 @@ pub enum AiSessionRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct AiSession {
     pub metadata: AiSessionMetadata,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operations: Vec<OperationSnapshot>,
     pub messages: Vec<ChatMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<AiSessionToolCall>,

@@ -82,6 +82,7 @@ impl AiSessionService {
         };
         let session = AiSession {
             metadata: metadata.clone(),
+            operations: Vec::new(),
             messages: Vec::new(),
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
@@ -300,6 +301,7 @@ fn replay_session(session_id: &str, contents: &str) -> Result<AiSession, String>
             {
                 session = Some(AiSession {
                     metadata,
+                    operations: Vec::new(),
                     messages: Vec::new(),
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
@@ -329,6 +331,33 @@ fn apply_record(
         {
             session.metadata.model = Some(model);
         }
+        AiSessionRecord::OperationTransition {
+            version,
+            transition,
+        } if version == AI_SESSION_RECORD_VERSION => {
+            if let Some(operation) = session
+                .operations
+                .iter_mut()
+                .find(|operation| operation.operation_id == transition.operation_id)
+            {
+                operation.apply(transition).map_err(str::to_owned)?;
+            } else if matches!(
+                transition.state,
+                crate::agent::operation::OperationState::Accepted
+            ) {
+                session
+                    .operations
+                    .push(crate::agent::operation::OperationSnapshot {
+                        operation_id: transition.operation_id,
+                        request_id: transition.request_id,
+                        state: crate::agent::operation::OperationState::Accepted,
+                        accepted_at_ms: transition.occurred_at_ms,
+                        updated_at_ms: transition.occurred_at_ms,
+                    });
+            } else {
+                return Err("The AI session storage has an operation without acceptance".to_owned());
+            }
+        }
         AiSessionRecord::Message {
             version,
             role,
@@ -337,13 +366,16 @@ fn apply_record(
             usage,
             created_at_ms,
             ..
-        } if version == AI_SESSION_RECORD_VERSION => session.messages.push(ChatMessage {
-            role,
-            content,
-            thinking,
-            usage,
-            created_at_ms,
-        }),
+        } if version == AI_SESSION_RECORD_VERSION => {
+            let message = ChatMessage {
+                role,
+                content,
+                thinking,
+                usage,
+                created_at_ms,
+            };
+            session.messages.push(message.clone());
+        }
         AiSessionRecord::ToolCall {
             version,
             tool_call_id,
@@ -351,12 +383,13 @@ fn apply_record(
             arguments,
             created_at_ms,
         } if version == AI_SESSION_RECORD_VERSION => {
-            session.tool_calls.push(crate::models::AiSessionToolCall {
+            let tool_call = crate::models::AiSessionToolCall {
                 tool_call_id,
                 name,
                 arguments,
                 created_at_ms,
-            })
+            };
+            session.tool_calls.push(tool_call.clone());
         }
         AiSessionRecord::ToolResult {
             version,
@@ -365,14 +398,13 @@ fn apply_record(
             is_error,
             created_at_ms,
         } if version == AI_SESSION_RECORD_VERSION => {
-            session
-                .tool_results
-                .push(crate::models::AiSessionToolResult {
-                    tool_call_id,
-                    content,
-                    is_error,
-                    created_at_ms,
-                })
+            let tool_result = crate::models::AiSessionToolResult {
+                tool_call_id,
+                content,
+                is_error,
+                created_at_ms,
+            };
+            session.tool_results.push(tool_result.clone());
         }
         AiSessionRecord::Failure {
             version,
@@ -380,12 +412,15 @@ fn apply_record(
             message,
             detail,
             created_at_ms,
-        } if version == AI_SESSION_RECORD_VERSION => session.failures.push(AiSessionFailure {
-            code,
-            message,
-            detail,
-            created_at_ms,
-        }),
+        } if version == AI_SESSION_RECORD_VERSION => {
+            let failure = AiSessionFailure {
+                code,
+                message,
+                detail,
+                created_at_ms,
+            };
+            session.failures.push(failure.clone());
+        }
         AiSessionRecord::SessionCreated { .. } => {
             return Err("The AI session storage has multiple creation records".to_owned());
         }
@@ -446,6 +481,7 @@ mod tests {
     use super::{AiSessionService, DEFAULT_SESSION_TITLE, replay_session};
     use crate::{
         agent::error::AgentFailureCode,
+        agent::operation::{OperationState, OperationTransition},
         models::{
             AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, AiTokenUsage, ChatRole,
         },
@@ -470,6 +506,24 @@ mod tests {
                 thinking: None,
                 usage: None,
                 created_at_ms: 2,
+            },
+            AiSessionRecord::OperationTransition {
+                version: AI_SESSION_RECORD_VERSION,
+                transition: OperationTransition {
+                    operation_id: "operation-1".into(),
+                    request_id: "request-1".into(),
+                    state: OperationState::Accepted,
+                    occurred_at_ms: 2,
+                },
+            },
+            AiSessionRecord::OperationTransition {
+                version: AI_SESSION_RECORD_VERSION,
+                transition: OperationTransition {
+                    operation_id: "operation-1".into(),
+                    request_id: "request-1".into(),
+                    state: OperationState::Completed,
+                    occurred_at_ms: 3,
+                },
             },
             AiSessionRecord::Message {
                 version: AI_SESSION_RECORD_VERSION,
@@ -516,6 +570,10 @@ mod tests {
         contents.push_str("\n{\"type\":");
         let session = replay_session("conversation-1", &contents).unwrap();
         assert_eq!(session.messages.len(), 2);
+        assert!(matches!(
+            &session.operations[0].state,
+            OperationState::Completed
+        ));
         assert_eq!(
             session.messages[1].thinking.as_deref(),
             Some("I inspected the widget state first.")

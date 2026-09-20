@@ -5,6 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     agent::error::AgentFailureCode,
+    agent::operation::{OperationState, OperationTransition},
     agent::tools::{ToolContext, ToolRegistry},
     config::OpenAiCompatibleConfig,
     models::{
@@ -214,6 +215,18 @@ async fn run_prompt(
     commands: mpsc::Sender<AiSessionCommand>,
     tool_context: ToolContext,
 ) {
+    let operation_id = format!("operation-{request_id}");
+    if !persist_operation_transition(
+        session_id,
+        &operation_id,
+        &request_id,
+        OperationState::Accepted,
+        &sessions,
+    )
+    .await
+    {
+        return;
+    }
     if provider != "openai-compatible" {
         send_failure(
             session_id,
@@ -252,6 +265,18 @@ async fn run_prompt(
             &recipient,
         )
         .await;
+        return;
+    }
+
+    if !persist_operation_transition(
+        session_id,
+        &operation_id,
+        &request_id,
+        OperationState::Preparing,
+        &sessions,
+    )
+    .await
+    {
         return;
     }
 
@@ -394,6 +419,19 @@ async fn run_prompt(
     let mut operation_usage = AiTokenUsage::default();
     let mut reported_usage = false;
     for _round in 0..8 {
+        if !persist_operation_transition(
+            session_id,
+            &operation_id,
+            &request_id,
+            OperationState::ModelInFlight {
+                attempt: (_round + 1) as u32,
+            },
+            &sessions,
+        )
+        .await
+        {
+            return;
+        }
         let response = match stream_openai_compatible(
             config,
             &model.model_id,
@@ -424,6 +462,23 @@ async fn run_prompt(
             reported_usage = true;
         }
         if !response.tool_calls.is_empty() {
+            if !persist_operation_transition(
+                session_id,
+                &operation_id,
+                &request_id,
+                OperationState::ToolsPlanned {
+                    tool_call_ids: response
+                        .tool_calls
+                        .iter()
+                        .map(|call| call.id.clone())
+                        .collect(),
+                },
+                &sessions,
+            )
+            .await
+            {
+                return;
+            }
             provider_messages.push(OpenAiChatMessage {
                 role: "assistant".to_owned(),
                 content: (!response.content.is_empty()).then_some(response.content),
@@ -431,6 +486,19 @@ async fn run_prompt(
                 tool_call_id: None,
             });
             for call in response.tool_calls {
+                if !persist_operation_transition(
+                    session_id,
+                    &operation_id,
+                    &request_id,
+                    OperationState::ToolInFlight {
+                        tool_call_id: call.id.clone(),
+                    },
+                    &sessions,
+                )
+                .await
+                {
+                    return;
+                }
                 if call.id.trim().is_empty() || call.function.name.trim().is_empty() {
                     send_failure(
                         session_id,
@@ -589,6 +657,14 @@ async fn run_prompt(
                     })
                     .await;
             }
+            let _ = persist_operation_transition(
+                session_id,
+                &operation_id,
+                &request_id,
+                OperationState::Completed,
+                &sessions,
+            )
+            .await;
             recipient
                 .send(ServerMessage::AgentCompleted {
                     request_id,
@@ -608,6 +684,37 @@ async fn run_prompt(
         &recipient,
     )
     .await;
+}
+
+async fn persist_operation_transition(
+    session_id: &str,
+    operation_id: &str,
+    request_id: &str,
+    state: OperationState,
+    sessions: &AiSessionService,
+) -> bool {
+    let transition = OperationTransition {
+        operation_id: operation_id.to_owned(),
+        request_id: request_id.to_owned(),
+        state,
+        occurred_at_ms: now_ms(),
+    };
+    match sessions
+        .append(
+            session_id,
+            AiSessionRecord::OperationTransition {
+                version: AI_SESSION_RECORD_VERSION,
+                transition,
+            },
+        )
+        .await
+    {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::error!(session_id, operation_id, request_id, %error, "could not persist AI operation transition");
+            false
+        }
+    }
 }
 
 async fn send_failure(
@@ -640,6 +747,15 @@ async fn send_failure(
     {
         tracing::error!(session_id, request_id, code = code.as_str(), error = %storage_error, "could not persist AI session failure");
     }
+    let operation_id = format!("operation-{request_id}");
+    let _ = persist_operation_transition(
+        session_id,
+        &operation_id,
+        request_id,
+        OperationState::Failed,
+        sessions,
+    )
+    .await;
     recipient
         .send(ServerMessage::AgentError {
             request_id: request_id.to_owned(),
