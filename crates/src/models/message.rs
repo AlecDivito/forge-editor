@@ -1,6 +1,8 @@
 use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::agent::error::AgentFailureCode;
+
 /// The on-disk JSONL schema version for durable AI session records.
 pub const AI_SESSION_RECORD_VERSION: u8 = 1;
 
@@ -116,7 +118,14 @@ pub enum AiSessionRecord {
     },
     Failure {
         version: u8,
+        /// A stable machine-readable category. Older session files omit it.
+        #[serde(default)]
+        code: AgentFailureCode,
+        /// A generic, safe message that may be shown to a client.
         message: String,
+        /// Diagnostic context retained only in the durable session log.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
         created_at_ms: u64,
     },
 }
@@ -133,7 +142,11 @@ pub struct AiSession {
 /// A failed model turn retained separately from the transcript.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AiSessionFailure {
+    #[serde(default)]
+    pub code: AgentFailureCode,
     pub message: String,
+    #[serde(skip_serializing)]
+    pub detail: Option<String>,
     pub created_at_ms: u64,
 }
 

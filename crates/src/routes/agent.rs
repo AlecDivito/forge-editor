@@ -9,6 +9,7 @@ use rovo::{axum::IntoApiResponse, rovo, schemars::JsonSchema};
 use serde::Deserialize;
 
 use crate::{
+    agent::error::{AgentError, AgentFailureCode},
     error::AppError,
     models::{AgentModelCatalog, AgentModelDescriptor, AiSession, AiSessionSummary},
     state::AppState,
@@ -61,27 +62,37 @@ async fn list_models_impl(state: AppState) -> Result<impl IntoResponse, AppError
             models: Vec::new(),
         }));
     };
-    let endpoint = models_endpoint(&config.base_url)?;
+    let endpoint = models_endpoint(&config.base_url).map_err(AppError::from)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .map_err(|_| AppError::Upstream("The model client could not be initialized".into()))?;
+        .map_err(|error| AgentError::Internal {
+            code: AgentFailureCode::ModelClientInitializationFailed,
+            detail: error.to_string(),
+        })?;
     let response = client
         .get(endpoint)
         .bearer_auth(config.api_key())
         .send()
         .await
-        .map_err(|_| {
-            AppError::Upstream("The configured model backend could not be reached".into())
+        .map_err(|error| AgentError::Provider {
+            code: AgentFailureCode::ModelCatalogRequestFailed,
+            detail: error.to_string(),
         })?;
     if !response.status().is_success() {
-        return Err(AppError::Upstream(
-            "The configured model backend rejected the model listing request".into(),
-        ));
+        return Err(AgentError::Provider {
+            code: AgentFailureCode::ModelCatalogRejected,
+            detail: format!("model catalog request returned HTTP {}", response.status()),
+        }
+        .into());
     }
-    let payload = response.json::<OpenAiModelsResponse>().await.map_err(|_| {
-        AppError::Upstream("The configured model backend returned an invalid model listing".into())
-    })?;
+    let payload = response
+        .json::<OpenAiModelsResponse>()
+        .await
+        .map_err(|error| AgentError::Provider {
+            code: AgentFailureCode::ModelCatalogInvalidResponse,
+            detail: error.to_string(),
+        })?;
     let models = normalize_models(payload);
     Ok(Json(AgentModelCatalog {
         configured: true,
@@ -89,11 +100,14 @@ async fn list_models_impl(state: AppState) -> Result<impl IntoResponse, AppError
     }))
 }
 
-fn models_endpoint(base_url: &str) -> Result<reqwest::Url, AppError> {
+fn models_endpoint(base_url: &str) -> Result<reqwest::Url, AgentError> {
     let base_url = format!("{}/", base_url.trim_end_matches('/'));
     reqwest::Url::parse(&base_url)
         .and_then(|base_url| base_url.join("models"))
-        .map_err(|_| AppError::Upstream("OPENAI_API_BASE_URL is invalid".into()))
+        .map_err(|error| AgentError::InvalidRequest {
+            code: AgentFailureCode::InvalidModelBackendUrl,
+            detail: error.to_string(),
+        })
 }
 
 fn normalize_models(payload: OpenAiModelsResponse) -> Vec<AgentModelDescriptor> {

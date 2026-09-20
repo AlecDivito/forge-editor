@@ -1,11 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context;
 use dashmap::DashMap;
 use serde::Deserialize;
-use tokio::{fs, io::AsyncWriteExt};
 
 use crate::{
+    agent::session::writer::SessionWriter,
     config::OpenAiCompatibleConfig,
     models::{
         AI_SESSION_RECORD_VERSION, AiSession, AiSessionFailure, AiSessionMetadata, AiSessionModel,
@@ -25,6 +25,7 @@ const DEFAULT_SESSION_TITLE: &str = "New conversation";
 pub struct AiSessionService {
     sessions_dir: PathBuf,
     sessions: DashMap<String, AiSession>,
+    writers: DashMap<String, std::sync::Arc<SessionWriter>>,
     model_backend: Option<OpenAiCompatibleConfig>,
 }
 
@@ -36,6 +37,7 @@ impl AiSessionService {
         let service = Self {
             sessions_dir,
             sessions: DashMap::new(),
+            writers: DashMap::new(),
             model_backend,
         };
         service.load_sessions()?;
@@ -71,7 +73,7 @@ impl AiSessionService {
         if let Some(session) = self.get(session_id) {
             return Ok(session);
         }
-        let path = self.session_path(session_id)?;
+        self.session_path(session_id)?;
         let metadata = AiSessionMetadata {
             id: session_id.to_owned(),
             title: DEFAULT_SESSION_TITLE.to_owned(),
@@ -83,12 +85,12 @@ impl AiSessionService {
             messages: Vec::new(),
             failures: Vec::new(),
         };
-        self.append_to_path(
-            &path,
-            &AiSessionRecord::SessionCreated {
+        self.append_records(
+            session_id,
+            vec![AiSessionRecord::SessionCreated {
                 version: AI_SESSION_RECORD_VERSION,
                 metadata,
-            },
+            }],
         )
         .await?;
         self.sessions.insert(session_id.to_owned(), session.clone());
@@ -96,8 +98,8 @@ impl AiSessionService {
     }
 
     pub async fn append(&self, session_id: &str, record: AiSessionRecord) -> Result<(), String> {
-        let path = self.session_path(session_id)?;
-        self.append_to_path(&path, &record).await?;
+        self.append_records(session_id, vec![record.clone()])
+            .await?;
         let mut session = self
             .sessions
             .get_mut(session_id)
@@ -106,8 +108,14 @@ impl AiSessionService {
     }
 
     /// Ask the selected model for a short human-facing session title.
-    pub async fn generate_title(&self, model: &AiSessionModel, prompt: &str) -> Option<String> {
-        let config = self.model_backend.as_ref()?;
+    pub async fn generate_title(
+        &self,
+        model: &AiSessionModel,
+        prompt: &str,
+    ) -> Result<Option<String>, String> {
+        let Some(config) = self.model_backend.as_ref() else {
+            return Ok(None);
+        };
         let endpoint = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
         let request = ChatCompletionRequest {
             model: model.model_id.clone(),
@@ -127,28 +135,27 @@ impl AiSessionService {
             let response = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(20))
                 .build()
-                .map_err(|_| ())?
+                .map_err(|error| format!("could not create title client: {error}"))?
                 .post(endpoint)
                 .bearer_auth(config.api_key())
                 .json(&request)
                 .send()
                 .await
-                .map_err(|_| ())?;
+                .map_err(|error| format!("title request failed: {error}"))?;
             if !response.status().is_success() {
-                return Err(());
+                return Err(format!("title request returned HTTP {}", response.status()));
             }
             let response = response
                 .json::<TitleCompletionResponse>()
                 .await
-                .map_err(|_| ())?;
-            response
+                .map_err(|error| format!("invalid title response: {error}"))?;
+            Ok(response
                 .choices
                 .into_iter()
-                .find_map(|choice| normalize_title(&choice.message.content))
-                .ok_or(())
+                .find_map(|choice| normalize_title(&choice.message.content)))
         }
         .await;
-        result.ok()
+        result
     }
 
     fn load_sessions(&self) -> anyhow::Result<()> {
@@ -176,24 +183,21 @@ impl AiSessionService {
         Ok(())
     }
 
-    async fn append_to_path(&self, path: &Path, record: &AiSessionRecord) -> Result<(), String> {
-        let payload = serde_json::to_vec(record)
-            .map_err(|_| "The AI session could not be serialized".to_owned())?;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await
-            .map_err(|_| "The AI session could not be written to storage".to_owned())?;
-        file.write_all(&payload)
-            .await
-            .map_err(|_| "The AI session could not be written to storage".to_owned())?;
-        file.write_all(b"\n")
-            .await
-            .map_err(|_| "The AI session could not be written to storage".to_owned())?;
-        file.sync_data()
-            .await
-            .map_err(|_| "The AI session could not be written to storage".to_owned())
+    async fn append_records(
+        &self,
+        session_id: &str,
+        records: Vec<AiSessionRecord>,
+    ) -> Result<(), String> {
+        let path = self.session_path(session_id)?;
+        let writer = self
+            .writers
+            .entry(session_id.to_owned())
+            .or_insert_with(|| std::sync::Arc::new(SessionWriter::spawn(path)))
+            .clone();
+        writer.append(records).await.map_err(|error| {
+            tracing::error!(session_id, error = %error, "durable AI session write failed");
+            "The AI session could not be written to storage".to_owned()
+        })
     }
 
     fn session_path(&self, session_id: &str) -> Result<PathBuf, String> {
@@ -275,10 +279,14 @@ fn apply_record(
         }),
         AiSessionRecord::Failure {
             version,
+            code,
             message,
+            detail,
             created_at_ms,
         } if version == AI_SESSION_RECORD_VERSION => session.failures.push(AiSessionFailure {
+            code,
             message,
+            detail,
             created_at_ms,
         }),
         AiSessionRecord::SessionCreated { .. } => {
@@ -339,7 +347,10 @@ fn normalize_title(content: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{AiSessionService, DEFAULT_SESSION_TITLE, replay_session};
-    use crate::models::{AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, ChatRole};
+    use crate::{
+        agent::error::AgentFailureCode,
+        models::{AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, ChatRole},
+    };
 
     #[test]
     fn replays_settled_messages_and_ignores_a_torn_final_line() {
@@ -369,7 +380,9 @@ mod tests {
             },
             AiSessionRecord::Failure {
                 version: AI_SESSION_RECORD_VERSION,
+                code: AgentFailureCode::ModelStreamFailed,
                 message: "The next response stream was interrupted".into(),
+                detail: Some("connection reset by peer".into()),
                 created_at_ms: 4,
             },
         ];

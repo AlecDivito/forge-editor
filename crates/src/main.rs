@@ -1,4 +1,5 @@
 mod actors;
+mod agent;
 mod config;
 mod debug;
 mod error;

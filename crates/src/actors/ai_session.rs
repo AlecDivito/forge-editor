@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
+    agent::error::AgentFailureCode,
     config::OpenAiCompatibleConfig,
     models::{
         AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
@@ -37,6 +38,11 @@ enum AiSessionCommand {
         prompt: String,
         recipient: mpsc::Sender<ServerMessage>,
     },
+    TitleGenerated {
+        request_id: String,
+        result: Result<Option<String>, String>,
+        recipient: mpsc::Sender<ServerMessage>,
+    },
 }
 
 impl AiSessionActor {
@@ -46,6 +52,7 @@ impl AiSessionActor {
         sessions: Arc<AiSessionService>,
     ) -> Arc<Self> {
         let (commands, mut receiver) = mpsc::channel(8);
+        let actor_commands = commands.clone();
         tokio::spawn(async move {
             let mut session = None;
             while let Some(command) = receiver.recv().await {
@@ -61,20 +68,22 @@ impl AiSessionActor {
                         prompt,
                         recipient,
                     } => {
-                        let session =
-                            match ensure_session(&mut session, &session_id, &sessions).await {
-                                Ok(session) => session,
-                                Err(message) => {
-                                    let _ = recipient
-                                        .send(ServerMessage::AgentError {
-                                            request_id,
-                                            conversation_id: session_id.clone(),
-                                            message,
-                                        })
-                                        .await;
-                                    continue;
-                                }
-                            };
+                        let session = match ensure_session(&mut session, &session_id, &sessions)
+                            .await
+                        {
+                            Ok(session) => session,
+                            Err(message) => {
+                                tracing::error!(session_id, request_id, error = %message, "could not initialize AI session");
+                                let _ = recipient
+                                    .send(ServerMessage::AgentError {
+                                        request_id,
+                                        conversation_id: session_id.clone(),
+                                        message: user_error().to_owned(),
+                                    })
+                                    .await;
+                                continue;
+                            }
+                        };
                         run_prompt(
                             &session_id,
                             config.as_ref(),
@@ -85,8 +94,69 @@ impl AiSessionActor {
                             session,
                             sessions.clone(),
                             recipient,
+                            actor_commands.clone(),
                         )
                         .await;
+                    }
+                    AiSessionCommand::TitleGenerated {
+                        request_id,
+                        result,
+                        recipient,
+                    } => {
+                        let Some(session) = session.as_mut() else {
+                            tracing::error!(
+                                session_id,
+                                "received AI session title for an unloaded session"
+                            );
+                            continue;
+                        };
+                        match result {
+                            Ok(Some(title)) => {
+                                if let Err(error) = sessions
+                                    .append(
+                                        &session_id,
+                                        AiSessionRecord::SessionNamed {
+                                            version: AI_SESSION_RECORD_VERSION,
+                                            title: title.clone(),
+                                            updated_at_ms: now_ms(),
+                                        },
+                                    )
+                                    .await
+                                {
+                                    record_internal_failure(
+                                        &session_id,
+                                        AgentFailureCode::TitlePersistFailed,
+                                        error,
+                                        &sessions,
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                                session.metadata.title = title.clone();
+                                let _ = recipient
+                                    .send(ServerMessage::AgentSessionNamed {
+                                        request_id,
+                                        conversation_id: session_id.clone(),
+                                        title,
+                                    })
+                                    .await;
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    session_id,
+                                    "model returned no usable AI session title"
+                                );
+                            }
+                            Err(error) => {
+                                record_internal_failure(
+                                    &session_id,
+                                    AgentFailureCode::TitleGenerationFailed,
+                                    error,
+                                    &sessions,
+                                )
+                                .await;
+                            }
+                        }
                     }
                 }
             }
@@ -138,11 +208,13 @@ async fn run_prompt(
     session: &mut AiSession,
     sessions: Arc<AiSessionService>,
     recipient: mpsc::Sender<ServerMessage>,
+    commands: mpsc::Sender<AiSessionCommand>,
 ) {
     if provider != "openai-compatible" {
         send_failure(
             session_id,
             &request_id,
+            AgentFailureCode::InvalidProvider,
             "The selected model provider is not configured",
             &sessions,
             &recipient,
@@ -154,6 +226,7 @@ async fn run_prompt(
         send_failure(
             session_id,
             &request_id,
+            AgentFailureCode::MissingModelBackend,
             "No OpenAI-compatible model backend is configured",
             &sessions,
             &recipient,
@@ -169,6 +242,7 @@ async fn run_prompt(
         send_failure(
             session_id,
             &request_id,
+            AgentFailureCode::InvalidPrompt,
             "The selected model or chat transcript is invalid",
             &sessions,
             &recipient,
@@ -197,6 +271,7 @@ async fn run_prompt(
         send_failure(
             session_id,
             &request_id,
+            AgentFailureCode::TranscriptLimit,
             "The in-memory chat transcript exceeds its limit",
             &sessions,
             &recipient,
@@ -224,7 +299,15 @@ async fn run_prompt(
         {
             Ok(()) => {}
             Err(message) => {
-                send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
+                send_failure(
+                    session_id,
+                    &request_id,
+                    AgentFailureCode::StorageWriteFailed,
+                    &message,
+                    &sessions,
+                    &recipient,
+                )
+                .await;
                 return;
             }
         }
@@ -245,7 +328,15 @@ async fn run_prompt(
     {
         Ok(()) => {}
         Err(message) => {
-            send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
+            send_failure(
+                session_id,
+                &request_id,
+                AgentFailureCode::StorageWriteFailed,
+                &message,
+                &sessions,
+                &recipient,
+            )
+            .await;
             return;
         }
     }
@@ -255,41 +346,28 @@ async fn run_prompt(
         thinking: None,
     });
     if should_generate_title {
-        let title_session_id = session_id.to_owned();
         let title_request_id = request_id.clone();
         let title_model = model.clone();
         let title_prompt = prompt.clone();
         let title_sessions = sessions.clone();
         let title_recipient = recipient.clone();
         tokio::spawn(async move {
-            let Some(title) = title_sessions
+            let result = title_sessions
                 .generate_title(&title_model, &title_prompt)
-                .await
-            else {
-                return;
-            };
-            if let Err(error) = title_sessions
-                .append(
-                    &title_session_id,
-                    AiSessionRecord::SessionNamed {
-                        version: AI_SESSION_RECORD_VERSION,
-                        title: title.clone(),
-                        updated_at_ms: now_ms(),
-                    },
-                )
-                .await
-            {
-                tracing::warn!(session_id = title_session_id, %error, "could not persist AI session title");
-                return;
-            }
-            title_recipient
-                .send(ServerMessage::AgentSessionNamed {
+                .await;
+            if commands
+                .send(AiSessionCommand::TitleGenerated {
                     request_id: title_request_id,
-                    conversation_id: title_session_id,
-                    title,
+                    result,
+                    recipient: title_recipient,
                 })
                 .await
-                .ok();
+                .is_err()
+            {
+                tracing::error!(
+                    "AI session actor stopped before a generated title could be handled"
+                );
+            }
         });
     }
     match stream_openai_compatible(
@@ -317,7 +395,15 @@ async fn run_prompt(
                     )
                     .await
                 {
-                    send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
+                    send_failure(
+                        session_id,
+                        &request_id,
+                        AgentFailureCode::StorageWriteFailed,
+                        &message,
+                        &sessions,
+                        &recipient,
+                    )
+                    .await;
                     return;
                 }
                 session.messages.push(ChatMessage {
@@ -335,7 +421,15 @@ async fn run_prompt(
                 .ok();
         }
         Err(message) => {
-            send_failure(session_id, &request_id, &message, &sessions, &recipient).await;
+            send_failure(
+                session_id,
+                &request_id,
+                AgentFailureCode::ModelStreamFailed,
+                &message,
+                &sessions,
+                &recipient,
+            )
+            .await;
         }
     }
 }
@@ -343,32 +437,74 @@ async fn run_prompt(
 async fn send_failure(
     session_id: &str,
     request_id: &str,
-    message: &str,
+    code: AgentFailureCode,
+    detail: &str,
     sessions: &AiSessionService,
     recipient: &mpsc::Sender<ServerMessage>,
 ) {
-    let message = match sessions
+    tracing::error!(
+        session_id,
+        request_id,
+        code = code.as_str(),
+        detail,
+        "AI session operation failed"
+    );
+    if let Err(storage_error) = sessions
         .append(
             session_id,
             AiSessionRecord::Failure {
                 version: AI_SESSION_RECORD_VERSION,
-                message: message.to_owned(),
+                code,
+                message: user_error().to_owned(),
+                detail: Some(detail.to_owned()),
                 created_at_ms: now_ms(),
             },
         )
         .await
     {
-        Ok(()) => message.to_owned(),
-        Err(storage_error) => storage_error,
-    };
+        tracing::error!(session_id, request_id, code = code.as_str(), error = %storage_error, "could not persist AI session failure");
+    }
     recipient
         .send(ServerMessage::AgentError {
             request_id: request_id.to_owned(),
             conversation_id: session_id.to_owned(),
-            message,
+            message: user_error().to_owned(),
         })
         .await
         .ok();
+}
+
+async fn record_internal_failure(
+    session_id: &str,
+    code: AgentFailureCode,
+    detail: String,
+    sessions: &AiSessionService,
+) {
+    tracing::error!(
+        session_id,
+        code = code.as_str(),
+        detail,
+        "AI session background task failed"
+    );
+    if let Err(storage_error) = sessions
+        .append(
+            session_id,
+            AiSessionRecord::Failure {
+                version: AI_SESSION_RECORD_VERSION,
+                code,
+                message: user_error().to_owned(),
+                detail: Some(detail),
+                created_at_ms: now_ms(),
+            },
+        )
+        .await
+    {
+        tracing::error!(session_id, code = code.as_str(), error = %storage_error, "could not persist AI session background failure");
+    }
+}
+
+const fn user_error() -> &'static str {
+    "Something went wrong. Please try again."
 }
 
 async fn ensure_session<'a>(
@@ -424,14 +560,16 @@ async fn stream_openai_compatible(
     let mut response_text = String::new();
     let mut thinking = String::new();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "The model response stream was interrupted".to_owned())?;
+        let chunk =
+            chunk.map_err(|e| format!("The model response stream was interrupted {:?}", e))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(event) = take_event(&mut buffer) {
             if event == "[DONE]" {
                 return Ok(AssistantResponse::new(response_text, thinking));
             }
-            let chunk: ChatCompletionChunk = serde_json::from_str(&event)
-                .map_err(|_| "The model backend returned an invalid stream event".to_owned())?;
+            let chunk: ChatCompletionChunk = serde_json::from_str(&event).map_err(|e| {
+                format!("The model backend returned an invalid stream event {:?}", e)
+            })?;
             for choice in chunk.choices {
                 if let Some(reasoning) = choice
                     .delta
