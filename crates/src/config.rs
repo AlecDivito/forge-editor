@@ -49,6 +49,7 @@ pub struct Config {
     pub workspaces: Vec<WorkspaceConfig>,
     pub default_workspace_id: String,
     pub openai_compatible: Option<OpenAiCompatibleConfig>,
+    pub agent_sessions_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +82,11 @@ impl Config {
             }
             (None, None) => None,
         };
+        let agent_sessions_dir = get("FORGE_AGENT_SESSIONS_DIR")
+            .filter(|value| !value.trim().is_empty())
+            .context("FORGE_AGENT_SESSIONS_DIR is required for AI session storage")?;
+        let agent_sessions_dir =
+            canonical_directory(Path::new(&agent_sessions_dir), "FORGE_AGENT_SESSIONS_DIR")?;
 
         let Some(json) = get("FORGE_WORKSPACES_JSON") else {
             let base = get("BASE_DIRECTORY").context(
@@ -100,6 +106,7 @@ impl Config {
                 }],
                 default_workspace_id: "default".into(),
                 openai_compatible,
+                agent_sessions_dir,
             });
         };
 
@@ -164,6 +171,7 @@ impl Config {
             workspaces,
             default_workspace_id,
             openai_compatible,
+            agent_sessions_dir,
         })
     }
 }
@@ -235,6 +243,10 @@ mod tests {
     }
 
     fn parse(values: HashMap<&str, String>) -> anyhow::Result<Config> {
+        let mut values = values;
+        values
+            .entry("FORGE_AGENT_SESSIONS_DIR")
+            .or_insert_with(|| env::temp_dir().display().to_string());
         Config::from_values(|key| values.get(key).cloned())
     }
 

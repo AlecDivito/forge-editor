@@ -693,14 +693,28 @@ async fn dispatch(
             request_id,
             conversation_id,
         } => {
-            state.ai_session(conversation_id.clone());
-            document_tx
-                .send(ServerMessage::AgentSessionStarted {
-                    request_id,
-                    conversation_id,
-                })
-                .await
-                .ok();
+            let session = state.ai_session(conversation_id.clone());
+            match session.start().await {
+                Ok(_) => {
+                    document_tx
+                        .send(ServerMessage::AgentSessionStarted {
+                            request_id,
+                            conversation_id,
+                        })
+                        .await
+                        .ok();
+                }
+                Err(message) => {
+                    document_tx
+                        .send(ServerMessage::AgentError {
+                            request_id,
+                            conversation_id,
+                            message,
+                        })
+                        .await
+                        .ok();
+                }
+            }
             Ok(())
         }
 

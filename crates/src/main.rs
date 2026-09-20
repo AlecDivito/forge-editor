@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", config.port))
         .await
         .unwrap();
-    let state = AppState::new(config);
+    let state = AppState::new(config)?;
     // Watchers are intentionally retained in main: dropping a notify watcher
     // immediately unregisters its operating-system subscriptions.
     let _workspace_watchers = services::workspace_watcher::start(state.clone())?;

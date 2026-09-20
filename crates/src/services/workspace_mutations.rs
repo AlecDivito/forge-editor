@@ -495,6 +495,9 @@ mod tests {
         tokio::fs::write(root.join(name), content)
             .await
             .expect("create file");
+        tokio::fs::create_dir_all(root.join("sessions"))
+            .await
+            .expect("create session storage");
         (
             AppState::new(Config {
                 port: 0,
@@ -509,7 +512,9 @@ mod tests {
                 }],
                 default_workspace_id: "workspace".into(),
                 openai_compatible: None,
-            }),
+                agent_sessions_dir: root.join("sessions"),
+            })
+            .expect("create app state"),
             root,
         )
     }

@@ -1,12 +1,16 @@
 use std::time::Duration;
 
-use axum::{Json, extract::State, response::IntoResponse};
-use rovo::{axum::IntoApiResponse, rovo};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    response::IntoResponse,
+};
+use rovo::{axum::IntoApiResponse, rovo, schemars::JsonSchema};
 use serde::Deserialize;
 
 use crate::{
     error::AppError,
-    models::{AgentModelCatalog, AgentModelDescriptor},
+    models::{AgentModelCatalog, AgentModelDescriptor, AiSession, AiSessionSummary},
     state::AppState,
 };
 
@@ -18,6 +22,18 @@ struct OpenAiModelsResponse {
 #[derive(Deserialize)]
 struct OpenAiModel {
     id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AgentSessionSearchQuery {
+    /// Case-insensitive text matched against session titles and message content.
+    pub query: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AgentSessionPath {
+    /// Opaque conversation ID used to address the durable session.
+    pub session_id: String,
 }
 
 /// List models from the configured OpenAI-compatible backend.
@@ -93,6 +109,57 @@ fn normalize_models(payload: OpenAiModelsResponse) -> Vec<AgentModelDescriptor> 
         .collect::<Vec<_>>();
     models.sort_by(|left, right| left.label.cmp(&right.label));
     models
+}
+
+/// List durable AI sessions already loaded by the session service.
+///
+/// The optional `query` parameter searches both titles and completed message
+/// content without rereading JSONL files.
+///
+/// # Responses
+///
+/// 200: Json<Vec<AiSessionSummary>> - The durable session summaries
+///
+/// # Metadata
+///
+/// @tag agent
+#[rovo]
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    Query(query): Query<AgentSessionSearchQuery>,
+) -> impl IntoApiResponse {
+    Json(state.ai_sessions.list(query.query.as_deref()))
+}
+
+/// Get a complete durable AI conversation for frontend restoration.
+///
+/// # Path Parameters
+/// session_id: String - Opaque conversation ID of the durable session
+///
+/// # Responses
+///
+/// 200: Json<AiSession> - The complete durable session
+/// 404: () - The requested session does not exist
+///
+/// # Metadata
+///
+/// @tag agent
+#[rovo]
+pub async fn get_session(
+    State(state): State<AppState>,
+    Path(AgentSessionPath { session_id }): Path<AgentSessionPath>,
+) -> impl IntoApiResponse {
+    get_session_impl(state, session_id).await.into_response()
+}
+
+async fn get_session_impl(
+    state: AppState,
+    session_id: String,
+) -> Result<impl IntoResponse, AppError> {
+    match state.ai_sessions.get(&session_id) {
+        Some(session) => Ok(Json(session)),
+        None => Err(AppError::NotFound("The AI session does not exist".into())),
+    }
 }
 
 #[cfg(test)]

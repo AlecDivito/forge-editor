@@ -1,18 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     config::OpenAiCompatibleConfig,
     models::{
+        AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
         ChatCompletionChunk, ChatCompletionRequest, ChatMessage, ChatRole, OpenAiChatMessage,
         ServerMessage,
     },
+    services::ai_session::AiSessionService,
+    util::time::now_ms,
 };
 
-/// A live, in-memory conversation runtime. It intentionally owns no durable
-/// storage yet; dropping it loses its queue and any future runtime-only state.
 pub struct AiSessionActor {
     commands: mpsc::Sender<AiSessionCommand>,
 }
@@ -26,6 +27,9 @@ impl std::fmt::Debug for AiSessionActor {
 }
 
 enum AiSessionCommand {
+    Start {
+        result: oneshot::Sender<Result<AiSessionMetadata, String>>,
+    },
     Prompt {
         request_id: String,
         provider: String,
@@ -36,12 +40,20 @@ enum AiSessionCommand {
 }
 
 impl AiSessionActor {
-    pub fn spawn(session_id: String, config: Option<OpenAiCompatibleConfig>) -> Arc<Self> {
+    pub fn spawn(
+        session_id: String,
+        config: Option<OpenAiCompatibleConfig>,
+        sessions: Arc<AiSessionService>,
+    ) -> Arc<Self> {
         let (commands, mut receiver) = mpsc::channel(8);
         tokio::spawn(async move {
-            let mut transcript = Vec::new();
+            let mut session = None;
             while let Some(command) = receiver.recv().await {
                 match command {
+                    AiSessionCommand::Start { result } => {
+                        let outcome = ensure_session(&mut session, &session_id, &sessions).await;
+                        let _ = result.send(outcome.map(|session| session.metadata.clone()));
+                    }
                     AiSessionCommand::Prompt {
                         request_id,
                         provider,
@@ -49,6 +61,20 @@ impl AiSessionActor {
                         prompt,
                         recipient,
                     } => {
+                        let session =
+                            match ensure_session(&mut session, &session_id, &sessions).await {
+                                Ok(session) => session,
+                                Err(message) => {
+                                    let _ = recipient
+                                        .send(ServerMessage::AgentError {
+                                            request_id,
+                                            conversation_id: session_id.clone(),
+                                            message,
+                                        })
+                                        .await;
+                                    continue;
+                                }
+                            };
                         run_prompt(
                             &session_id,
                             config.as_ref(),
@@ -56,7 +82,8 @@ impl AiSessionActor {
                             provider,
                             model_id,
                             prompt,
-                            &mut transcript,
+                            session,
+                            &sessions,
                             recipient,
                         )
                         .await;
@@ -65,6 +92,19 @@ impl AiSessionActor {
             }
         });
         Arc::new(Self { commands })
+    }
+
+    /// Ensures the durable record exists and loads it before the client starts
+    /// using the session. Routes do not perform storage I/O themselves.
+    pub async fn start(&self) -> Result<AiSessionMetadata, String> {
+        let (result, receiver) = oneshot::channel();
+        self.commands
+            .send(AiSessionCommand::Start { result })
+            .await
+            .map_err(|_| "The AI session is unavailable".to_owned())?;
+        receiver
+            .await
+            .map_err(|_| "The AI session is unavailable".to_owned())?
     }
 
     pub async fn prompt(
@@ -95,7 +135,8 @@ async fn run_prompt(
     provider: String,
     model_id: String,
     prompt: String,
-    transcript: &mut Vec<ChatMessage>,
+    session: &mut AiSession,
+    sessions: &AiSessionService,
     recipient: mpsc::Sender<ServerMessage>,
 ) {
     let failure = |message: &str| ServerMessage::AgentError {
@@ -139,27 +180,89 @@ async fn run_prompt(
     {
         return;
     }
-    transcript.push(ChatMessage {
-        role: ChatRole::User,
-        content: prompt,
-    });
-    if transcript.len() > 100
-        || transcript
-            .iter()
-            .map(|message| message.content.len())
-            .sum::<usize>()
-            > 100_000
-    {
+    let prospective_message_bytes = session
+        .messages
+        .iter()
+        .map(|message| message.content.len())
+        .sum::<usize>()
+        + prompt.len();
+    if session.messages.len() >= 100 || prospective_message_bytes > 100_000 {
         recipient
             .send(failure("The in-memory chat transcript exceeds its limit"))
             .await
             .ok();
         return;
     }
+
+    let model = AiSessionModel { provider, model_id };
+    if session.metadata.title == "New conversation" {
+        let title = sessions.generate_title(&model, &prompt).await;
+        match sessions
+            .append(
+                session_id,
+                AiSessionRecord::SessionNamed {
+                    version: AI_SESSION_RECORD_VERSION,
+                    title: title.clone(),
+                    updated_at_ms: now_ms(),
+                },
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(message) => {
+                recipient.send(failure(&message)).await.ok();
+                return;
+            }
+        }
+        session.metadata.title = title;
+    }
+
+    if session.metadata.model.as_ref() != Some(&model) {
+        match sessions
+            .append(
+                session_id,
+                AiSessionRecord::ModelSelected {
+                    version: AI_SESSION_RECORD_VERSION,
+                    model: model.clone(),
+                    updated_at_ms: now_ms(),
+                },
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(message) => {
+                recipient.send(failure(&message)).await.ok();
+                return;
+            }
+        }
+        session.metadata.model = Some(model.clone());
+    }
+    match sessions
+        .append(
+            session_id,
+            AiSessionRecord::Message {
+                version: AI_SESSION_RECORD_VERSION,
+                role: ChatRole::User,
+                content: prompt.clone(),
+                created_at_ms: now_ms(),
+            },
+        )
+        .await
+    {
+        Ok(()) => {}
+        Err(message) => {
+            recipient.send(failure(&message)).await.ok();
+            return;
+        }
+    }
+    session.messages.push(crate::models::ChatMessage {
+        role: ChatRole::User,
+        content: prompt,
+    });
     match stream_openai_compatible(
         config,
-        &model_id,
-        transcript,
+        &model.model_id,
+        &session.messages,
         session_id,
         &request_id,
         recipient.clone(),
@@ -168,7 +271,22 @@ async fn run_prompt(
     {
         Ok(response) => {
             if !response.is_empty() {
-                transcript.push(ChatMessage {
+                if let Err(message) = sessions
+                    .append(
+                        session_id,
+                        AiSessionRecord::Message {
+                            version: AI_SESSION_RECORD_VERSION,
+                            role: ChatRole::Assistant,
+                            content: response.clone(),
+                            created_at_ms: now_ms(),
+                        },
+                    )
+                    .await
+                {
+                    recipient.send(failure(&message)).await.ok();
+                    return;
+                }
+                session.messages.push(crate::models::ChatMessage {
                     role: ChatRole::Assistant,
                     content: response,
                 });
@@ -192,6 +310,17 @@ async fn run_prompt(
                 .ok();
         }
     }
+}
+
+async fn ensure_session<'a>(
+    session: &'a mut Option<AiSession>,
+    session_id: &str,
+    sessions: &AiSessionService,
+) -> Result<&'a mut AiSession, String> {
+    if session.is_none() {
+        *session = Some(sessions.open_or_create(session_id).await?);
+    }
+    Ok(session.as_mut().expect("session was initialized"))
 }
 
 async fn stream_openai_compatible(
@@ -286,12 +415,17 @@ fn take_event(buffer: &mut String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{AiSessionActor, chat_completions_endpoint, take_event};
-    use crate::models::ServerMessage;
+    use crate::{models::ServerMessage, services::ai_session::AiSessionService};
+    use std::sync::Arc;
     use tokio::{sync::mpsc, time::Duration};
 
     #[tokio::test]
     async fn unconfigured_actor_reports_a_scoped_error() {
-        let actor = AiSessionActor::spawn("conversation-1".into(), None);
+        let sessions_dir =
+            std::env::temp_dir().join(format!("forge-ai-session-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        let actor = AiSessionActor::spawn("conversation-1".into(), None, sessions);
         let (sender, mut receiver) = mpsc::channel(1);
         actor
             .prompt(
@@ -315,6 +449,7 @@ mod tests {
                 ..
             } if request_id == "request-1" && conversation_id == "conversation-1"
         ));
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
     }
 
     #[test]

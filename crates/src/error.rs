@@ -27,6 +27,7 @@ where
 pub enum AppError {
     String(String),
     Conflict(String),
+    NotFound(String),
     Upstream(String),
     GenericError(anyhow::Error),
 }
@@ -54,6 +55,7 @@ impl IntoResponse for AppError {
         let (status, message) = match &self {
             AppError::String(error) => (StatusCode::BAD_REQUEST, format!("{}", error)),
             AppError::Conflict(error) => (StatusCode::CONFLICT, format!("{}", error)),
+            AppError::NotFound(error) => (StatusCode::NOT_FOUND, format!("{}", error)),
             AppError::Upstream(error) => (StatusCode::BAD_GATEWAY, format!("{}", error)),
             AppError::GenericError(error) => (StatusCode::BAD_REQUEST, format!("{}", error)),
         };
