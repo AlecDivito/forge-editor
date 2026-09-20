@@ -14,10 +14,7 @@ export function AgentComposer() {
   const fileInput = useRef<HTMLInputElement>(null);
   const composer = useAgentComposer(activeConversationId);
   if (!conversation) return null;
-  const canSend =
-    Boolean(composer.draft.trim() || composer.attachments.length) &&
-    Boolean(conversation.model) &&
-    conversation.status !== "streaming";
+  const canSend = Boolean(composer.draft.trim()) && Boolean(conversation.model) && conversation.status !== "streaming";
 
   return (
     <form onSubmit={composer.submit} className="shrink-0 border-t border-border bg-card p-3">
@@ -59,9 +56,9 @@ export function AgentComposer() {
           onChange={(event) => composer.setDraft(event.target.value)}
           onPaste={composer.onPaste}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
+              composer.send();
             }
           }}
           placeholder="Ask about your workspace"

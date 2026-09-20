@@ -22,7 +22,7 @@ grep-regex = "0.1.14"
 ignore = "0.4.33"
 globset = "0.4.20"
 regex = "1.13.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 percent-encoding = "2"
 grep-matcher = "0.1.9"
 yrs = { version = "0.27.4", features = ["sync"] }

@@ -19,17 +19,6 @@ export type AgentModelSelection = {
   provider: string;
 };
 
-/** The provider/model portion of the future AgentPrompt WebSocket operation. */
-export type AgentProcessingRequest = {
-  conversationId: string;
-  prompt: string;
-  model: {
-    id: string;
-    provider: string;
-  };
-  attachments: AgentAttachment[];
-};
-
 export type AgentConversation = {
   id: string;
   title: string;

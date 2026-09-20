@@ -1,5 +1,14 @@
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import { Message, MessageAvatar, MessageContent } from "@/components/ui/message";
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Message, MessageContent } from "@/components/ui/message";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -8,41 +17,41 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import { Loader2, Sparkles, Wrench } from "lucide-react";
+import { Loader2, Wrench } from "lucide-react";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
 import { AgentMessage } from "../types/agent-harness.types";
 
 function TranscriptMessage({ message }: { message: AgentMessage }) {
   if (message.role === "tool")
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        <Wrench className="size-3.5" />
-        {message.text}
-      </div>
+      <Marker variant="border" className="px-3 py-2 text-xs">
+        <MarkerIcon>
+          <Wrench className="size-3.5" />
+        </MarkerIcon>
+        <MarkerContent>{message.text}</MarkerContent>
+      </Marker>
     );
   const user = message.role === "user";
   return (
     <Message align={user ? "end" : "start"}>
-      {!user && (
-        <MessageAvatar className="size-6 rounded-md bg-primary/10 text-primary">
-          <Sparkles className="size-3.5" />
-        </MessageAvatar>
-      )}
       <MessageContent>
         <Bubble variant={user ? "default" : "ghost"}>
           {message.attachments?.length ? (
-            <div className="grid grid-cols-2 gap-1.5 pb-1.5">
+            <AttachmentGroup className="pb-1.5">
               {message.attachments.map((attachment) => (
-                <img
-                  key={attachment.id}
-                  src={attachment.previewUrl}
-                  alt={attachment.name}
-                  className="aspect-square w-full rounded-2xl object-cover"
-                />
+                <Attachment key={attachment.id} orientation="vertical" size="sm">
+                  <AttachmentMedia variant="image">
+                    <img src={attachment.previewUrl} alt={attachment.name} />
+                  </AttachmentMedia>
+                  <AttachmentContent>
+                    <AttachmentTitle>{attachment.name}</AttachmentTitle>
+                    <AttachmentDescription>{attachment.mimeType}</AttachmentDescription>
+                  </AttachmentContent>
+                </Attachment>
               ))}
-            </div>
+            </AttachmentGroup>
           ) : null}
-          {message.text ? <BubbleContent>{message.text}</BubbleContent> : null}
+          {message.text ? <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent> : null}
         </Bubble>
       </MessageContent>
     </Message>
@@ -68,11 +77,13 @@ export function ConversationTranscript() {
               </MessageScrollerItem>
             ))}
             {conversation.status === "streaming" && (
-              <MessageScrollerItem
-                messageId="streaming"
-                className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" />
-                Agent is thinking…
+              <MessageScrollerItem messageId="streaming" className="px-1">
+                <Marker aria-live="polite" className="text-xs">
+                  <MarkerIcon>
+                    <Loader2 className="size-3.5 animate-spin" />
+                  </MarkerIcon>
+                  <MarkerContent className="animate-pulse">Generating response…</MarkerContent>
+                </Marker>
               </MessageScrollerItem>
             )}
           </MessageScrollerContent>

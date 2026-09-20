@@ -20,6 +20,7 @@ type AgentHarnessState = {
   closeConversation: (id: string) => void;
   setModel: (id: string, model: AgentModelSelection | null) => void;
   addMessage: (id: string, message: AgentMessage) => void;
+  appendMessageText: (conversationId: string, messageId: string, text: string) => void;
   setConversationStatus: (id: string, status: ConversationStatus) => void;
 };
 const initialConversation = makeConversation();
@@ -70,6 +71,19 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
               title:
                 conversation.messages.length === 0 && message.text ? message.text.slice(0, 36) : conversation.title,
               messages: [...conversation.messages, message],
+            },
+      ),
+    })),
+  appendMessageText: (conversationId, messageId, text) =>
+    set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id !== conversationId
+          ? conversation
+          : {
+              ...conversation,
+              messages: conversation.messages.map((message) =>
+                message.id === messageId ? { ...message, text: `${message.text}${text}` } : message,
+              ),
             },
       ),
     })),

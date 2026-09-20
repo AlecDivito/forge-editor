@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::{
-    actors::{DocumentActor, LspServerActor, TerminalActor},
+    actors::{AiSessionActor, DocumentActor, LspServerActor, TerminalActor},
     config::Config,
     models::{ClientId, FileId, LanguageId, ServerMessage, TerminalId, WorkspaceId},
 };
@@ -24,6 +24,9 @@ pub struct AppState {
     workspaces: Arc<HashMap<WorkspaceId, Arc<WorkspaceRuntime>>>,
     pub open_files: Arc<DashMap<(WorkspaceId, FileId), Arc<DocumentActor>>>,
     pub terminals: Arc<DashMap<TerminalId, TerminalRecord>>,
+    /// Ephemeral AI conversation actors. This registry is deliberately
+    /// in-memory until durable session storage is introduced.
+    pub ai_sessions: Arc<DashMap<String, Arc<AiSessionActor>>>,
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
     pub debug: crate::debug::DebugService,
@@ -105,6 +108,7 @@ impl AppState {
             workspaces: Arc::new(workspaces),
             open_files: Arc::new(DashMap::new()),
             terminals: Arc::new(DashMap::new()),
+            ai_sessions: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
             debug: crate::debug::DebugService::new(),
@@ -120,6 +124,15 @@ impl AppState {
             self.next_connection_id.fetch_add(1, Ordering::Relaxed),
             document_tx,
         )
+    }
+
+    pub fn ai_session(&self, session_id: String) -> Arc<AiSessionActor> {
+        self.ai_sessions
+            .entry(session_id.clone())
+            .or_insert_with(|| {
+                AiSessionActor::spawn(session_id, self.config.openai_compatible.clone())
+            })
+            .clone()
     }
 }
 

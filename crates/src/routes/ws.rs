@@ -689,6 +689,52 @@ async fn dispatch(
             Ok(())
         }
 
+        ClientMessage::AgentSessionStart {
+            request_id,
+            conversation_id,
+        } => {
+            state.ai_session(conversation_id.clone());
+            document_tx
+                .send(ServerMessage::AgentSessionStarted {
+                    request_id,
+                    conversation_id,
+                })
+                .await
+                .ok();
+            Ok(())
+        }
+
+        ClientMessage::AgentPrompt {
+            request_id,
+            conversation_id,
+            provider,
+            model_id,
+            prompt,
+        } => {
+            let session = state.ai_session(conversation_id.clone());
+            if session
+                .prompt(
+                    request_id.clone(),
+                    provider,
+                    model_id,
+                    prompt,
+                    document_tx.clone(),
+                )
+                .await
+                .is_err()
+            {
+                document_tx
+                    .send(ServerMessage::AgentError {
+                        request_id,
+                        conversation_id,
+                        message: "The AI session is unavailable".into(),
+                    })
+                    .await
+                    .ok();
+            }
+            Ok(())
+        }
+
         ClientMessage::LspRequest {
             workspace_id,
             scope,

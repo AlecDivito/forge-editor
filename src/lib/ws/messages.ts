@@ -215,6 +215,15 @@ export type ClientMessage =
       method: string;
       params: unknown;
     }
+  | { kind: "AgentSessionStart"; request_id: string; conversation_id: string }
+  | {
+      kind: "AgentPrompt";
+      request_id: string;
+      conversation_id: string;
+      provider: string;
+      model_id: string;
+      prompt: string;
+    }
   | {
       kind: "Ping";
     };
@@ -369,6 +378,11 @@ export type ServerMessage =
       file_id: FileId;
       diagnostics: LspDiagnostic[];
     }
+  | { kind: "AgentSessionStarted"; request_id: string; conversation_id: string }
+  | { kind: "AgentStarted"; request_id: string; conversation_id: string }
+  | { kind: "AgentTextDelta"; request_id: string; conversation_id: string; text: string }
+  | { kind: "AgentCompleted"; request_id: string; conversation_id: string }
+  | { kind: "AgentError"; request_id: string; conversation_id: string; message: string }
   | {
       kind: "Error";
       context?: string;
