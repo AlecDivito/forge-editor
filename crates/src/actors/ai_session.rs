@@ -926,13 +926,67 @@ fn take_event(buffer: &mut String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, sync::Arc, time::Duration};
+
+    use axum::{Router, response::IntoResponse, routing::post};
+    use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
+
     use super::{AiSessionActor, chat_completions_endpoint, take_event};
     use crate::{
-        models::{AssistantResponse, ServerMessage},
+        agent::operation::{OperationState, OperationStatus, OperationTransition},
+        config::OpenAiCompatibleConfig,
+        models::{AiSessionEventKind, AiSessionModel, AssistantResponse, ChatRole, ServerMessage},
         services::ai_session::AiSessionService,
     };
-    use std::sync::Arc;
-    use tokio::{sync::mpsc, time::Duration};
+
+    async fn fake_model() -> (OpenAiCompatibleConfig, JoinHandle<()>) {
+        async fn completions() -> impl IntoResponse {
+            (
+                [("content-type", "text/event-stream")],
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Recovered response\"}}]}\n\ndata: [DONE]\n\n",
+            )
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/v1/chat/completions", post(completions)))
+                .await
+                .unwrap();
+        });
+        (OpenAiCompatibleConfig::for_test(format!("http://{address}/v1")), server)
+    }
+
+    async fn wait_for_completion(service: &AiSessionService, session_id: &str) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if service.get(session_id).is_some_and(|session| {
+                    session.operations.iter().all(|operation| operation.status == OperationStatus::Complete)
+                }) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("recovered operation should complete");
+    }
+
+    async fn append_waiting_prompt(service: &AiSessionService, session_id: &str, state: OperationState) {
+        let operation_id = "operation-request";
+        service.append(session_id, Some(operation_id), AiSessionEventKind::OperationTransition {
+            transition: OperationTransition { operation_id: operation_id.into(), request_id: "request".into(), state: OperationState::Accepted, occurred_at_ms: 1 },
+        }).await.unwrap();
+        service.append(session_id, Some(operation_id), AiSessionEventKind::ModelSelected {
+            model: AiSessionModel { provider: "openai-compatible".into(), model_id: "test-model".into() },
+        }).await.unwrap();
+        service.append(session_id, Some(operation_id), AiSessionEventKind::UserMessageQueued { content: "Inspect the project".into() }).await.unwrap();
+        service.append(session_id, Some(operation_id), AiSessionEventKind::Message {
+            message_id: None, role: ChatRole::User, content: "Inspect the project".into(), thinking: None, usage: None,
+        }).await.unwrap();
+        service.append(session_id, Some(operation_id), AiSessionEventKind::OperationTransition {
+            transition: OperationTransition { operation_id: operation_id.into(), request_id: "request".into(), state, occurred_at_ms: 2 },
+        }).await.unwrap();
+    }
 
     #[tokio::test]
     async fn unconfigured_actor_reports_a_scoped_error() {
@@ -975,6 +1029,86 @@ mod tests {
                 ..
             } if request_id == "request-1" && conversation_id == "conversation-1"
         ));
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconnect_replays_committed_session_events_to_the_new_recipient() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-reconnect-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        sessions.open_or_create("session").await.unwrap();
+        sessions.append("session", Some("operation-request"), AiSessionEventKind::Message {
+            message_id: Some("user-message".into()), role: ChatRole::User, content: "Continue working".into(), thinking: None, usage: None,
+        }).await.unwrap();
+        let actor = AiSessionActor::spawn(
+            "session".into(), None, sessions,
+            crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
+        );
+        let (sender, mut receiver) = mpsc::channel(8);
+        actor.start(sender).await.unwrap();
+        let mut sequences = Vec::new();
+        while sequences.len() < 2 {
+            let message = tokio::time::timeout(Duration::from_secs(1), receiver.recv()).await.unwrap().unwrap();
+            if let ServerMessage::AgentSessionEvent { event, .. } = message {
+                sequences.push(event.sequence);
+            }
+        }
+        assert_eq!(sequences, vec![1, 2]);
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_restart_resumes_a_waiting_model_turn_from_jsonl() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-recovery-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        let service = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        service.open_or_create("session").await.unwrap();
+        append_waiting_prompt(&service, "session", OperationState::ModelInFlight { attempt: 1 }).await;
+        drop(service);
+
+        // A new service instance is the server-restart boundary: it only has
+        // JSONL, no old actor or in-memory scheduler state.
+        let reloaded = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        let (config, fake_model) = fake_model().await;
+        let actor = AiSessionActor::spawn(
+            "session".into(), Some(config), reloaded.clone(),
+            crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
+        );
+        actor.recover().await.unwrap();
+        wait_for_completion(&reloaded, "session").await;
+        let session = reloaded.get("session").unwrap();
+        assert!(session.events.iter().any(|event| matches!(&event.kind, AiSessionEventKind::Message { role: ChatRole::Assistant, content, .. } if content == "Recovered response")));
+        fake_model.abort();
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_restart_finishes_a_durable_tool_plan_before_continuing() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-tool-recovery-test-{}", uuid::Uuid::new_v4()));
+        let workspace = sessions_dir.join("workspace");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::write(workspace.join("main.go"), "package main\n").await.unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        let service = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        service.open_or_create("session").await.unwrap();
+        append_waiting_prompt(&service, "session", OperationState::ToolsPlanned { tool_call_ids: vec!["call-read".into()] }).await;
+        service.append("session", Some("operation-request"), AiSessionEventKind::ToolCall {
+            tool_call_id: "call-read".into(), name: "read".into(), arguments: serde_json::json!({ "path": "main.go" }),
+        }).await.unwrap();
+        drop(service);
+
+        let reloaded = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        let (config, fake_model) = fake_model().await;
+        let actor = AiSessionActor::spawn(
+            "session".into(), Some(config), reloaded.clone(),
+            crate::agent::tools::ToolContext::new(HashMap::from([("workspace".into(), workspace.clone())]), Default::default()),
+        );
+        actor.recover().await.unwrap();
+        wait_for_completion(&reloaded, "session").await;
+        let session = reloaded.get("session").unwrap();
+        assert!(session.events.iter().any(|event| matches!(&event.kind, AiSessionEventKind::ToolResult { tool_call_id, is_error: false, .. } if tool_call_id == "call-read")));
+        fake_model.abort();
         tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
     }
 

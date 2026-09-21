@@ -40,6 +40,11 @@ impl OpenAiCompatibleConfig {
     pub fn api_key(&self) -> &str {
         &self.api_key
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(base_url: String) -> Self {
+        Self { base_url, api_key: "test-key".into() }
+    }
 }
 
 #[derive(Debug, Clone)]
