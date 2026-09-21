@@ -107,7 +107,7 @@ impl AppState {
             config.agent_sessions_dir.clone(),
             config.openai_compatible.clone(),
         )?);
-        Ok(Self {
+        let state = Self {
             config: Arc::new(config),
             workspaces: Arc::new(workspaces),
             open_files: Arc::new(DashMap::new()),
@@ -118,7 +118,23 @@ impl AppState {
             clients: Arc::new(DashMap::new()),
             debug: crate::debug::DebugService::new(),
             next_connection_id: Arc::new(AtomicU64::new(1)),
-        })
+        };
+        // The session service has already replayed every JSONL file. Claim
+        // unfinished operations immediately so a browser disconnect (or no
+        // browser at all) never owns execution lifetime.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            for summary in state.ai_sessions.list(None) {
+                let actor = state.ai_session(summary.metadata.id);
+                runtime.spawn(async move {
+                    if actor.recover().await.is_err() {
+                        tracing::error!("could not start durable AI session recovery actor");
+                    }
+                });
+            }
+        } else {
+            tracing::warn!("AI session recovery deferred because no Tokio runtime is active");
+        }
+        Ok(state)
     }
 
     pub fn new_client_connection(

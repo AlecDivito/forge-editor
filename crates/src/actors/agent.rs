@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::{
     agent::error::AgentFailureCode,
-    agent::tools::{ToolContext, ToolRegistry},
+    agent::tools::{ToolCancellation, ToolContext, ToolRegistry},
     actors::ai_session::stream_openai_compatible,
     config::OpenAiCompatibleConfig,
     models::{AgentActorEvent, AgentStreamDelta, AgentTask},
@@ -98,6 +98,27 @@ async fn run_turn(
     let mut context = task.context.clone();
     let mut total_usage: Option<crate::models::AiTokenUsage> = None;
 
+    // A server may have committed a tool plan but stopped before it received
+    // the result. Read-only tools are safe to resume; the session actor only
+    // places unresolved durable calls here.
+    for call in &task.resume_tool_calls {
+        let arguments = serde_json::from_str(&call.function.arguments)
+            .unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
+        let _ = events.send(AgentActorEvent::ToolStarted { task: task.clone(), call: call.clone() }).await;
+        let tool_cancellation = ToolCancellation::default();
+        let result = tokio::select! {
+            _ = &mut cancellation => {
+                tool_cancellation.cancel();
+                let _ = events.send(AgentActorEvent::Cancelled { task: task.clone(), partial_text: String::new(), partial_thinking: String::new(), attempt: None, cancelled_tool_call_id: Some(call.id.clone()) }).await;
+                return;
+            }
+            result = tools.execute(tool_context.clone(), &call.function.name, arguments, tool_cancellation.clone()) => result,
+        };
+        let tool_result = crate::models::AgentToolResult { content: result.content, is_error: result.is_error, failure_code: result.failure_code, retry_failures: result.retry_failures };
+        context.push(crate::models::OpenAiChatMessage { role: "tool".into(), content: Some(tool_result.content.clone()), tool_calls: None, tool_call_id: Some(call.id.clone()) });
+        let _ = events.send(AgentActorEvent::ToolFinished { task: task.clone(), call_id: call.id.clone(), result: tool_result }).await;
+    }
+
     for attempt in 1..=MAX_MODEL_ROUNDS {
         if cancellation.try_recv().is_ok() {
             let _ = events.send(AgentActorEvent::Cancelled { task: task.clone(), partial_text: String::new(), partial_thinking: String::new(), attempt: None, cancelled_tool_call_id: None }).await;
@@ -161,14 +182,16 @@ async fn run_turn(
         for call in response.tool_calls {
             let arguments = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
             let _ = events.send(AgentActorEvent::ToolStarted { task: task.clone(), call: call.clone() }).await;
+            let tool_cancellation = ToolCancellation::default();
             let result = tokio::select! {
                 _ = &mut cancellation => {
+                    tool_cancellation.cancel();
                     let _ = events.send(AgentActorEvent::Cancelled { task: task.clone(), partial_text: String::new(), partial_thinking: String::new(), attempt: Some(attempt), cancelled_tool_call_id: Some(call.id.clone()) }).await;
                     return;
                 }
-                result = tools.execute(tool_context.clone(), &call.function.name, arguments) => result,
+                result = tools.execute(tool_context.clone(), &call.function.name, arguments, tool_cancellation.clone()) => result,
             };
-            let tool_result = crate::models::AgentToolResult { content: result.content, is_error: result.is_error };
+            let tool_result = crate::models::AgentToolResult { content: result.content, is_error: result.is_error, failure_code: result.failure_code, retry_failures: result.retry_failures };
             context.push(crate::models::OpenAiChatMessage { role: "tool".into(), content: Some(tool_result.content.clone()), tool_calls: None, tool_call_id: Some(call.id.clone()) });
             let _ = events.send(AgentActorEvent::ToolFinished { task: task.clone(), call_id: call.id, result: tool_result }).await;
         }

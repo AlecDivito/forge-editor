@@ -1,9 +1,9 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, time::Duration};
 
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{AgentTool, ToolContext, ToolDescriptor, ToolResult};
+use super::{AgentTool, ToolCancellation, ToolContext, ToolDescriptor, ToolResult};
 
 pub struct GrepTool;
 
@@ -23,6 +23,8 @@ impl AgentTool for GrepTool {
                 "required": ["query"],
                 "properties": { "query": { "type": "string" } }
             }),
+            timeout: Duration::from_secs(20),
+            max_attempts: 2,
         }
     }
 
@@ -30,6 +32,7 @@ impl AgentTool for GrepTool {
         &'a self,
         context: ToolContext,
         arguments: serde_json::Value,
+        cancellation: ToolCancellation,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>> {
         Box::pin(async move {
             let arguments = match serde_json::from_value::<GrepArguments>(arguments) {
@@ -54,13 +57,15 @@ impl AgentTool for GrepTool {
                     use_ignore_files: true,
                     max_results: Some(40),
                 },
-                crate::models::SearchCancellation::new(),
+                crate::models::SearchCancellation::from_flag(cancellation.flag()),
             )
             .await;
             match result {
                 Ok(response) => ToolResult {
                     content: json!({ "matches": response.results.into_iter().map(|entry| json!({ "path": entry.file.path, "matches": entry.matches })).collect::<Vec<_>>() }).to_string(),
                     is_error: false,
+                    failure_code: None,
+                    retry_failures: Vec::new(),
                 },
                 Err(error) => failure(format!("Content search failed: {error:?}")),
             }
@@ -72,5 +77,7 @@ fn failure(message: String) -> ToolResult {
     ToolResult {
         content: json!({ "error": message }).to_string(),
         is_error: true,
+        failure_code: Some(crate::agent::error::AgentFailureCode::ToolExecutionFailed),
+        retry_failures: Vec::new(),
     }
 }

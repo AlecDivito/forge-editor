@@ -122,7 +122,7 @@ export function ConversationTranscript() {
   const conversation = useAgentHarnessStore((state) =>
     state.conversations.find((item) => item.id === activeConversationId),
   );
-  const isStreaming = conversation?.status === "streaming";
+  const isWorking = conversation?.status !== undefined && conversation.status !== "idle";
   const presentation = reduceAgentSessionPresentation([
     ...durableEventsToTranscriptEntries(conversation?.events ?? []),
     ...Object.values(conversation?.streaming ?? {}),
@@ -131,7 +131,7 @@ export function ConversationTranscript() {
     <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor" scrollPreviousItemPeek={48}>
       <MessageScroller className="flex-1">
         <MessageScrollerViewport className="px-3 py-4">
-          <MessageScrollerContent className="mx-auto w-full max-w-2xl gap-4" aria-busy={isStreaming}>
+          <MessageScrollerContent className="mx-auto w-full max-w-2xl gap-4" aria-busy={isWorking}>
             {presentation.items.map((item) =>
               item.kind === "tools" ? (
                 <MessageScrollerItem key={item.key} messageId={item.key} className="px-1">
@@ -146,13 +146,15 @@ export function ConversationTranscript() {
                 </MessageScrollerItem>
               ),
             )}
-            {isStreaming && (
+            {isWorking && (
               <MessageScrollerItem messageId="streaming" className="px-1">
                 <Marker aria-live="polite" className="text-xs">
                   <MarkerIcon>
                     <Loader2 className="size-3.5 animate-spin" />
                   </MarkerIcon>
-                  <MarkerContent className="animate-pulse">Generating response…</MarkerContent>
+                  <MarkerContent className="animate-pulse">
+                    {conversation?.status === "recovering" ? "Resuming work in the background…" : "Generating response…"}
+                  </MarkerContent>
                 </Marker>
               </MessageScrollerItem>
             )}

@@ -26,6 +26,13 @@ impl SearchCancellation {
         Arc::clone(&self.cancelled)
     }
 
+    /// Reuse a parent operation's cancellation flag for agent tools.
+    pub fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
+        // A timeout drops the search future. Keep this armed so the blocking
+        // worker observes that drop through the shared operation flag.
+        Self { cancelled, armed: true }
+    }
+
     pub fn disarm(&mut self) {
         self.armed = false;
     }

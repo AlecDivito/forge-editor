@@ -96,6 +96,18 @@ impl AgentProjection {
                 _ => {}
             }
         }
+        // A crash can happen after the model's tool plan was committed but
+        // before any tool result. Preserve that assistant tool-call message so
+        // a recovery worker can execute the unresolved calls and continue the
+        // exact OpenAI tool protocol instead of inventing another model turn.
+        for (_, tool_calls) in calls {
+            messages.push(OpenAiChatMessage {
+                role: "assistant".into(),
+                content: None,
+                tool_calls: Some(tool_calls),
+                tool_call_id: None,
+            });
+        }
         messages
     }
 }
@@ -105,7 +117,7 @@ mod tests {
     use super::AgentProjection;
     use crate::{
         agent::operation::{OperationSnapshot, OperationState, OperationStatus},
-        models::{AgentSessionLog, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, ChatRole},
+        models::{AgentSessionLog, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, ChatRole, OpenAiChatMessage},
     };
 
     fn message(sequence: u64, operation_id: &str, content: &str) -> AiSessionEvent {
@@ -138,5 +150,21 @@ mod tests {
         };
         let messages = AgentProjection::from_log(&log).model_context(&log, "second");
         assert_eq!(messages.iter().map(|message| message.content.as_deref()).collect::<Vec<_>>(), vec![Some("finished request"), Some("current request")]);
+    }
+
+    #[test]
+    fn preserves_an_unsettled_tool_plan_for_recovery() {
+        let log = AgentSessionLog {
+            metadata: AiSessionMetadata { id: "session".into(), title: "Test".into(), created_at_ms: 1, model: None },
+            operations: vec![OperationSnapshot { operation_id: "op".into(), request_id: "request".into(), operation_sequence: 1, status: OperationStatus::Waiting, state: OperationState::ToolsPlanned { tool_call_ids: vec!["call".into()] }, accepted_at_ms: 1, updated_at_ms: 2 }],
+            events: vec![AiSessionEvent {
+                event_id: "call-event".into(), sequence: 1, operation_id: Some("op".into()), operation_sequence: Some(1), occurred_at_ms: 1,
+                kind: AiSessionEventKind::ToolCall { tool_call_id: "call".into(), name: "read".into(), arguments: serde_json::json!({ "path": "main.go" }) },
+            }],
+        };
+        let projection = AgentProjection::from_log(&log);
+        assert_eq!(projection.pending_tool_calls.len(), 1);
+        let context = projection.model_context(&log, "op");
+        assert!(matches!(context.as_slice(), [OpenAiChatMessage { role, tool_calls: Some(calls), .. }] if role == "assistant" && calls[0].id == "call"));
     }
 }

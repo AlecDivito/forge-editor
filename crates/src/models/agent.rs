@@ -25,12 +25,17 @@ pub struct AgentTask {
     pub request_id: String,
     pub model_id: String,
     pub context: Vec<OpenAiChatMessage>,
+    /// Tool calls durably planned before a process stopped. The executor runs
+    /// these before asking the model for another decision.
+    pub resume_tool_calls: Vec<OpenAiToolCall>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AgentToolResult {
     pub content: String,
     pub is_error: bool,
+    pub failure_code: Option<crate::agent::error::AgentFailureCode>,
+    pub retry_failures: Vec<crate::agent::tools::ToolRetryFailure>,
 }
 
 /// A partial model response. This is internal to the agent worker: it is not

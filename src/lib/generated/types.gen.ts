@@ -18,6 +18,8 @@ export enum AgentFailureCode {
     AGENT_EXECUTION_FAILED = 'agent_execution_failed',
     TOOL_ROUND_LIMIT_EXCEEDED = 'tool_round_limit_exceeded',
     TOOL_EXECUTION_FAILED = 'tool_execution_failed',
+    TOOL_TIMED_OUT = 'tool_timed_out',
+    TOOL_CANCELLED = 'tool_cancelled',
     STORAGE_WRITE_FAILED = 'storage_write_failed',
     TITLE_GENERATION_FAILED = 'title_generation_failed',
     TITLE_PERSIST_FAILED = 'title_persist_failed',

@@ -101,7 +101,7 @@ export function AgentComposer() {
               <span className="sr-only">Attach image</span>
             </Button>
           </div>
-          {conversation?.status === "streaming" ? (
+          {conversation && conversation.status !== "idle" ? (
             <Button type="button" size="icon" variant="secondary" className="size-7" onClick={composer.stop} title="Stop agent">
               <Square className="size-3.5 fill-current" />
               <span className="sr-only">Stop agent</span>

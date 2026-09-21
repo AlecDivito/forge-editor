@@ -1,9 +1,9 @@
-use std::{future::Future, path::PathBuf, pin::Pin};
+use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{AgentTool, MAX_TOOL_RESULT_BYTES, ToolContext, ToolDescriptor, ToolResult};
+use super::{AgentTool, MAX_TOOL_RESULT_BYTES, ToolCancellation, ToolContext, ToolDescriptor, ToolResult};
 
 pub struct ReadTool;
 
@@ -25,6 +25,8 @@ impl AgentTool for ReadTool {
                     "path": { "type": "string", "description": "Workspace-relative path." }
                 }
             }),
+            timeout: Duration::from_secs(15),
+            max_attempts: 2,
         }
     }
 
@@ -32,8 +34,10 @@ impl AgentTool for ReadTool {
         &'a self,
         context: ToolContext,
         arguments: serde_json::Value,
+        cancellation: ToolCancellation,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>> {
         Box::pin(async move {
+            if cancellation.is_cancelled() { return failure("Tool execution cancelled".into()); }
             let arguments = match serde_json::from_value::<ReadArguments>(arguments) {
                 Ok(arguments) => arguments,
                 Err(error) => return failure(format!("Invalid read arguments: {error}")),
@@ -51,6 +55,7 @@ impl AgentTool for ReadTool {
                 return success(content, "open_document");
             }
             for (_, root) in context.workspaces() {
+                if cancellation.is_cancelled() { return failure("Tool execution cancelled".into()); }
                 let path = root.join(&relative);
                 let canonical = match path.canonicalize() {
                     Ok(path) if path.starts_with(&root) => path,
@@ -77,6 +82,8 @@ fn success(mut content: String, source: &str) -> ToolResult {
         content: json!({ "source": source, "truncated": truncated, "content": content })
             .to_string(),
         is_error: false,
+        failure_code: None,
+        retry_failures: Vec::new(),
     }
 }
 
@@ -84,6 +91,8 @@ fn failure(message: String) -> ToolResult {
     ToolResult {
         content: json!({ "error": message }).to_string(),
         is_error: true,
+        failure_code: Some(crate::agent::error::AgentFailureCode::ToolExecutionFailed),
+        retry_failures: Vec::new(),
     }
 }
 
@@ -108,7 +117,7 @@ mod tests {
             Arc::new(DashMap::new()),
         );
         let result = ReadTool
-            .execute(context, serde_json::json!({ "path": "notes.txt" }))
+            .execute(context, serde_json::json!({ "path": "notes.txt" }), super::super::ToolCancellation::default())
             .await;
         assert!(!result.is_error);
         assert!(result.content.contains("hello from Forge"));

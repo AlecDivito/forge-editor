@@ -33,6 +33,7 @@ impl std::fmt::Debug for AiSessionActor {
 
 enum AiSessionCommand {
     Start {
+        recipient: Option<mpsc::Sender<ServerMessage>>,
         result: oneshot::Sender<Result<AiSessionMetadata, String>>,
     },
     Prompt {
@@ -75,10 +76,46 @@ impl AiSessionActor {
             let mut session = None;
             let mut runners = HashMap::<String, Arc<AgentActor>>::new();
             let mut pending = HashMap::<String, PendingPrompt>::new();
+            // The execution lifetime is independent from this handle. It is
+            // only the latest place to publish committed events and deltas.
+            let mut live_recipient: Option<mpsc::Sender<ServerMessage>> = None;
             while let Some(command) = receiver.recv().await {
                 match command {
-                    AiSessionCommand::Start { result } => {
+                    AiSessionCommand::Start { recipient, result } => {
+                        if let Some(recipient) = &recipient {
+                            live_recipient = Some(recipient.clone());
+                        }
+                        // Durable recovery is allowed to run without a
+                        // connected client. All sends to this detached sender
+                        // are best-effort; writes still receive their receipt.
+                        let recovery_recipient = recipient.clone().unwrap_or_else(|| {
+                            let (sender, receiver) = mpsc::channel(1);
+                            drop(receiver);
+                            sender
+                        });
                         let outcome = ensure_session(&mut session, &session_id, &sessions).await;
+                        if let Ok(log) = &outcome {
+                            // A reconnect receives the same committed records
+                            // available from the REST restore route. The UI can
+                            // replace by event_id, so this is safe alongside a
+                            // cached HTTP snapshot.
+                            for event in &log.events {
+                                let Some(recipient) = recipient.as_ref() else { break };
+                                if recipient.send(ServerMessage::AgentSessionEvent {
+                                    conversation_id: session_id.clone(),
+                                    event: event.clone(),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                            restore_pending_prompts(log, &recovery_recipient, &mut pending);
+                            if let Some(config) = config.as_ref() {
+                                start_next_operation(
+                                    &session_id, config, &sessions, &tool_context,
+                                    &actor_commands, &mut pending, &mut runners,
+                                ).await;
+                            }
+                        }
                         let _ = result.send(outcome.map(|session| session.metadata.clone()));
                     }
                     AiSessionCommand::Prompt {
@@ -88,6 +125,7 @@ impl AiSessionActor {
                         prompt,
                         recipient,
                     } => {
+                        live_recipient = Some(recipient.clone());
                         let session = match ensure_session(&mut session, &session_id, &sessions)
                             .await
                         {
@@ -218,6 +256,9 @@ impl AiSessionActor {
                         }
                     }
                     AiSessionCommand::AgentEvent { event, recipient } => {
+                        // A reconnect supersedes the sender captured when the
+                        // worker began. The worker itself keeps running.
+                        let recipient = live_recipient.clone().unwrap_or(recipient);
                         match event {
                             AgentActorEvent::Started { task } => {
                                 let _ = recipient.send(ServerMessage::AgentStarted {
@@ -284,11 +325,25 @@ impl AiSessionActor {
                                 let _ = recipient.send(ServerMessage::AgentToolStarted { request_id: task.request_id, conversation_id: session_id.clone(), tool_call_id: call.id, name: call.function.name, arguments }).await;
                             }
                             AgentActorEvent::ToolFinished { task, call_id, result } => {
+                                for retry in &result.retry_failures {
+                                    let detail = format!(
+                                        "tool {call_id} attempt {} failed before retry: {}",
+                                        retry.attempt, retry.detail
+                                    );
+                                    tracing::warn!(session_id, operation_id = task.operation_id, tool_call_id = call_id, attempt = retry.attempt, code = retry.code.as_str(), %detail, "agent tool attempt failed");
+                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Failure {
+                                        code: retry.code,
+                                        message: user_error().to_owned(),
+                                        detail: Some(detail),
+                                    }, &sessions, &recipient).await {
+                                        tracing::error!(session_id, operation_id = task.operation_id, %error, "could not persist agent tool retry failure");
+                                    }
+                                }
                                 if result.is_error {
                                     let detail = format!("tool {call_id} failed: {}", result.content);
                                     tracing::error!(session_id, operation_id = task.operation_id, tool_call_id = call_id, %detail, "agent tool execution failed");
                                     if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Failure {
-                                        code: AgentFailureCode::ToolExecutionFailed,
+                                        code: result.failure_code.unwrap_or(AgentFailureCode::ToolExecutionFailed),
                                         message: user_error().to_owned(),
                                         detail: Some(detail),
                                     }, &sessions, &recipient).await {
@@ -370,15 +425,23 @@ impl AiSessionActor {
 
     /// Ensures the durable record exists and loads it before the client starts
     /// using the session. Routes do not perform storage I/O themselves.
-    pub async fn start(&self) -> Result<AiSessionMetadata, String> {
+    pub async fn start(&self, recipient: mpsc::Sender<ServerMessage>) -> Result<AiSessionMetadata, String> {
         let (result, receiver) = oneshot::channel();
         self.commands
-            .send(AiSessionCommand::Start { result })
+            .send(AiSessionCommand::Start { recipient: Some(recipient), result })
             .await
             .map_err(|_| "The AI session is unavailable".to_owned())?;
         receiver
             .await
             .map_err(|_| "The AI session is unavailable".to_owned())?
+    }
+
+    /// Resume durable unfinished operations after server boot. This does not
+    /// require a browser; a later `start` replaces the detached recipient.
+    pub async fn recover(&self) -> Result<(), ()> {
+        let (result, receiver) = oneshot::channel();
+        self.commands.send(AiSessionCommand::Start { recipient: None, result }).await.map_err(|_| ())?;
+        receiver.await.map(|_| ()).map_err(|_| ())
     }
 
     pub async fn prompt(
@@ -438,6 +501,25 @@ async fn accept_prompt(
 /// Claims the oldest durably accepted prompt only when no agent owns the
 /// session execution lease. Context is built here—not at acceptance—so every
 /// queued turn sees all completed earlier turns and none of the future ones.
+fn restore_pending_prompts(
+    log: &AgentSessionLog,
+    recipient: &mpsc::Sender<ServerMessage>,
+    pending: &mut HashMap<String, PendingPrompt>,
+) {
+    let Some(model) = log.metadata.model.as_ref() else {
+        tracing::warn!(session_id = log.metadata.id, "cannot recover AI work without its selected model");
+        return;
+    };
+    for operation in log.operations.iter().filter(|operation| {
+        matches!(operation.status, OperationStatus::Pending | OperationStatus::Waiting)
+    }) {
+        pending.entry(operation.request_id.clone()).or_insert_with(|| PendingPrompt {
+            model_id: model.model_id.clone(),
+            recipient: recipient.clone(),
+        });
+    }
+}
+
 async fn start_next_operation(
     session_id: &str,
     config: &OpenAiCompatibleConfig,
@@ -457,7 +539,7 @@ async fn start_next_operation(
     let Some(operation) = log
         .operations
         .iter()
-        .filter(|operation| operation.status == OperationStatus::Pending)
+        .filter(|operation| matches!(operation.status, OperationStatus::Pending | OperationStatus::Waiting))
         .filter(|operation| pending.contains_key(&operation.request_id))
         .min_by_key(|operation| operation.operation_sequence)
     else {
@@ -465,6 +547,7 @@ async fn start_next_operation(
     };
     let operation_id = operation.operation_id.clone();
     let request_id = operation.request_id.clone();
+    let was_waiting = operation.status == OperationStatus::Waiting;
     let Some(pending_prompt) = pending.remove(&request_id) else { return };
     let Some(prompt) = log.events.iter().find_map(|event| {
         (event.operation_id.as_deref() == Some(operation_id.as_str())).then(|| match &event.kind {
@@ -475,15 +558,21 @@ async fn start_next_operation(
         send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, "The accepted prompt is missing from the durable log", sessions, &pending_prompt.recipient).await;
         return;
     };
-    if let Err(error) = append_and_publish(session_id, Some(&operation_id), AiSessionEventKind::Message {
-        message_id: None,
-        role: ChatRole::User,
-        content: prompt,
-        thinking: None,
-        usage: None,
-    }, sessions, &pending_prompt.recipient).await {
-        send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, &error, sessions, &pending_prompt.recipient).await;
-        return;
+    let already_visible = log.events.iter().any(|event| {
+        event.operation_id.as_deref() == Some(operation_id.as_str())
+            && matches!(&event.kind, AiSessionEventKind::Message { role: ChatRole::User, .. })
+    });
+    if !already_visible {
+        if let Err(error) = append_and_publish(session_id, Some(&operation_id), AiSessionEventKind::Message {
+            message_id: None,
+            role: ChatRole::User,
+            content: prompt,
+            thinking: None,
+            usage: None,
+        }, sessions, &pending_prompt.recipient).await {
+            send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, &error, sessions, &pending_prompt.recipient).await;
+            return;
+        }
     }
     if !persist_operation_transition(session_id, &operation_id, &request_id, OperationState::Preparing, sessions, &pending_prompt.recipient).await {
         return;
@@ -492,7 +581,15 @@ async fn start_next_operation(
         send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, "The claimed operation could not be reloaded", sessions, &pending_prompt.recipient).await;
         return;
     };
-    let context = AgentProjection::from_log(&log).model_context(&log, &operation_id);
+    let projection = AgentProjection::from_log(&log);
+    let context = projection.model_context(&log, &operation_id);
+    let resume_tool_calls = if was_waiting {
+        projection.pending_tool_calls.iter().filter(|call| call.operation_id == operation_id).map(|call| OpenAiToolCall {
+            id: call.tool_call_id.clone(),
+            kind: "function".into(),
+            function: OpenAiToolCallFunction { name: call.name.clone(), arguments: call.arguments.to_string() },
+        }).collect()
+    } else { Vec::new() };
     let (events, mut event_receiver) = mpsc::channel(64);
     let worker = AgentActor::spawn(config.clone(), ToolRegistry::read_only(), tool_context.clone(), events);
     let forward_commands = commands.clone();
@@ -510,6 +607,7 @@ async fn start_next_operation(
         request_id: request_id.clone(),
         model_id: pending_prompt.model_id,
         context,
+        resume_tool_calls,
     }).await.is_err() {
         send_failure(session_id, &request_id, AgentFailureCode::AgentExecutionFailed, "The agent worker could not be started", sessions, &pending_prompt.recipient).await;
         return;

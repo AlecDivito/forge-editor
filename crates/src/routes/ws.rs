@@ -694,7 +694,7 @@ async fn dispatch(
             conversation_id,
         } => {
             let session = state.ai_session(conversation_id.clone());
-            match session.start().await {
+            match session.start(document_tx.clone()).await {
                 Ok(_) => {
                     document_tx
                         .send(ServerMessage::AgentSessionStarted {

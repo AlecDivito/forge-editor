@@ -24,7 +24,9 @@ export type AgentTokenUsage = {
   cachedTokens?: number;
   reasoningTokens?: number;
 };
-export type ConversationStatus = "idle" | "streaming";
+/** `recovering` is derived from a durable nonterminal operation loaded from
+ * JSONL. It becomes `streaming` once this browser observes AgentStarted. */
+export type ConversationStatus = "idle" | "streaming" | "recovering";
 
 export type AgentToolActivity = {
   id: string;
