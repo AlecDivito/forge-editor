@@ -1,8 +1,10 @@
+mod agent;
 mod ai_session;
 mod document;
 mod lsp;
 mod terminal;
 
+pub use agent::AgentActor;
 pub use ai_session::AiSessionActor;
 pub use document::DocumentActor;
 pub use lsp::LspServerActor;

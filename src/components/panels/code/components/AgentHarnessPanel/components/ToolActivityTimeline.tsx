@@ -1,4 +1,5 @@
 import { Check, ChevronDown, CircleAlert, Loader2, Wrench } from "lucide-react";
+import { useState } from "react";
 import { AgentToolActivity } from "../types/agent-harness.types";
 
 function argumentSummary(activity: AgentToolActivity) {
@@ -11,13 +12,17 @@ function argumentSummary(activity: AgentToolActivity) {
 }
 
 export function ToolActivityTimeline({ activities }: { activities: AgentToolActivity[] }) {
-  if (!activities.length) return null;
   const running = activities.some((activity) => activity.status === "running");
+  const [open, setOpen] = useState(running);
+  if (!activities.length) return null;
   const label = running
     ? `Using ${activities.length} ${activities.length === 1 ? "tool" : "tools"}`
     : `Used ${activities.length} ${activities.length === 1 ? "tool" : "tools"}`;
   return (
-    <details className="group my-1 rounded-md border border-border/60 bg-muted/25 text-xs" open={running}>
+    <details
+      className="group my-1 rounded-md border border-border/60 bg-muted/25 text-xs"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-muted-foreground marker:content-none">
         {running ? <Loader2 className="size-3.5 animate-spin" /> : <Wrench className="size-3.5" />}
         <span className="flex-1 font-medium text-foreground/80">{label}</span>

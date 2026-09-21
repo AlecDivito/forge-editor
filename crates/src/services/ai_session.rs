@@ -3,13 +3,15 @@ use std::path::PathBuf;
 use anyhow::Context;
 use dashmap::DashMap;
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::{
     agent::session::writer::SessionWriter,
     config::OpenAiCompatibleConfig,
     models::{
-        AI_SESSION_RECORD_VERSION, AiSession, AiSessionFailure, AiSessionMetadata, AiSessionModel,
-        AiSessionRecord, AiSessionSummary, ChatCompletionRequest, ChatMessage, OpenAiChatMessage,
+        AI_SESSION_RECORD_VERSION, AgentSessionLog, AiSessionEvent,
+        AiSessionEventKind, AiSessionMetadata, AiSessionModel, AiSessionRecord,
+        AiSessionSummary, ChatCompletionRequest, OpenAiChatMessage,
     },
     util::time::now_ms,
 };
@@ -24,7 +26,7 @@ const DEFAULT_SESSION_TITLE: &str = "New conversation";
 #[derive(Debug)]
 pub struct AiSessionService {
     sessions_dir: PathBuf,
-    sessions: DashMap<String, AiSession>,
+    sessions: DashMap<String, AgentSessionLog>,
     writers: DashMap<String, std::sync::Arc<SessionWriter>>,
     model_backend: Option<OpenAiCompatibleConfig>,
 }
@@ -52,7 +54,7 @@ impl AiSessionService {
             .filter(|entry| matches_query(entry.value(), query))
             .map(|entry| AiSessionSummary {
                 metadata: entry.metadata.clone(),
-                message_count: entry.messages.len(),
+                message_count: entry.message_count(),
             })
             .collect::<Vec<_>>();
         sessions.sort_by(|left, right| {
@@ -65,11 +67,11 @@ impl AiSessionService {
         sessions
     }
 
-    pub fn get(&self, session_id: &str) -> Option<AiSession> {
+    pub fn get(&self, session_id: &str) -> Option<AgentSessionLog> {
         self.sessions.get(session_id).map(|session| session.clone())
     }
 
-    pub async fn open_or_create(&self, session_id: &str) -> Result<AiSession, String> {
+    pub async fn open_or_create(&self, session_id: &str) -> Result<AgentSessionLog, String> {
         if let Some(session) = self.get(session_id) {
             return Ok(session);
         }
@@ -80,34 +82,77 @@ impl AiSessionService {
             created_at_ms: now_ms(),
             model: None,
         };
-        let session = AiSession {
+        let mut session = AgentSessionLog {
             metadata: metadata.clone(),
             operations: Vec::new(),
-            messages: Vec::new(),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-            failures: Vec::new(),
+            events: Vec::new(),
         };
-        self.append_records(
-            session_id,
-            vec![AiSessionRecord::SessionCreated {
-                version: AI_SESSION_RECORD_VERSION,
-                metadata,
-            }],
-        )
-        .await?;
+        let created = AiSessionEvent {
+            event_id: Uuid::new_v4().to_string(),
+            sequence: 1,
+            operation_id: None,
+            operation_sequence: None,
+            occurred_at_ms: metadata.created_at_ms,
+            kind: AiSessionEventKind::SessionCreated { metadata: metadata.clone() },
+        };
+        self.append_records(session_id, vec![AiSessionRecord::Event {
+            version: AI_SESSION_RECORD_VERSION,
+            event: created.clone(),
+        }]).await?;
+        session.events.push(created);
         self.sessions.insert(session_id.to_owned(), session.clone());
         Ok(session)
     }
 
-    pub async fn append(&self, session_id: &str, record: AiSessionRecord) -> Result<(), String> {
-        self.append_records(session_id, vec![record.clone()])
-            .await?;
+    pub async fn append(
+        &self,
+        session_id: &str,
+        operation_id: Option<&str>,
+        kind: AiSessionEventKind,
+    ) -> Result<AiSessionEvent, String> {
+        // One actor serializes each live session. Allocate this sequence before
+        // writing, then only expose it after the writer acknowledges the event.
+        let mut event = {
+            let session = self
+                .sessions
+                .get(session_id)
+                .ok_or_else(|| "The AI session is not open".to_owned())?;
+            AiSessionEvent {
+                event_id: Uuid::new_v4().to_string(),
+                sequence: session.events.len() as u64 + 1,
+                operation_id: operation_id.map(str::to_owned).or_else(|| operation_id_for(&kind)),
+                operation_sequence: None,
+                occurred_at_ms: now_ms(),
+                kind,
+            }
+        };
+        if matches!(
+            &event.kind,
+            AiSessionEventKind::OperationTransition {
+                transition: crate::agent::operation::OperationTransition {
+                    state: crate::agent::operation::OperationState::Accepted,
+                    ..
+                }
+            }
+        ) {
+            event.operation_sequence = Some(
+                self.sessions.get(session_id).map(|session| session.operations.len() as u64 + 1).unwrap_or(1),
+            );
+        }
+        self.append_records(
+            session_id,
+            vec![AiSessionRecord::Event {
+                version: AI_SESSION_RECORD_VERSION,
+                event: event.clone(),
+            }],
+        )
+        .await?;
         let mut session = self
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| "The AI session is not open".to_owned())?;
-        apply_record(&mut session, session_id, record)
+        apply_event(&mut session, session_id, event.clone())?;
+        Ok(event)
     }
 
     /// Ask the selected model for a short human-facing session title.
@@ -268,19 +313,19 @@ impl AiSessionService {
     }
 }
 
-fn matches_query(session: &AiSession, query: Option<&str>) -> bool {
+fn matches_query(session: &AgentSessionLog, query: Option<&str>) -> bool {
     let Some(query) = query else {
         return true;
     };
     let query = query.to_lowercase();
     session.metadata.title.to_lowercase().contains(&query)
         || session
-            .messages
+                .settled_messages()
             .iter()
             .any(|message| message.content.to_lowercase().contains(&query))
 }
 
-fn replay_session(session_id: &str, contents: &str) -> Result<AiSession, String> {
+fn replay_session(session_id: &str, contents: &str) -> Result<AgentSessionLog, String> {
     let mut session = None;
     let lines = contents.lines().collect::<Vec<_>>();
     for (index, line) in lines.iter().enumerate() {
@@ -295,141 +340,85 @@ fn replay_session(session_id: &str, contents: &str) -> Result<AiSession, String>
             }
             Err(_) => return Err("The AI session storage is corrupt".to_owned()),
         };
-        match (&mut session, record) {
-            (None, AiSessionRecord::SessionCreated { version, metadata })
-                if version == AI_SESSION_RECORD_VERSION && metadata.id == session_id =>
-            {
-                session = Some(AiSession {
-                    metadata,
+        let AiSessionRecord::Event { version, event } = record;
+        if version != AI_SESSION_RECORD_VERSION {
+            return Err("The AI session storage has an unsupported event version".to_owned());
+        }
+        match (&mut session, event) {
+            (None, event) if matches!(&event.kind, AiSessionEventKind::SessionCreated { metadata } if metadata.id == session_id) => {
+                let AiSessionEventKind::SessionCreated { metadata } = &event.kind else {
+                    unreachable!("guard guarantees a session creation event");
+                };
+                session = Some(AgentSessionLog {
+                    metadata: metadata.clone(),
                     operations: Vec::new(),
-                    messages: Vec::new(),
-                    tool_calls: Vec::new(),
-                    tool_results: Vec::new(),
-                    failures: Vec::new(),
+                    events: vec![event.clone()],
                 });
             }
-            (Some(session), record) => apply_record(session, session_id, record)?,
-            _ => return Err("The AI session storage has an invalid record order".to_owned()),
+            (Some(session), event) => apply_event(session, session_id, event)?,
+            _ => return Err("The AI session storage must begin with session_created".to_owned()),
         }
     }
     session.ok_or_else(|| "The AI session storage is empty".to_owned())
 }
 
-fn apply_record(
-    session: &mut AiSession,
+fn apply_event(
+    session: &mut AgentSessionLog,
     session_id: &str,
-    record: AiSessionRecord,
+    event: AiSessionEvent,
 ) -> Result<(), String> {
-    match record {
-        AiSessionRecord::SessionNamed { version, title, .. }
-            if version == AI_SESSION_RECORD_VERSION =>
-        {
+    if event.sequence != session.events.len() as u64 + 1 {
+        return Err("The AI session event sequence is not contiguous".to_owned());
+    }
+    let event_for_projection = event.clone();
+    match event.kind {
+        AiSessionEventKind::SessionCreated { .. } => {
+            return Err("The AI session storage has multiple creation events".to_owned());
+        }
+        AiSessionEventKind::SessionNamed { title } => {
             session.metadata.title = title;
         }
-        AiSessionRecord::ModelSelected { version, model, .. }
-            if version == AI_SESSION_RECORD_VERSION =>
-        {
+        AiSessionEventKind::ModelSelected { model } => {
             session.metadata.model = Some(model);
         }
-        AiSessionRecord::OperationTransition {
-            version,
-            transition,
-        } if version == AI_SESSION_RECORD_VERSION => {
+        AiSessionEventKind::OperationTransition { transition } => {
             if let Some(operation) = session
                 .operations
                 .iter_mut()
                 .find(|operation| operation.operation_id == transition.operation_id)
             {
                 operation.apply(transition).map_err(str::to_owned)?;
-            } else if matches!(
-                transition.state,
-                crate::agent::operation::OperationState::Accepted
-            ) {
-                session
-                    .operations
-                    .push(crate::agent::operation::OperationSnapshot {
-                        operation_id: transition.operation_id,
-                        request_id: transition.request_id,
-                        state: crate::agent::operation::OperationState::Accepted,
-                        accepted_at_ms: transition.occurred_at_ms,
-                        updated_at_ms: transition.occurred_at_ms,
-                    });
+            } else if matches!(transition.state, crate::agent::operation::OperationState::Accepted) {
+                session.operations.push(crate::agent::operation::OperationSnapshot {
+                    operation_id: transition.operation_id,
+                    request_id: transition.request_id,
+                    operation_sequence: event.operation_sequence.unwrap_or(session.operations.len() as u64 + 1),
+                    status: crate::agent::operation::OperationStatus::for_state(
+                        &crate::agent::operation::OperationState::Accepted,
+                    ),
+                    state: crate::agent::operation::OperationState::Accepted,
+                    accepted_at_ms: transition.occurred_at_ms,
+                    updated_at_ms: transition.occurred_at_ms,
+                });
             } else {
                 return Err("The AI session storage has an operation without acceptance".to_owned());
             }
         }
-        AiSessionRecord::Message {
-            version,
-            role,
-            content,
-            thinking,
-            usage,
-            created_at_ms,
-            ..
-        } if version == AI_SESSION_RECORD_VERSION => {
-            let message = ChatMessage {
-                role,
-                content,
-                thinking,
-                usage,
-                created_at_ms,
-            };
-            session.messages.push(message.clone());
-        }
-        AiSessionRecord::ToolCall {
-            version,
-            tool_call_id,
-            name,
-            arguments,
-            created_at_ms,
-        } if version == AI_SESSION_RECORD_VERSION => {
-            let tool_call = crate::models::AiSessionToolCall {
-                tool_call_id,
-                name,
-                arguments,
-                created_at_ms,
-            };
-            session.tool_calls.push(tool_call.clone());
-        }
-        AiSessionRecord::ToolResult {
-            version,
-            tool_call_id,
-            content,
-            is_error,
-            created_at_ms,
-        } if version == AI_SESSION_RECORD_VERSION => {
-            let tool_result = crate::models::AiSessionToolResult {
-                tool_call_id,
-                content,
-                is_error,
-                created_at_ms,
-            };
-            session.tool_results.push(tool_result.clone());
-        }
-        AiSessionRecord::Failure {
-            version,
-            code,
-            message,
-            detail,
-            created_at_ms,
-        } if version == AI_SESSION_RECORD_VERSION => {
-            let failure = AiSessionFailure {
-                code,
-                message,
-                detail,
-                created_at_ms,
-            };
-            session.failures.push(failure.clone());
-        }
-        AiSessionRecord::SessionCreated { .. } => {
-            return Err("The AI session storage has multiple creation records".to_owned());
-        }
-        _ => return Err("The AI session storage has an unsupported record".to_owned()),
+        AiSessionEventKind::Message { .. } | AiSessionEventKind::Reasoning { .. } | AiSessionEventKind::UserMessageQueued { .. } | AiSessionEventKind::ToolCall { .. }
+        | AiSessionEventKind::ToolResult { .. } | AiSessionEventKind::Failure { .. } => {}
     }
+    session.events.push(event_for_projection);
     if session.metadata.id != session_id {
         return Err("The AI session storage belongs to another session".to_owned());
     }
     Ok(())
+}
+
+fn operation_id_for(kind: &AiSessionEventKind) -> Option<String> {
+    match kind {
+        AiSessionEventKind::OperationTransition { transition } => Some(transition.operation_id.clone()),
+        _ => None,
+    }
 }
 
 fn validate_session_id(session_id: &str) -> Result<(), String> {
@@ -476,163 +465,54 @@ fn normalize_title(content: &str) -> Option<String> {
     Some(title)
 }
 
+
 #[cfg(test)]
 mod tests {
-    use super::{AiSessionService, DEFAULT_SESSION_TITLE, replay_session};
+    use super::{replay_session, DEFAULT_SESSION_TITLE};
     use crate::{
-        agent::error::AgentFailureCode,
-        agent::operation::{OperationState, OperationTransition},
-        models::{
-            AI_SESSION_RECORD_VERSION, AiSessionMetadata, AiSessionRecord, AiTokenUsage, ChatRole,
-        },
+        agent::operation::{OperationState, OperationStatus, OperationTransition},
+        models::{AI_SESSION_RECORD_VERSION, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, AiSessionRecord, ChatRole},
     };
 
     #[test]
-    fn replays_settled_messages_and_ignores_a_torn_final_line() {
+    fn replays_one_ordered_event_format() {
         let records = [
-            AiSessionRecord::SessionCreated {
-                version: AI_SESSION_RECORD_VERSION,
-                metadata: AiSessionMetadata {
-                    id: "conversation-1".into(),
-                    title: DEFAULT_SESSION_TITLE.into(),
-                    created_at_ms: 1,
-                    model: None,
-                },
-            },
-            AiSessionRecord::Message {
-                version: AI_SESSION_RECORD_VERSION,
-                role: ChatRole::User,
-                content: "Fix the widget".into(),
-                thinking: None,
-                usage: None,
-                created_at_ms: 2,
-            },
-            AiSessionRecord::OperationTransition {
-                version: AI_SESSION_RECORD_VERSION,
-                transition: OperationTransition {
-                    operation_id: "operation-1".into(),
-                    request_id: "request-1".into(),
-                    state: OperationState::Accepted,
-                    occurred_at_ms: 2,
-                },
-            },
-            AiSessionRecord::OperationTransition {
-                version: AI_SESSION_RECORD_VERSION,
-                transition: OperationTransition {
-                    operation_id: "operation-1".into(),
-                    request_id: "request-1".into(),
-                    state: OperationState::Completed,
-                    occurred_at_ms: 3,
-                },
-            },
-            AiSessionRecord::Message {
-                version: AI_SESSION_RECORD_VERSION,
-                role: ChatRole::Assistant,
-                content: "Done".into(),
-                thinking: Some("I inspected the widget state first.".into()),
-                usage: Some(AiTokenUsage {
-                    prompt_tokens: 24,
-                    completion_tokens: 12,
-                    total_tokens: 36,
-                    cached_tokens: Some(8),
-                    reasoning_tokens: Some(4),
-                }),
-                created_at_ms: 3,
-            },
-            AiSessionRecord::ToolCall {
-                version: AI_SESSION_RECORD_VERSION,
-                tool_call_id: "call-1".into(),
-                name: "read".into(),
-                arguments: serde_json::json!({ "path": "src/widget.rs" }),
-                created_at_ms: 4,
-            },
-            AiSessionRecord::ToolResult {
-                version: AI_SESSION_RECORD_VERSION,
-                tool_call_id: "call-1".into(),
-                content: "{\"content\":\"widget\"}".into(),
-                is_error: false,
-                created_at_ms: 5,
-            },
-            AiSessionRecord::Failure {
-                version: AI_SESSION_RECORD_VERSION,
-                code: AgentFailureCode::ModelStreamFailed,
-                message: "The next response stream was interrupted".into(),
-                detail: Some("connection reset by peer".into()),
-                created_at_ms: 6,
-            },
+            AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
+                event_id: "created".into(), sequence: 1, operation_id: None, operation_sequence: None,
+                occurred_at_ms: 1, kind: AiSessionEventKind::SessionCreated { metadata: AiSessionMetadata {
+                    id: "session-1".into(), title: DEFAULT_SESSION_TITLE.into(), created_at_ms: 1, model: None,
+                } },
+            } },
+            AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
+                event_id: "user".into(), sequence: 2, operation_id: Some("operation-1".into()), operation_sequence: Some(1),
+                occurred_at_ms: 2, kind: AiSessionEventKind::Message { message_id: None, role: ChatRole::User, content: "hello".into(), thinking: None, usage: None },
+            } },
         ];
-        let mut contents = records
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .join("\n");
-        contents.push_str("\n{\"type\":");
-        let session = replay_session("conversation-1", &contents).unwrap();
-        assert_eq!(session.messages.len(), 2);
-        assert!(matches!(
-            &session.operations[0].state,
-            OperationState::Completed
-        ));
-        assert_eq!(
-            session.messages[1].thinking.as_deref(),
-            Some("I inspected the widget state first.")
-        );
-        assert_eq!(session.messages[1].usage.as_ref().unwrap().total_tokens, 36);
-        assert_eq!(session.messages[1].created_at_ms, 3);
-        assert_eq!(session.failures.len(), 1);
-        assert_eq!(session.tool_calls.len(), 1);
-        assert_eq!(session.tool_calls[0].tool_call_id, "call-1");
-        assert_eq!(session.tool_results.len(), 1);
+        let contents = records.iter().map(serde_json::to_string).collect::<Result<Vec<_>, _>>().unwrap().join("\n") + "\n";
+        let session = replay_session("session-1", &contents).unwrap();
+        assert_eq!(session.events.iter().map(|event| event.sequence).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(session.settled_messages()[0].content, "hello");
+        assert_eq!(session.events[1].operation_id.as_deref(), Some("operation-1"));
+        assert_eq!(session.events[1].event_id, "user");
     }
 
     #[test]
-    fn startup_index_supports_title_and_content_search() {
-        let directory = std::env::temp_dir().join(format!(
-            "forge-ai-session-service-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
+    fn accepted_operation_replays_as_pending_work() {
+        let metadata = AiSessionMetadata { id: "session-1".into(), title: DEFAULT_SESSION_TITLE.into(), created_at_ms: 1, model: None };
         let records = [
-            AiSessionRecord::SessionCreated {
-                version: AI_SESSION_RECORD_VERSION,
-                metadata: AiSessionMetadata {
-                    id: "conversation-1".into(),
-                    title: "New conversation".into(),
-                    created_at_ms: 1,
-                    model: None,
-                },
-            },
-            AiSessionRecord::SessionNamed {
-                version: AI_SESSION_RECORD_VERSION,
-                title: "Repair widget".into(),
-                updated_at_ms: 2,
-            },
-            AiSessionRecord::Message {
-                version: AI_SESSION_RECORD_VERSION,
-                role: ChatRole::User,
-                content: "The zebra renderer is broken".into(),
-                thinking: None,
-                usage: None,
-                created_at_ms: 3,
-            },
+            AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
+                event_id: "created".into(), sequence: 1, operation_id: None, operation_sequence: None,
+                occurred_at_ms: 1, kind: AiSessionEventKind::SessionCreated { metadata },
+            } },
+            AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
+                event_id: "accepted".into(), sequence: 2, operation_id: Some("operation-1".into()), operation_sequence: Some(1),
+                occurred_at_ms: 2, kind: AiSessionEventKind::OperationTransition { transition: OperationTransition {
+                    operation_id: "operation-1".into(), request_id: "request-1".into(), state: OperationState::Accepted, occurred_at_ms: 2,
+                } },
+            } },
         ];
-        let contents = records
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .join("\n");
-        std::fs::write(
-            directory.join("conversation-1.jsonl"),
-            format!("{contents}\n"),
-        )
-        .unwrap();
-
-        let service = AiSessionService::new(directory.clone(), None).unwrap();
-        assert_eq!(service.list(Some("repair")).len(), 1);
-        assert_eq!(service.list(Some("ZEBRA")).len(), 1);
-        assert_eq!(service.get("conversation-1").unwrap().messages.len(), 1);
-        std::fs::remove_dir_all(directory).unwrap();
+        let contents = records.iter().map(serde_json::to_string).collect::<Result<Vec<_>, _>>().unwrap().join("\n") + "\n";
+        let session = replay_session("session-1", &contents).unwrap();
+        assert_eq!(session.operations[0].status, OperationStatus::Pending);
     }
 }

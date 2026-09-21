@@ -17,10 +17,28 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import { Loader2, Wrench } from "lucide-react";
+import { Brain, Loader2, Wrench } from "lucide-react";
 import { ToolActivityTimeline } from "./ToolActivityTimeline";
+import { durableEventsToTranscriptEntries, reduceAgentSessionPresentation } from "../store/agent-session.reducer";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
-import { AgentMessage } from "../types/agent-harness.types";
+import { AgentMessage, AgentTranscriptEntry } from "../types/agent-harness.types";
+
+function formatTokens(tokens: number) {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(tokens);
+}
+
+function MessageUsage({ message }: { message: AgentMessage }) {
+  if (!message.usage || message.role !== "assistant") return null;
+  const { promptTokens, completionTokens, reasoningTokens, totalTokens } = message.usage;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[10px] text-muted-foreground">
+      <span>{formatTokens(totalTokens)} tokens</span>
+      <span>{formatTokens(promptTokens)} in</span>
+      <span>{formatTokens(completionTokens)} out</span>
+      {reasoningTokens ? <span>{formatTokens(reasoningTokens)} reasoning</span> : null}
+    </div>
+  );
+}
 
 function TranscriptMessage({ message }: { message: AgentMessage }) {
   if (message.role === "tool")
@@ -36,7 +54,7 @@ function TranscriptMessage({ message }: { message: AgentMessage }) {
   return (
     <Message align={user ? "end" : "start"}>
       <MessageContent>
-        <Bubble variant={user ? "default" : "ghost"}>
+        <Bubble variant={user ? "default" : message.errorCode ? "destructive" : "ghost"}>
           {message.attachments?.length ? (
             <AttachmentGroup className="pb-1.5">
               {message.attachments.map((attachment) => (
@@ -53,10 +71,50 @@ function TranscriptMessage({ message }: { message: AgentMessage }) {
             </AttachmentGroup>
           ) : null}
           {message.text ? <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent> : null}
+          {message.thinking ? (
+            <details className="mt-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground" open={!message.text}>
+              <summary className="cursor-pointer font-medium text-foreground/75">Reasoning</summary>
+              <div className="mt-1 whitespace-pre-wrap">{message.thinking}</div>
+            </details>
+          ) : null}
+          <MessageUsage message={message} />
+          {message.errorCode ? <div className="mt-1 text-[10px] font-medium uppercase tracking-wide opacity-70">{message.errorCode.replaceAll("_", " ")}</div> : null}
         </Bubble>
       </MessageContent>
     </Message>
   );
+}
+
+function DurableEntry({ entry }: { entry: AgentTranscriptEntry }) {
+  switch (entry.kind) {
+    case "message":
+      return <TranscriptMessage message={entry.message} />;
+    case "reasoning":
+      return (
+        <details className="rounded-md border border-border/60 bg-muted/25 px-2.5 py-2 text-xs text-muted-foreground">
+          <summary className="flex cursor-pointer list-none items-center gap-2 font-medium text-foreground/75">
+            <Brain className="size-3.5" />
+            Reasoning
+          </summary>
+          <div className="mt-2 whitespace-pre-wrap">{entry.text}</div>
+        </details>
+      );
+    case "tool-call":
+      return <ToolActivityTimeline activities={[entry.activity]} />;
+    case "tool-result":
+      return (
+        <Marker variant={entry.isError ? "border" : "default"} className="px-3 py-2 text-xs">
+          <MarkerIcon>
+            <Wrench className="size-3.5" />
+          </MarkerIcon>
+          <MarkerContent>{entry.isError ? `Tool failed: ${entry.text}` : entry.text || "Tool completed"}</MarkerContent>
+        </Marker>
+      );
+    case "failure":
+      return <Marker variant="border" className="px-3 py-2 text-xs text-destructive"><MarkerContent>{entry.text}</MarkerContent></Marker>;
+    case "status":
+      return <Marker className="px-3 py-1 text-[10px] text-muted-foreground"><MarkerContent>{entry.text}</MarkerContent></Marker>;
+  }
 }
 
 export function ConversationTranscript() {
@@ -64,25 +122,30 @@ export function ConversationTranscript() {
   const conversation = useAgentHarnessStore((state) =>
     state.conversations.find((item) => item.id === activeConversationId),
   );
-  const messages = conversation?.messages ?? [];
   const isStreaming = conversation?.status === "streaming";
+  const presentation = reduceAgentSessionPresentation([
+    ...durableEventsToTranscriptEntries(conversation?.events ?? []),
+    ...Object.values(conversation?.streaming ?? {}),
+  ]);
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor" scrollPreviousItemPeek={48}>
       <MessageScroller className="flex-1">
         <MessageScrollerViewport className="px-3 py-4">
           <MessageScrollerContent className="mx-auto w-full max-w-2xl gap-4" aria-busy={isStreaming}>
-            {messages.map((message) => (
-              <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.role === "user"}>
-                {message.role === "assistant" ? (
-                  <ToolActivityTimeline
-                    activities={
-                      conversation?.toolActivities.filter((activity) => activity.requestId === message.id) ?? []
-                    }
-                  />
-                ) : null}
-                <TranscriptMessage message={message} />
-              </MessageScrollerItem>
-            ))}
+            {presentation.items.map((item) =>
+              item.kind === "tools" ? (
+                <MessageScrollerItem key={item.key} messageId={item.key} className="px-1">
+                  <ToolActivityTimeline activities={item.activities} />
+                </MessageScrollerItem>
+              ) : (
+                <MessageScrollerItem
+                  key={item.entry.id}
+                  messageId={item.entry.id}
+                  scrollAnchor={item.entry.kind === "message" && item.entry.message.role === "user"}>
+                  <DurableEntry entry={item.entry} />
+                </MessageScrollerItem>
+              ),
+            )}
             {isStreaming && (
               <MessageScrollerItem messageId="streaming" className="px-1">
                 <Marker aria-live="polite" className="text-xs">
@@ -92,6 +155,18 @@ export function ConversationTranscript() {
                   <MarkerContent className="animate-pulse">Generating response…</MarkerContent>
                 </Marker>
               </MessageScrollerItem>
+            )}
+            {presentation.pendingMessages.map((entry) =>
+              entry.kind === "pending-message" ? (
+                <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor>
+                  <div className="space-y-1.5 opacity-60">
+                    <div className="text-right text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Queued
+                    </div>
+                    <TranscriptMessage message={entry.message} />
+                  </div>
+                </MessageScrollerItem>
+              ) : null,
             )}
           </MessageScrollerContent>
         </MessageScrollerViewport>

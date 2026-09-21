@@ -1,5 +1,5 @@
-import { socket } from "@/lib/ws/connection";
 import { listSessionsQueryKey } from "@/lib/generated/@tanstack/react-query.gen";
+import { socket } from "@/lib/ws/connection";
 import { useQueryClient } from "@tanstack/react-query";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect } from "react";
@@ -13,16 +13,16 @@ type StartChatInput = {
   model: AgentModelSelection;
 };
 
+/** Bridges transport events into the same event reducer used for loaded JSONL. */
 export function useAgentChat() {
   const queryClient = useQueryClient();
-  const addMessage = useAgentHarnessStore((state) => state.addMessage);
-  const appendMessageText = useAgentHarnessStore((state) => state.appendMessageText);
-  const setMessageUsage = useAgentHarnessStore((state) => state.setMessageUsage);
+  const applyDurableSessionEvent = useAgentHarnessStore((state) => state.applyDurableSessionEvent);
+  const appendStreamingText = useAgentHarnessStore((state) => state.appendStreamingText);
+  const appendStreamingReasoning = useAgentHarnessStore((state) => state.appendStreamingReasoning);
+  const clearStreamingRequest = useAgentHarnessStore((state) => state.clearStreamingRequest);
+  const setActiveRequestId = useAgentHarnessStore((state) => state.setActiveRequestId);
   const setConversationStatus = useAgentHarnessStore((state) => state.setConversationStatus);
   const setConversationTitle = useAgentHarnessStore((state) => state.setConversationTitle);
-  const startToolActivity = useAgentHarnessStore((state) => state.startToolActivity);
-  const completeToolActivity = useAgentHarnessStore((state) => state.completeToolActivity);
-  const failRunningToolActivities = useAgentHarnessStore((state) => state.failRunningToolActivities);
 
   useEffect(() => {
     const unsubscribe = socket.subscribe((message) => {
@@ -30,90 +30,73 @@ export function useAgentChat() {
         case "AgentSessionStarted":
           queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
           break;
+        case "AgentSessionEvent":
+          applyDurableSessionEvent(message.conversation_id, message.event);
+          if (message.event.kind.type === "session_named") {
+            setConversationTitle(message.conversation_id, message.event.kind.title);
+            queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+          }
+          break;
         case "AgentStarted":
           setConversationStatus(message.conversation_id, "streaming");
+          setActiveRequestId(message.conversation_id, message.request_id);
           break;
         case "AgentTextDelta":
-          appendMessageText(message.conversation_id, message.request_id, message.text);
+          appendStreamingText(message.conversation_id, message.request_id, message.message_id, message.text);
+          break;
+        case "AgentThinkingDelta":
+          appendStreamingReasoning(message.conversation_id, message.request_id, message.reasoning_id, message.text);
           break;
         case "AgentToolStarted":
-          startToolActivity(message.conversation_id, {
-            id: message.tool_call_id,
-            requestId: message.request_id,
-            name: message.name,
-            arguments: message.arguments,
-            createdAt: Date.now(),
-          });
-          break;
         case "AgentToolCompleted":
-          completeToolActivity(message.conversation_id, message.tool_call_id, message.is_error);
-          break;
         case "AgentUsage":
-          setMessageUsage(message.conversation_id, message.request_id, {
-            promptTokens: message.usage.prompt_tokens,
-            completionTokens: message.usage.completion_tokens,
-            totalTokens: message.usage.total_tokens,
-            cachedTokens: message.usage.cached_tokens,
-            reasoningTokens: message.usage.reasoning_tokens,
-          });
+          // Kept as transport lifecycle signals for compatibility. The
+          // acknowledged AgentSessionEvent is the transcript source of truth.
           break;
         case "AgentSessionNamed":
           setConversationTitle(message.conversation_id, message.title);
           queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
           break;
         case "AgentCompleted":
+        case "AgentStopped":
           setConversationStatus(message.conversation_id, "idle");
+          setActiveRequestId(message.conversation_id, undefined);
           break;
         case "AgentError":
-          appendMessageText(message.conversation_id, message.request_id, message.message);
-          failRunningToolActivities(message.conversation_id, message.request_id);
+          clearStreamingRequest(message.conversation_id, message.request_id);
           setConversationStatus(message.conversation_id, "idle");
+          setActiveRequestId(message.conversation_id, undefined);
           break;
       }
     });
     return () => {
       unsubscribe();
     };
-  }, [
-    appendMessageText,
-    completeToolActivity,
-    failRunningToolActivities,
-    queryClient,
-    setConversationStatus,
-    setConversationTitle,
-    setMessageUsage,
-    startToolActivity,
-  ]);
+  }, [appendStreamingReasoning, appendStreamingText, applyDurableSessionEvent, clearStreamingRequest, queryClient, setActiveRequestId, setConversationStatus, setConversationTitle]);
 
   const startChat = useCallback(
-    ({ conversationId, prompt, attachments, model }: StartChatInput) => {
+    ({ conversationId, prompt, model }: StartChatInput) => {
       const requestId = nanoid();
-      addMessage(conversationId, { id: nanoid(), role: "user", text: prompt, attachments, createdAt: Date.now() });
-
-      if (
-        !socket.send({
-          kind: "AgentPrompt",
-          request_id: requestId,
-          conversation_id: conversationId,
-          provider: model.provider,
-          model_id: model.id,
-          prompt,
-        })
-      ) {
-        addMessage(conversationId, {
-          id: requestId,
-          role: "assistant",
-          text: "Forge disconnected before the prompt could be sent.",
-          createdAt: Date.now(),
-        });
+      if (!socket.send({
+        kind: "AgentPrompt",
+        request_id: requestId,
+        conversation_id: conversationId,
+        provider: model.provider,
+        model_id: model.id,
+        prompt,
+      })) {
         return false;
       }
-      addMessage(conversationId, { id: requestId, role: "assistant", text: "", createdAt: Date.now() });
-      setConversationStatus(conversationId, "streaming");
       return true;
     },
-    [addMessage, setConversationStatus],
+    [],
   );
 
-  return { startChat };
+  const stopChat = useCallback(
+    (conversationId: string, requestId: string) =>
+      socket.send({ kind: "AgentStop", conversation_id: conversationId, request_id: requestId }),
+    [],
+  );
+
+  return { startChat, stopChat };
 }

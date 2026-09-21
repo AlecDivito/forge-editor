@@ -709,6 +709,7 @@ async fn dispatch(
                         .send(ServerMessage::AgentError {
                             request_id,
                             conversation_id,
+                            code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable),
                             message,
                         })
                         .await
@@ -741,10 +742,21 @@ async fn dispatch(
                     .send(ServerMessage::AgentError {
                         request_id,
                         conversation_id,
+                        code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable),
                         message: "The AI session is unavailable".into(),
                     })
                     .await
                     .ok();
+            }
+            Ok(())
+        }
+
+        ClientMessage::AgentStop { request_id, conversation_id } => {
+            let session = state.ai_session(conversation_id.clone());
+            if session.stop(request_id.clone(), document_tx.clone()).await.is_err() {
+                document_tx.send(ServerMessage::AgentError {
+                    request_id, conversation_id, code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable), message: "The AI session is unavailable".into(),
+                }).await.ok();
             }
             Ok(())
         }

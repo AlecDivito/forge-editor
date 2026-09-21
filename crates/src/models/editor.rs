@@ -339,6 +339,10 @@ pub enum ClientMessage {
         model_id: String,
         prompt: String,
     },
+    AgentStop {
+        request_id: String,
+        conversation_id: String,
+    },
 
     Ping,
 }
@@ -488,6 +492,9 @@ impl std::fmt::Display for ClientMessage {
                 f,
                 "AgentPrompt({request_id}, {conversation_id}, {provider}, {model_id})"
             ),
+            ClientMessage::AgentStop { request_id, conversation_id } => {
+                write!(f, "AgentStop({request_id}, {conversation_id})")
+            }
 
             ClientMessage::Ping => write!(f, "Ping"),
         }
@@ -649,6 +656,13 @@ pub enum ServerMessage {
         request_id: String,
         conversation_id: String,
     },
+    /// A session event that has already been committed to JSONL. Consumers
+    /// reconcile this by event ID and sequence; it is the same structure used
+    /// when restoring a conversation through the HTTP API.
+    AgentSessionEvent {
+        conversation_id: String,
+        event: crate::models::AiSessionEvent,
+    },
     AgentStarted {
         request_id: String,
         conversation_id: String,
@@ -656,6 +670,13 @@ pub enum ServerMessage {
     AgentTextDelta {
         request_id: String,
         conversation_id: String,
+        message_id: String,
+        text: String,
+    },
+    AgentThinkingDelta {
+        request_id: String,
+        conversation_id: String,
+        reasoning_id: String,
         text: String,
     },
     AgentToolStarted {
@@ -685,9 +706,15 @@ pub enum ServerMessage {
         request_id: String,
         conversation_id: String,
     },
+    AgentStopped {
+        request_id: String,
+        conversation_id: String,
+    },
     AgentError {
         request_id: String,
         conversation_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<crate::agent::error::AgentFailureCode>,
         message: String,
     },
 

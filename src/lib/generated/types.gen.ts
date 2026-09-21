@@ -15,6 +15,8 @@ export enum AgentFailureCode {
     MODEL_CATALOG_INVALID_RESPONSE = 'model_catalog_invalid_response',
     INVALID_MODEL_BACKEND_URL = 'invalid_model_backend_url',
     MODEL_STREAM_FAILED = 'model_stream_failed',
+    AGENT_EXECUTION_FAILED = 'agent_execution_failed',
+    TOOL_ROUND_LIMIT_EXCEEDED = 'tool_round_limit_exceeded',
     TOOL_EXECUTION_FAILED = 'tool_execution_failed',
     STORAGE_WRITE_FAILED = 'storage_write_failed',
     TITLE_GENERATION_FAILED = 'title_generation_failed',
@@ -34,6 +36,15 @@ export type AgentModelDescriptor = {
     provider: string;
 };
 
+export type AgentSessionLog = {
+    /**
+     * The canonical ordered presentation stream.
+     */
+    events?: Array<AiSessionEvent>;
+    metadata: AiSessionMetadata;
+    operations?: Array<OperationSnapshot>;
+};
+
 export type AgentSessionPath = {
     /**
      * Opaque conversation ID used to address the durable session.
@@ -48,17 +59,54 @@ export type AgentSessionSearchQuery = {
     query?: string | null;
 };
 
-export type AiSession = {
-    failures?: Array<AiSessionFailure>;
-    messages: Array<ChatMessage>;
-    metadata: AiSessionMetadata;
-    tool_calls?: Array<AiSessionToolCall>;
-    tool_results?: Array<AiSessionToolResult>;
+export type AiSessionEvent = {
+    event_id: string;
+    kind: AiSessionEventKind;
+    occurred_at_ms: number;
+    operation_id?: string | null;
+    operation_sequence?: number | null;
+    sequence: number;
 };
 
-export type AiSessionFailure = {
+export type AiSessionEventKind = {
+    type: 'session_created';
+    metadata: AiSessionMetadata;
+} | {
+    title: string;
+    type: 'session_named';
+} | {
+    type: 'model_selected';
+    model: AiSessionModel;
+} | {
+    type: 'operation_transition';
+    transition: OperationTransition;
+} | {
+    type: 'message';
+    content: string;
+    message_id?: string | null;
+    role: ChatRole;
+    thinking?: string | null;
+    usage?: AiTokenUsage | null;
+} | {
+    type: 'reasoning';
+    content: string;
+    reasoning_id?: string | null;
+} | {
+    type: 'user_message_queued';
+    content: string;
+} | {
+    type: 'tool_call';
+    name: string;
+    tool_call_id: string;
+} | {
+    type: 'tool_result';
+    content: string;
+    is_error: boolean;
+    tool_call_id: string;
+} | {
+    type: 'failure';
     code?: AgentFailureCode;
-    created_at_ms: number;
+    detail?: string | null;
     message: string;
 };
 
@@ -79,37 +127,12 @@ export type AiSessionSummary = {
     metadata: AiSessionMetadata;
 };
 
-export type AiSessionToolCall = {
-    created_at_ms: number;
-    name: string;
-    tool_call_id: string;
-};
-
-export type AiSessionToolResult = {
-    content: string;
-    created_at_ms: number;
-    is_error: boolean;
-    tool_call_id: string;
-};
-
 export type AiTokenUsage = {
     cached_tokens?: number | null;
     completion_tokens: number;
     prompt_tokens: number;
     reasoning_tokens?: number | null;
     total_tokens: number;
-};
-
-export type ChatMessage = {
-    content: string;
-    /**
-     * Timestamp of the settled JSONL message record. This lets restored
-     * clients interleave messages with durable tool events correctly.
-     */
-    created_at_ms?: number;
-    role: ChatRole;
-    thinking?: string | null;
-    usage?: AiTokenUsage | null;
 };
 
 export enum ChatRole {
@@ -428,6 +451,56 @@ export type MoveWorkspaceQuery = {
     source_workspace_id: string;
 };
 
+export type OperationSnapshot = {
+    accepted_at_ms: number;
+    operation_id: string;
+    operation_sequence: number;
+    request_id: string;
+    state: OperationState;
+    status: OperationStatus;
+    updated_at_ms: number;
+};
+
+export type OperationState = {
+    kind: 'accepted';
+} | {
+    kind: 'queued';
+} | {
+    kind: 'preparing';
+} | {
+    attempt: number;
+    kind: 'model_in_flight';
+} | {
+    kind: 'tools_planned';
+    tool_call_ids: Array<string>;
+} | {
+    kind: 'tool_in_flight';
+    tool_call_id: string;
+} | {
+    kind: 'completed';
+} | {
+    kind: 'failed';
+} | {
+    kind: 'cancelled';
+    reason: string;
+} | {
+    kind: 'interrupted';
+    reason: string;
+};
+
+export enum OperationStatus {
+    PENDING = 'pending',
+    WAITING = 'waiting',
+    COMPLETE = 'complete'
+}
+
+export type OperationTransition = {
+    occurred_at_ms: number;
+    operation_id: string;
+    request_id: string;
+    state: OperationState;
+};
+
 export type OutputChunk = {
     category: string;
     output: string;
@@ -493,21 +566,6 @@ export enum SessionState {
 
 export type WorkspaceQuery = {
     workspace_id: string;
-};
-
-export type AiSessionWritable = {
-    failures?: Array<AiSessionFailureWritable>;
-    messages: Array<ChatMessage>;
-    metadata: AiSessionMetadata;
-    tool_calls?: Array<AiSessionToolCall>;
-    tool_results?: Array<AiSessionToolResult>;
-};
-
-export type AiSessionFailureWritable = {
-    code?: AgentFailureCode;
-    created_at_ms: number;
-    detail?: string | null;
-    message: string;
 };
 
 export type GetEnvironmentData = {
@@ -588,9 +646,9 @@ export type GetSessionErrors = {
 
 export type GetSessionResponses = {
     /**
-     * The complete durable session
+     * The complete durable operation log
      */
-    200: AiSession;
+    200: AgentSessionLog;
 };
 
 export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];

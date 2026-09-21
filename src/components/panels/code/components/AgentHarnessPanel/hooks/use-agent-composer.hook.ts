@@ -8,7 +8,7 @@ import { AgentAttachment, AgentModelSelection } from "../types/agent-harness.typ
 const isImage = (file: File) => file.type.startsWith("image/");
 
 export function useAgentComposer(conversationId: string | null, model: AgentModelSelection | null) {
-  const { startChat } = useAgentChat();
+  const { startChat, stopChat } = useAgentChat();
   const { createSession, isCreating } = useCreateAgentSession();
   const conversation = useAgentHarnessStore((state) => state.conversations.find((item) => item.id === conversationId));
   const [draft, setDraft] = useState("");
@@ -73,6 +73,10 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
     event.preventDefault();
     send();
   };
+  const stop = () => {
+    const requestId = conversation?.activeRequestId;
+    return Boolean(conversation && requestId && stopChat(conversation.id, requestId));
+  };
   return {
     attachments,
     draft,
@@ -87,5 +91,6 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
     send,
     setDraft,
     submit,
+    stop,
   };
 }

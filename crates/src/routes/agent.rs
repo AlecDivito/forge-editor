@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::{
     agent::error::{AgentError, AgentFailureCode},
     error::AppError,
-    models::{AgentModelCatalog, AgentModelDescriptor, AiSession, AiSessionSummary},
+    models::{AgentModelCatalog, AgentModelDescriptor, AgentSessionLog, AiSessionSummary},
     state::AppState,
 };
 
@@ -152,7 +152,7 @@ pub async fn list_sessions(
 ///
 /// # Responses
 ///
-/// 200: Json<AiSession> - The complete durable session
+/// 200: Json<AgentSessionLog> - The complete durable operation log
 /// 404: () - The requested session does not exist
 ///
 /// # Metadata

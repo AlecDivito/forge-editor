@@ -5,8 +5,9 @@ use serde_json::Value;
 use crate::agent::error::AgentFailureCode;
 use crate::agent::operation::{OperationSnapshot, OperationTransition};
 
-/// The on-disk JSONL schema version for durable AI session records.
-pub const AI_SESSION_RECORD_VERSION: u8 = 1;
+/// The only on-disk JSONL schema version. Forge is not deployed yet, so we do
+/// not carry a compatibility layer for a superseded session format.
+pub const AI_SESSION_RECORD_VERSION: u8 = 2;
 
 /// The normalized roles retained by an in-memory AI session transcript.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -236,109 +237,98 @@ pub struct AiSessionMetadata {
     pub model: Option<AiSessionModel>,
 }
 
-/// One immutable JSONL record in an AI session file.
-///
-/// Records intentionally describe settled state only; streamed deltas remain
-/// ephemeral until their assistant message completes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A durable, ordered item in a session. This is deliberately the shared
+/// protocol boundary for storage, HTTP restoration, and future WebSocket
+/// replay. `sequence` is the source of ordering; timestamps are display data.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AiSessionEvent {
+    pub event_id: String,
+    pub sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_sequence: Option<u64>,
+    pub occurred_at_ms: u64,
+    pub kind: AiSessionEventKind,
+}
+
+/// Presentation and agent replay both fold this one enum. New variants must be
+/// additive so old clients can retain unknown events as durable history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum AiSessionRecord {
-    SessionCreated {
-        version: u8,
-        metadata: AiSessionMetadata,
-    },
-    SessionNamed {
-        version: u8,
-        title: String,
-        updated_at_ms: u64,
-    },
-    ModelSelected {
-        version: u8,
-        model: AiSessionModel,
-        updated_at_ms: u64,
-    },
-    OperationTransition {
-        version: u8,
-        transition: OperationTransition,
-    },
+pub enum AiSessionEventKind {
+    SessionCreated { metadata: AiSessionMetadata },
+    SessionNamed { title: String },
+    ModelSelected { model: AiSessionModel },
+    OperationTransition { transition: OperationTransition },
     Message {
-        version: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
         role: ChatRole,
         content: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thinking: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<AiTokenUsage>,
-        created_at_ms: u64,
     },
-    ToolCall {
-        version: u8,
-        tool_call_id: String,
-        name: String,
-        arguments: Value,
-        created_at_ms: u64,
-    },
-    ToolResult {
-        version: u8,
-        tool_call_id: String,
+    Reasoning {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_id: Option<String>,
         content: String,
-        is_error: bool,
-        created_at_ms: u64,
     },
+    UserMessageQueued { content: String },
+    ToolCall { tool_call_id: String, name: String, arguments: Value },
+    ToolResult { tool_call_id: String, content: String, is_error: bool },
     Failure {
-        version: u8,
-        /// A stable machine-readable category. Older session files omit it.
         #[serde(default)]
         code: AgentFailureCode,
-        /// A generic, safe message that may be shown to a client.
         message: String,
-        /// Diagnostic context retained only in the durable session log.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
-        created_at_ms: u64,
     },
 }
 
-/// An in-memory reconstruction of one durable AI session.
+/// One immutable JSONL record. A session is an event stream—there is no second
+/// legacy record format to merge or migrate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AiSessionRecord {
+    Event {
+        version: u8,
+        event: AiSessionEvent,
+    },
+}
+
+/// The in-memory projection of one session-scoped event log. It contains no
+/// separately persisted transcript or tool collections: those are derived from
+/// `events` by the consumer that needs them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct AiSession {
+pub struct AgentSessionLog {
     pub metadata: AiSessionMetadata,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operations: Vec<OperationSnapshot>,
-    pub messages: Vec<ChatMessage>,
+    /// The canonical ordered presentation stream.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<AiSessionToolCall>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_results: Vec<AiSessionToolResult>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub failures: Vec<AiSessionFailure>,
+    pub events: Vec<AiSessionEvent>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AiSessionToolCall {
-    pub tool_call_id: String,
-    pub name: String,
-    pub arguments: Value,
-    pub created_at_ms: u64,
-}
+impl AgentSessionLog {
+    pub fn settled_messages(&self) -> Vec<ChatMessage> {
+        self.events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                AiSessionEventKind::Message { role, content, thinking, usage, .. } => Some(ChatMessage {
+                    role: role.clone(), content: content.clone(), thinking: thinking.clone(),
+                    usage: usage.clone(), created_at_ms: event.occurred_at_ms,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AiSessionToolResult {
-    pub tool_call_id: String,
-    pub content: String,
-    pub is_error: bool,
-    pub created_at_ms: u64,
-}
-
-/// A failed model turn retained separately from the transcript.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AiSessionFailure {
-    #[serde(default)]
-    pub code: AgentFailureCode,
-    pub message: String,
-    #[serde(skip_serializing)]
-    pub detail: Option<String>,
-    pub created_at_ms: u64,
+    pub fn message_count(&self) -> usize {
+        self.events.iter().filter(|event| matches!(event.kind, AiSessionEventKind::Message { .. })).count()
+    }
 }
 
 /// The compact representation returned when listing sessions.

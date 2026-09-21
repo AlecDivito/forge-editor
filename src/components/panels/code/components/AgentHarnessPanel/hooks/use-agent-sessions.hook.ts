@@ -23,8 +23,8 @@ export function useAgentSessions() {
         }
       : null,
     status: "idle" as const,
-    messages: [],
-    toolActivities: [],
+    events: [],
+    streaming: {},
   }));
   return { ...query, historyConversations, groups: groupConversations(historyConversations) };
 }

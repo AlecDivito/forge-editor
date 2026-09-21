@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ImagePlus, SendHorizonal, X } from "lucide-react";
+import { ImagePlus, SendHorizonal, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { useAgentComposer } from "../hooks/use-agent-composer.hook";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
@@ -20,7 +20,6 @@ export function AgentComposer() {
   const canSend =
     Boolean(composer.draft.trim()) &&
     Boolean(selectedModel) &&
-    conversation?.status !== "streaming" &&
     !composer.isCreating;
 
   return (
@@ -70,7 +69,7 @@ export function AgentComposer() {
           }}
           placeholder="Ask about your workspace"
           rows={3}
-          disabled={conversation?.status === "streaming" || composer.isCreating}
+          disabled={composer.isCreating}
           className="min-h-0 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
           aria-label="Agent prompt"
         />
@@ -102,10 +101,17 @@ export function AgentComposer() {
               <span className="sr-only">Attach image</span>
             </Button>
           </div>
-          <Button type="submit" size="icon" className="size-7" disabled={!canSend} title="Send prompt">
-            <SendHorizonal className="size-3.5" />
-            <span className="sr-only">Send prompt</span>
-          </Button>
+          {conversation?.status === "streaming" ? (
+            <Button type="button" size="icon" variant="secondary" className="size-7" onClick={composer.stop} title="Stop agent">
+              <Square className="size-3.5 fill-current" />
+              <span className="sr-only">Stop agent</span>
+            </Button>
+          ) : (
+            <Button type="submit" size="icon" className="size-7" disabled={!canSend} title="Send prompt">
+              <SendHorizonal className="size-3.5" />
+              <span className="sr-only">Send prompt</span>
+            </Button>
+          )}
         </div>
       </div>
     </form>

@@ -1,10 +1,9 @@
 import { create } from "zustand";
+import type { AiSessionEvent } from "@/lib/generated/types.gen";
+import { applyDurableSessionEvent } from "./agent-session.reducer";
 import {
   AgentConversation,
-  AgentMessage,
   AgentModelSelection,
-  AgentTokenUsage,
-  AgentToolActivity,
   ConversationStatus,
 } from "../types/agent-harness.types";
 
@@ -14,17 +13,21 @@ type AgentHarnessState = {
   selectConversation: (id: string) => void;
   closeConversation: (id: string) => void;
   setModel: (id: string, model: AgentModelSelection | null) => void;
-  addMessage: (id: string, message: AgentMessage) => void;
-  appendMessageText: (conversationId: string, messageId: string, text: string) => void;
-  setMessageUsage: (conversationId: string, messageId: string, usage: AgentTokenUsage) => void;
   setConversationTitle: (id: string, title: string) => void;
   setConversationStatus: (id: string, status: ConversationStatus) => void;
-  startToolActivity: (conversationId: string, activity: Omit<AgentToolActivity, "status">) => void;
-  completeToolActivity: (conversationId: string, toolCallId: string, isError: boolean) => void;
-  failRunningToolActivities: (conversationId: string, requestId: string) => void;
+  setActiveRequestId: (id: string, requestId?: string) => void;
+  applyDurableSessionEvent: (conversationId: string, event: AiSessionEvent) => void;
+  appendStreamingText: (conversationId: string, requestId: string, messageId: string, text: string) => void;
+  appendStreamingReasoning: (conversationId: string, requestId: string, reasoningId: string, text: string) => void;
+  clearStreamingRequest: (conversationId: string, requestId: string) => void;
   hydrateSession: (conversation: AgentConversation) => void;
 };
 
+/**
+ * UI state only: tab selection and ordered transcript events for sessions the
+ * user has loaded. Restored JSONL and live WebSocket activity use the same
+ * pure reducer, so neither path has its own conversation reconstruction.
+ */
 export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
   activeConversationId: null,
   conversations: [],
@@ -35,7 +38,7 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
         conversation.id === activeConversationId ? { ...conversation, isOpen: true } : conversation,
       ),
     })),
-  closeConversation: (id) => {
+  closeConversation: (id) =>
     set((state) => {
       const conversations = state.conversations.map((conversation) =>
         conversation.id === id ? { ...conversation, isOpen: false } : conversation,
@@ -46,49 +49,11 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
           state.activeConversationId === id ? (remaining.at(-1)?.id ?? null) : state.activeConversationId,
         conversations,
       };
-    });
-  },
+    }),
   setModel: (id, model) =>
     set((state) => ({
       conversations: state.conversations.map((conversation) =>
         conversation.id === id ? { ...conversation, model } : conversation,
-      ),
-    })),
-  addMessage: (id, message) =>
-    set((state) => ({
-      conversations: state.conversations.map((conversation) =>
-        conversation.id !== id
-          ? conversation
-          : {
-              ...conversation,
-              messages: [...conversation.messages, message],
-            },
-      ),
-    })),
-  appendMessageText: (conversationId, messageId, text) =>
-    set((state) => ({
-      conversations: state.conversations.map((conversation) =>
-        conversation.id !== conversationId
-          ? conversation
-          : {
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === messageId ? { ...message, text: `${message.text}${text}` } : message,
-              ),
-            },
-      ),
-    })),
-  setMessageUsage: (conversationId, messageId, usage) =>
-    set((state) => ({
-      conversations: state.conversations.map((conversation) =>
-        conversation.id !== conversationId
-          ? conversation
-          : {
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === messageId ? { ...message, usage } : message,
-              ),
-            },
       ),
     })),
   setConversationTitle: (id, title) =>
@@ -103,47 +68,60 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
         conversation.id === id ? { ...conversation, status } : conversation,
       ),
     })),
-  startToolActivity: (conversationId, activity) =>
+  setActiveRequestId: (id, activeRequestId) =>
     set((state) => ({
       conversations: state.conversations.map((conversation) =>
-        conversation.id !== conversationId
-          ? conversation
-          : {
-              ...conversation,
-              toolActivities: [
-                ...conversation.toolActivities.filter((item) => item.id !== activity.id),
-                { ...activity, status: "running" },
-              ],
-            },
+        conversation.id === id ? { ...conversation, activeRequestId } : conversation,
       ),
     })),
-  completeToolActivity: (conversationId, toolCallId, isError) =>
+  applyDurableSessionEvent: (conversationId, event) =>
     set((state) => ({
-      conversations: state.conversations.map((conversation) =>
-        conversation.id !== conversationId
-          ? conversation
-          : {
-              ...conversation,
-              toolActivities: conversation.toolActivities.map((activity) =>
-                activity.id === toolCallId ? { ...activity, status: isError ? "error" : "completed" } : activity,
-              ),
-            },
-      ),
+      conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== conversationId) return conversation;
+        const events = applyDurableSessionEvent(conversation.events, event);
+        const streaming = { ...conversation.streaming };
+        if (event.kind.type === "message") {
+          const messageId = (event.kind as { message_id?: string }).message_id;
+          if (messageId) delete streaming[messageId];
+        }
+        if (event.kind.type === "reasoning") {
+          const reasoningId = (event.kind as { reasoning_id?: string }).reasoning_id;
+          if (reasoningId) delete streaming[reasoningId];
+        }
+        return { ...conversation, events, streaming };
+      }),
     })),
-  failRunningToolActivities: (conversationId, requestId) =>
+  appendStreamingText: (conversationId, requestId, messageId, text) =>
     set((state) => ({
-      conversations: state.conversations.map((conversation) =>
-        conversation.id !== conversationId
-          ? conversation
-          : {
-              ...conversation,
-              toolActivities: conversation.toolActivities.map((activity) =>
-                activity.requestId === requestId && activity.status === "running"
-                  ? { ...activity, status: "error" }
-                  : activity,
-              ),
-            },
-      ),
+      conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== conversationId) return conversation;
+        const existing = conversation.streaming[messageId];
+        const entry = existing?.kind === "message"
+          ? { ...existing, message: { ...existing.message, text: `${existing.message.text}${text}` } }
+          : { id: messageId, sequence: Number.MAX_SAFE_INTEGER, operationId: `operation-${requestId}`, kind: "message" as const, message: { id: messageId, role: "assistant" as const, text, createdAt: Date.now() } };
+        return { ...conversation, streaming: { ...conversation.streaming, [messageId]: entry } };
+      }),
+    })),
+  appendStreamingReasoning: (conversationId, requestId, reasoningId, text) =>
+    set((state) => ({
+      conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== conversationId) return conversation;
+        const existing = conversation.streaming[reasoningId];
+        const entry = existing?.kind === "reasoning"
+          ? { ...existing, text: `${existing.text}${text}` }
+          : { id: reasoningId, sequence: Number.MAX_SAFE_INTEGER, operationId: `operation-${requestId}`, kind: "reasoning" as const, text };
+        return { ...conversation, streaming: { ...conversation.streaming, [reasoningId]: entry } };
+      }),
+    })),
+  clearStreamingRequest: (conversationId, requestId) =>
+    set((state) => ({
+      conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== conversationId) return conversation;
+        const streaming = Object.fromEntries(
+          Object.entries(conversation.streaming).filter(([, entry]) => entry.operationId !== `operation-${requestId}`),
+        );
+        return { ...conversation, streaming };
+      }),
     })),
   hydrateSession: (conversation) =>
     set((state) => {

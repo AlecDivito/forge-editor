@@ -2,7 +2,7 @@
 
 import * as z from 'zod';
 
-import { AgentFailureCode, ChatRole, FsFileType, SessionState } from './types.gen';
+import { AgentFailureCode, ChatRole, FsFileType, OperationStatus, SessionState } from './types.gen';
 
 export const zAgentFailureCode = z.enum(AgentFailureCode);
 
@@ -25,12 +25,6 @@ export const zAgentSessionSearchQuery = z.object({
     query: z.string().nullish()
 });
 
-export const zAiSessionFailure = z.object({
-    code: zAgentFailureCode.optional().default('unknown'),
-    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
-    message: z.string()
-});
-
 export const zAiSessionModel = z.object({
     model_id: z.string(),
     provider: z.string()
@@ -48,19 +42,6 @@ export const zAiSessionSummary = z.object({
     metadata: zAiSessionMetadata
 });
 
-export const zAiSessionToolCall = z.object({
-    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
-    name: z.string(),
-    tool_call_id: z.string()
-});
-
-export const zAiSessionToolResult = z.object({
-    content: z.string(),
-    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
-    is_error: z.boolean(),
-    tool_call_id: z.string()
-});
-
 export const zAiTokenUsage = z.object({
     cached_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).nullish(),
     completion_tokens: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
@@ -70,22 +51,6 @@ export const zAiTokenUsage = z.object({
 });
 
 export const zChatRole = z.enum(ChatRole);
-
-export const zChatMessage = z.object({
-    content: z.string(),
-    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).optional().default(BigInt(0)),
-    role: zChatRole,
-    thinking: z.string().nullish(),
-    usage: zAiTokenUsage.nullish()
-});
-
-export const zAiSession = z.object({
-    failures: z.array(zAiSessionFailure).optional(),
-    messages: z.array(zChatMessage),
-    metadata: zAiSessionMetadata,
-    tool_calls: z.array(zAiSessionToolCall).optional(),
-    tool_results: z.array(zAiSessionToolResult).optional()
-});
 
 export const zCreateSession = z.object({
     activeFileId: z.string().nullish(),
@@ -266,6 +231,131 @@ export const zMoveWorkspaceQuery = z.object({
     source_workspace_id: z.string()
 });
 
+export const zOperationState = z.union([
+    z.object({
+        kind: z.literal('accepted')
+    }),
+    z.object({
+        kind: z.literal('queued')
+    }),
+    z.object({
+        kind: z.literal('preparing')
+    }),
+    z.object({
+        attempt: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+        kind: z.literal('model_in_flight')
+    }),
+    z.object({
+        kind: z.literal('tools_planned'),
+        tool_call_ids: z.array(z.string())
+    }),
+    z.object({
+        kind: z.literal('tool_in_flight'),
+        tool_call_id: z.string()
+    }),
+    z.object({
+        kind: z.literal('completed')
+    }),
+    z.object({
+        kind: z.literal('failed')
+    }),
+    z.object({
+        kind: z.literal('cancelled'),
+        reason: z.string()
+    }),
+    z.object({
+        kind: z.literal('interrupted'),
+        reason: z.string()
+    })
+]);
+
+export const zOperationStatus = z.enum(OperationStatus);
+
+export const zOperationSnapshot = z.object({
+    accepted_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    operation_id: z.string(),
+    operation_sequence: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    request_id: z.string(),
+    state: zOperationState,
+    status: zOperationStatus,
+    updated_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' })
+});
+
+export const zOperationTransition = z.object({
+    occurred_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    operation_id: z.string(),
+    request_id: z.string(),
+    state: zOperationState
+});
+
+export const zAiSessionEventKind = z.union([
+    z.object({
+        type: z.literal('session_created'),
+        metadata: zAiSessionMetadata
+    }),
+    z.object({
+        title: z.string(),
+        type: z.literal('session_named')
+    }),
+    z.object({
+        type: z.literal('model_selected'),
+        model: zAiSessionModel
+    }),
+    z.object({
+        type: z.literal('operation_transition'),
+        transition: zOperationTransition
+    }),
+    z.object({
+        type: z.literal('message'),
+        content: z.string(),
+        message_id: z.string().nullish(),
+        role: zChatRole,
+        thinking: z.string().nullish(),
+        usage: zAiTokenUsage.nullish()
+    }),
+    z.object({
+        type: z.literal('reasoning'),
+        content: z.string(),
+        reasoning_id: z.string().nullish()
+    }),
+    z.object({
+        type: z.literal('user_message_queued'),
+        content: z.string()
+    }),
+    z.object({
+        type: z.literal('tool_call'),
+        name: z.string(),
+        tool_call_id: z.string()
+    }),
+    z.object({
+        type: z.literal('tool_result'),
+        content: z.string(),
+        is_error: z.boolean(),
+        tool_call_id: z.string()
+    }),
+    z.object({
+        type: z.literal('failure'),
+        code: zAgentFailureCode.optional().default('unknown'),
+        detail: z.string().nullish(),
+        message: z.string()
+    })
+]);
+
+export const zAiSessionEvent = z.object({
+    event_id: z.string(),
+    kind: zAiSessionEventKind,
+    occurred_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    operation_id: z.string().nullish(),
+    operation_sequence: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }).nullish(),
+    sequence: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' })
+});
+
+export const zAgentSessionLog = z.object({
+    events: z.array(zAiSessionEvent).optional(),
+    metadata: zAiSessionMetadata,
+    operations: z.array(zOperationSnapshot).optional()
+});
+
 export const zOutputChunk = z.object({
     category: z.string(),
     output: z.string(),
@@ -350,21 +440,6 @@ export const zWorkspaceQuery = z.object({
     workspace_id: z.string()
 });
 
-export const zAiSessionFailureWritable = z.object({
-    code: zAgentFailureCode.optional().default('unknown'),
-    created_at_ms: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
-    detail: z.string().nullish(),
-    message: z.string()
-});
-
-export const zAiSessionWritable = z.object({
-    failures: z.array(zAiSessionFailureWritable).optional(),
-    messages: z.array(zChatMessage),
-    metadata: zAiSessionMetadata,
-    tool_calls: z.array(zAiSessionToolCall).optional(),
-    tool_results: z.array(zAiSessionToolResult).optional()
-});
-
 export const zGetEnvironmentResponse = zEnvironmentSnapshot;
 
 /**
@@ -386,9 +461,9 @@ export const zGetSessionPath = z.object({
 });
 
 /**
- * The complete durable session
+ * The complete durable operation log
  */
-export const zGetSessionResponse = zAiSession;
+export const zGetSessionResponse = zAgentSessionLog;
 
 export const zListFilesQuery = z.object({
     workspace_id: z.string(),

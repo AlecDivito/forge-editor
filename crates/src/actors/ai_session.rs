@@ -1,16 +1,18 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     agent::error::AgentFailureCode,
-    agent::operation::{OperationState, OperationTransition},
+    agent::operation::{OperationState, OperationStatus, OperationTransition},
+    agent::session::reducer::AgentProjection,
     agent::tools::{ToolContext, ToolRegistry},
+    actors::AgentActor,
     config::OpenAiCompatibleConfig,
     models::{
-        AI_SESSION_RECORD_VERSION, AiSession, AiSessionMetadata, AiSessionModel, AiSessionRecord,
-        AiTokenUsage, AssistantResponse, ChatCompletionChunk, ChatCompletionRequest, ChatMessage,
+        AgentActorEvent, AgentSessionLog, AgentStreamDelta, AgentTask, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, AiSessionModel,
+        AssistantResponse, ChatCompletionChunk, ChatCompletionRequest,
         ChatRole, OpenAiChatMessage, OpenAiToolCall, OpenAiToolCallFunction, ServerMessage,
     },
     services::ai_session::AiSessionService,
@@ -45,6 +47,19 @@ enum AiSessionCommand {
         result: Result<Option<String>, String>,
         recipient: mpsc::Sender<ServerMessage>,
     },
+    Stop {
+        request_id: String,
+        recipient: mpsc::Sender<ServerMessage>,
+    },
+    AgentEvent {
+        event: AgentActorEvent,
+        recipient: mpsc::Sender<ServerMessage>,
+    },
+}
+
+struct PendingPrompt {
+    model_id: String,
+    recipient: mpsc::Sender<ServerMessage>,
 }
 
 impl AiSessionActor {
@@ -58,6 +73,8 @@ impl AiSessionActor {
         let actor_commands = commands.clone();
         tokio::spawn(async move {
             let mut session = None;
+            let mut runners = HashMap::<String, Arc<AgentActor>>::new();
+            let mut pending = HashMap::<String, PendingPrompt>::new();
             while let Some(command) = receiver.recv().await {
                 match command {
                     AiSessionCommand::Start { result } => {
@@ -81,26 +98,64 @@ impl AiSessionActor {
                                     .send(ServerMessage::AgentError {
                                         request_id,
                                         conversation_id: session_id.clone(),
+                                        code: Some(AgentFailureCode::SessionUnavailable),
                                         message: user_error().to_owned(),
                                     })
                                     .await;
                                 continue;
                             }
                         };
-                        run_prompt(
-                            &session_id,
-                            config.as_ref(),
-                            request_id,
-                            provider,
-                            model_id,
-                            prompt,
-                            session,
-                            sessions.clone(),
+                        if !accept_prompt(&session_id, &request_id, &prompt, &sessions, &recipient).await {
+                            let _ = recipient.send(ServerMessage::AgentError { request_id, conversation_id: session_id.clone(), code: Some(AgentFailureCode::StorageWriteFailed), message: user_error().to_owned() }).await;
+                            continue;
+                        }
+                        let operation_id = format!("operation-{request_id}");
+                        let Some(config) = config.as_ref() else {
+                            send_failure(&session_id, &request_id, AgentFailureCode::MissingModelBackend, "No OpenAI-compatible model backend is configured", &sessions, &recipient).await;
+                            continue;
+                        };
+                        if provider != "openai-compatible" {
+                            send_failure(&session_id, &request_id, AgentFailureCode::InvalidProvider, "The selected model provider is not configured", &sessions, &recipient).await;
+                            continue;
+                        }
+                        if model_id.trim().is_empty() || model_id.len() > 256 || prompt.trim().is_empty() || prompt.len() > 100_000 {
+                            send_failure(&session_id, &request_id, AgentFailureCode::InvalidPrompt, "The selected model or chat transcript is invalid", &sessions, &recipient).await;
+                            continue;
+                        }
+                        let model = AiSessionModel { provider, model_id };
+                        let should_generate_title = session.metadata.title == "New conversation";
+                        if session.metadata.model.as_ref() != Some(&model) {
+                            if let Err(error) = append_and_publish(&session_id, Some(&operation_id), AiSessionEventKind::ModelSelected { model: model.clone() }, &sessions, &recipient).await {
+                                send_failure(&session_id, &request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                continue;
+                            }
+                            session.metadata.model = Some(model.clone());
+                        }
+                        if should_generate_title {
+                            let title_sessions = sessions.clone();
+                            let title_commands = actor_commands.clone();
+                            let title_recipient = recipient.clone();
+                            let title_model = model.clone();
+                            let title_prompt = prompt.clone();
+                            let title_request_id = request_id.clone();
+                            tokio::spawn(async move {
+                                let result = title_sessions.generate_title(&title_model, &title_prompt).await;
+                                let _ = title_commands.send(AiSessionCommand::TitleGenerated { request_id: title_request_id, result, recipient: title_recipient }).await;
+                            });
+                        }
+                        pending.insert(request_id.clone(), PendingPrompt {
+                            model_id: model.model_id,
                             recipient,
-                            actor_commands.clone(),
-                            tool_context.clone(),
-                        )
-                        .await;
+                        });
+                        start_next_operation(
+                            &session_id,
+                            config,
+                            &sessions,
+                            &tool_context,
+                            &actor_commands,
+                            &mut pending,
+                            &mut runners,
+                        ).await;
                     }
                     AiSessionCommand::TitleGenerated {
                         request_id,
@@ -116,14 +171,12 @@ impl AiSessionActor {
                         };
                         match result {
                             Ok(Some(title)) => {
-                                if let Err(error) = sessions
-                                    .append(
+                                if let Err(error) = append_and_publish(
                                         &session_id,
-                                        AiSessionRecord::SessionNamed {
-                                            version: AI_SESSION_RECORD_VERSION,
-                                            title: title.clone(),
-                                            updated_at_ms: now_ms(),
-                                        },
+                                        None,
+                                        AiSessionEventKind::SessionNamed { title: title.clone() },
+                                        &sessions,
+                                        &recipient,
                                     )
                                     .await
                                 {
@@ -132,6 +185,7 @@ impl AiSessionActor {
                                         AgentFailureCode::TitlePersistFailed,
                                         error,
                                         &sessions,
+                                        &recipient,
                                     )
                                     .await;
                                     continue;
@@ -157,10 +211,156 @@ impl AiSessionActor {
                                     AgentFailureCode::TitleGenerationFailed,
                                     error,
                                     &sessions,
+                                    &recipient,
                                 )
                                 .await;
                             }
                         }
+                    }
+                    AiSessionCommand::AgentEvent { event, recipient } => {
+                        match event {
+                            AgentActorEvent::Started { task } => {
+                                let _ = recipient.send(ServerMessage::AgentStarted {
+                                    request_id: task.request_id.clone(),
+                                    conversation_id: session_id.clone(),
+                                }).await;
+                            }
+                            AgentActorEvent::TextDelta { task, attempt, text } => {
+                                let _ = recipient.send(ServerMessage::AgentTextDelta {
+                                    request_id: task.request_id.clone(),
+                                    conversation_id: session_id.clone(),
+                                    message_id: assistant_message_id(&task, attempt),
+                                    text,
+                                }).await;
+                            }
+                            AgentActorEvent::ThinkingDelta { task, attempt, text } => {
+                                let _ = recipient.send(ServerMessage::AgentThinkingDelta {
+                                    request_id: task.request_id.clone(),
+                                    conversation_id: session_id.clone(),
+                                    reasoning_id: reasoning_message_id(&task, attempt),
+                                    text,
+                                }).await;
+                            }
+                            AgentActorEvent::ModelStarted { task, attempt } => {
+                                let _ = persist_operation_transition(
+                                    &session_id,
+                                    &task.operation_id,
+                                    &task.request_id,
+                                    OperationState::ModelInFlight { attempt },
+                                    &sessions,
+                                    &recipient,
+                                )
+                                .await;
+                            }
+                            AgentActorEvent::ModelSettled { task, attempt, response } => {
+                                if let Some(thinking) = response.thinking.filter(|thinking| !thinking.trim().is_empty()) {
+                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Reasoning { reasoning_id: Some(reasoning_message_id(&task, attempt)), content: thinking }, &sessions, &recipient).await {
+                                        send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                    }
+                                }
+                                if !response.content.is_empty() {
+                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Message { message_id: Some(assistant_message_id(&task, attempt)), role: ChatRole::Assistant, content: response.content, thinking: None, usage: response.usage }, &sessions, &recipient).await {
+                                        send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                    }
+                                }
+                            }
+                            AgentActorEvent::ToolCallsProposed { task, calls } => {
+                                if !persist_operation_transition(&session_id, &task.operation_id, &task.request_id, OperationState::ToolsPlanned { tool_call_ids: calls.iter().map(|call| call.id.clone()).collect() }, &sessions, &recipient).await { continue; }
+                                for call in calls {
+                                    let arguments = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
+                                    if call.id.trim().is_empty() || call.function.name.trim().is_empty() {
+                                        send_failure(&session_id, &task.request_id, AgentFailureCode::ModelStreamFailed, "The model emitted a tool call without a stable ID or name", &sessions, &recipient).await;
+                                        break;
+                                    }
+                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::ToolCall { tool_call_id: call.id, name: call.function.name, arguments }, &sessions, &recipient).await {
+                                        send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                        break;
+                                    }
+                                }
+                            }
+                            AgentActorEvent::ToolStarted { task, call } => {
+                                let arguments = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
+                                let _ = persist_operation_transition(&session_id, &task.operation_id, &task.request_id, OperationState::ToolInFlight { tool_call_id: call.id.clone() }, &sessions, &recipient).await;
+                                let _ = recipient.send(ServerMessage::AgentToolStarted { request_id: task.request_id, conversation_id: session_id.clone(), tool_call_id: call.id, name: call.function.name, arguments }).await;
+                            }
+                            AgentActorEvent::ToolFinished { task, call_id, result } => {
+                                if result.is_error {
+                                    let detail = format!("tool {call_id} failed: {}", result.content);
+                                    tracing::error!(session_id, operation_id = task.operation_id, tool_call_id = call_id, %detail, "agent tool execution failed");
+                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Failure {
+                                        code: AgentFailureCode::ToolExecutionFailed,
+                                        message: user_error().to_owned(),
+                                        detail: Some(detail),
+                                    }, &sessions, &recipient).await {
+                                        tracing::error!(session_id, operation_id = task.operation_id, %error, "could not persist agent tool failure");
+                                    }
+                                }
+                                if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::ToolResult { tool_call_id: call_id.clone(), content: result.content, is_error: result.is_error }, &sessions, &recipient).await {
+                                    send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                }
+                                let _ = recipient.send(ServerMessage::AgentToolCompleted { request_id: task.request_id, conversation_id: session_id.clone(), tool_call_id: call_id, is_error: result.is_error }).await;
+                            }
+                            AgentActorEvent::Completed { task, usage } => {
+                                if let Some(usage) = usage { let _ = recipient.send(ServerMessage::AgentUsage { request_id: task.request_id.clone(), conversation_id: session_id.clone(), usage }).await; }
+                                let _ = persist_operation_transition(&session_id, &task.operation_id, &task.request_id, OperationState::Completed, &sessions, &recipient).await;
+                                runners.remove(&task.request_id);
+                                let _ = recipient.send(ServerMessage::AgentCompleted { request_id: task.request_id, conversation_id: session_id.clone() }).await;
+                                if let Some(config) = config.as_ref() {
+                                    start_next_operation(&session_id, config, &sessions, &tool_context, &actor_commands, &mut pending, &mut runners).await;
+                                }
+                            }
+                            AgentActorEvent::Failed { task, code, detail } => {
+                                runners.remove(&task.request_id);
+                                send_failure(&session_id, &task.request_id, code, &detail, &sessions, &recipient).await;
+                                if let Some(config) = config.as_ref() {
+                                    start_next_operation(&session_id, config, &sessions, &tool_context, &actor_commands, &mut pending, &mut runners).await;
+                                }
+                            }
+                            AgentActorEvent::Cancelled { task, partial_text, partial_thinking, attempt, cancelled_tool_call_id } => {
+                                runners.remove(&task.request_id);
+                                let _ = persist_cancelled_partial(&session_id, &task, attempt, partial_text, partial_thinking, &sessions, &recipient).await;
+                                if let Some(tool_call_id) = cancelled_tool_call_id {
+                                    if let Err(error) = append_and_publish(
+                                        &session_id,
+                                        Some(&task.operation_id),
+                                        AiSessionEventKind::ToolResult {
+                                            tool_call_id,
+                                            content: "Tool execution cancelled by user".into(),
+                                            is_error: true,
+                                        },
+                                        &sessions,
+                                        &recipient,
+                                    )
+                                    .await
+                                    {
+                                        tracing::error!(session_id, operation_id = task.operation_id, %error, "could not persist cancelled tool result");
+                                    }
+                                }
+                                let _ = persist_operation_transition(&session_id, &task.operation_id, &task.request_id, OperationState::Cancelled { reason: "Stopped by user".into() }, &sessions, &recipient).await;
+                                if let Some(config) = config.as_ref() {
+                                    start_next_operation(&session_id, config, &sessions, &tool_context, &actor_commands, &mut pending, &mut runners).await;
+                                }
+                            }
+                        }
+                    }
+                    AiSessionCommand::Stop { request_id, recipient } => {
+                        if let Some(worker) = runners.remove(&request_id) {
+                            worker.stop().await;
+                        } else if pending.remove(&request_id).is_some() {
+                            let operation_id = format!("operation-{request_id}");
+                            let _ = persist_operation_transition(
+                                &session_id,
+                                &operation_id,
+                                &request_id,
+                                OperationState::Cancelled { reason: "Stopped by user before execution".into() },
+                                &sessions,
+                                &recipient,
+                            ).await;
+                        } else {
+                            tracing::warn!(session_id, request_id, "received stop for an unknown AI operation");
+                            continue;
+                        }
+                        let _ = recipient.send(ServerMessage::AgentStopped { request_id, conversation_id: session_id.clone() }).await;
                     }
                 }
             }
@@ -200,490 +400,121 @@ impl AiSessionActor {
             .await
             .map_err(|_| ())
     }
+
+    pub async fn stop(&self, request_id: String, recipient: mpsc::Sender<ServerMessage>) -> Result<(), ()> {
+        self.commands.send(AiSessionCommand::Stop { request_id, recipient }).await.map_err(|_| ())
+    }
 }
 
-async fn run_prompt(
+/// Acceptance is intentionally separate from execution. A prompt is durable
+/// and visible as soon as the actor receives it, even while another operation
+/// owns the model/tool execution permit.
+async fn accept_prompt(
     session_id: &str,
-    config: Option<&OpenAiCompatibleConfig>,
-    request_id: String,
-    provider: String,
-    model_id: String,
-    prompt: String,
-    session: &mut AiSession,
-    sessions: Arc<AiSessionService>,
-    recipient: mpsc::Sender<ServerMessage>,
-    commands: mpsc::Sender<AiSessionCommand>,
-    tool_context: ToolContext,
-) {
+    request_id: &str,
+    prompt: &str,
+    sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
+) -> bool {
     let operation_id = format!("operation-{request_id}");
-    if !persist_operation_transition(
+    if !persist_operation_transition(session_id, &operation_id, request_id, OperationState::Accepted, sessions, recipient).await {
+        return false;
+    }
+    match append_and_publish(
         session_id,
-        &operation_id,
-        &request_id,
-        OperationState::Accepted,
-        &sessions,
-    )
-    .await
-    {
+        Some(&operation_id),
+        AiSessionEventKind::UserMessageQueued { content: prompt.to_owned() },
+        sessions,
+        recipient,
+    ).await {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::error!(session_id, request_id, %error, "could not persist accepted AI prompt");
+            false
+        }
+    }
+}
+
+/// Claims the oldest durably accepted prompt only when no agent owns the
+/// session execution lease. Context is built here—not at acceptance—so every
+/// queued turn sees all completed earlier turns and none of the future ones.
+async fn start_next_operation(
+    session_id: &str,
+    config: &OpenAiCompatibleConfig,
+    sessions: &Arc<AiSessionService>,
+    tool_context: &ToolContext,
+    commands: &mpsc::Sender<AiSessionCommand>,
+    pending: &mut HashMap<String, PendingPrompt>,
+    runners: &mut HashMap<String, Arc<AgentActor>>,
+) {
+    if !runners.is_empty() {
         return;
     }
-    if provider != "openai-compatible" {
-        send_failure(
-            session_id,
-            &request_id,
-            AgentFailureCode::InvalidProvider,
-            "The selected model provider is not configured",
-            &sessions,
-            &recipient,
-        )
-        .await;
-        return;
-    }
-    let Some(config) = config else {
-        send_failure(
-            session_id,
-            &request_id,
-            AgentFailureCode::MissingModelBackend,
-            "No OpenAI-compatible model backend is configured",
-            &sessions,
-            &recipient,
-        )
-        .await;
+    let Some(log) = sessions.get(session_id) else {
+        tracing::error!(session_id, "could not schedule a missing AI session");
         return;
     };
-    if model_id.trim().is_empty()
-        || model_id.len() > 256
-        || prompt.trim().is_empty()
-        || prompt.len() > 100_000
-    {
-        send_failure(
-            session_id,
-            &request_id,
-            AgentFailureCode::InvalidPrompt,
-            "The selected model or chat transcript is invalid",
-            &sessions,
-            &recipient,
-        )
-        .await;
-        return;
-    }
-
-    if !persist_operation_transition(
-        session_id,
-        &operation_id,
-        &request_id,
-        OperationState::Preparing,
-        &sessions,
-    )
-    .await
-    {
-        return;
-    }
-
-    if recipient
-        .send(ServerMessage::AgentStarted {
-            request_id: request_id.clone(),
-            conversation_id: session_id.to_owned(),
-        })
-        .await
-        .is_err()
-    {
-        return;
-    }
-    let prospective_message_bytes = session
-        .messages
+    let Some(operation) = log
+        .operations
         .iter()
-        .map(|message| message.content.len())
-        .sum::<usize>()
-        + prompt.len();
-    if session.messages.len() >= 100 || prospective_message_bytes > 100_000 {
-        send_failure(
-            session_id,
-            &request_id,
-            AgentFailureCode::TranscriptLimit,
-            "The in-memory chat transcript exceeds its limit",
-            &sessions,
-            &recipient,
-        )
-        .await;
+        .filter(|operation| operation.status == OperationStatus::Pending)
+        .filter(|operation| pending.contains_key(&operation.request_id))
+        .min_by_key(|operation| operation.operation_sequence)
+    else {
         return;
-    }
-
-    let model = AiSessionModel { provider, model_id };
-    let should_generate_title = sessions
-        .get(session_id)
-        .is_some_and(|session| session.metadata.title == "New conversation");
-
-    if session.metadata.model.as_ref() != Some(&model) {
-        match sessions
-            .append(
-                session_id,
-                AiSessionRecord::ModelSelected {
-                    version: AI_SESSION_RECORD_VERSION,
-                    model: model.clone(),
-                    updated_at_ms: now_ms(),
-                },
-            )
-            .await
-        {
-            Ok(()) => {}
-            Err(message) => {
-                send_failure(
-                    session_id,
-                    &request_id,
-                    AgentFailureCode::StorageWriteFailed,
-                    &message,
-                    &sessions,
-                    &recipient,
-                )
-                .await;
-                return;
-            }
-        }
-        session.metadata.model = Some(model.clone());
-    }
-    match sessions
-        .append(
-            session_id,
-            AiSessionRecord::Message {
-                version: AI_SESSION_RECORD_VERSION,
-                role: ChatRole::User,
-                content: prompt.clone(),
-                thinking: None,
-                usage: None,
-                created_at_ms: now_ms(),
-            },
-        )
-        .await
-    {
-        Ok(()) => {}
-        Err(message) => {
-            send_failure(
-                session_id,
-                &request_id,
-                AgentFailureCode::StorageWriteFailed,
-                &message,
-                &sessions,
-                &recipient,
-            )
-            .await;
-            return;
-        }
-    }
-    session.messages.push(ChatMessage {
+    };
+    let operation_id = operation.operation_id.clone();
+    let request_id = operation.request_id.clone();
+    let Some(pending_prompt) = pending.remove(&request_id) else { return };
+    let Some(prompt) = log.events.iter().find_map(|event| {
+        (event.operation_id.as_deref() == Some(operation_id.as_str())).then(|| match &event.kind {
+            AiSessionEventKind::UserMessageQueued { content } => Some(content.clone()),
+            _ => None,
+        }).flatten()
+    }) else {
+        send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, "The accepted prompt is missing from the durable log", sessions, &pending_prompt.recipient).await;
+        return;
+    };
+    if let Err(error) = append_and_publish(session_id, Some(&operation_id), AiSessionEventKind::Message {
+        message_id: None,
         role: ChatRole::User,
-        content: prompt.clone(),
-        created_at_ms: now_ms(),
+        content: prompt,
         thinking: None,
         usage: None,
+    }, sessions, &pending_prompt.recipient).await {
+        send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, &error, sessions, &pending_prompt.recipient).await;
+        return;
+    }
+    if !persist_operation_transition(session_id, &operation_id, &request_id, OperationState::Preparing, sessions, &pending_prompt.recipient).await {
+        return;
+    }
+    let Some(log) = sessions.get(session_id) else {
+        send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, "The claimed operation could not be reloaded", sessions, &pending_prompt.recipient).await;
+        return;
+    };
+    let context = AgentProjection::from_log(&log).model_context(&log, &operation_id);
+    let (events, mut event_receiver) = mpsc::channel(64);
+    let worker = AgentActor::spawn(config.clone(), ToolRegistry::read_only(), tool_context.clone(), events);
+    let forward_commands = commands.clone();
+    let forward_recipient = pending_prompt.recipient.clone();
+    tokio::spawn(async move {
+        while let Some(event) = event_receiver.recv().await {
+            if forward_commands.send(AiSessionCommand::AgentEvent { event, recipient: forward_recipient.clone() }).await.is_err() {
+                break;
+            }
+        }
     });
-    if should_generate_title {
-        let title_request_id = request_id.clone();
-        let title_model = model.clone();
-        let title_prompt = prompt.clone();
-        let title_sessions = sessions.clone();
-        let title_recipient = recipient.clone();
-        tokio::spawn(async move {
-            let result = title_sessions
-                .generate_title(&title_model, &title_prompt)
-                .await;
-            if commands
-                .send(AiSessionCommand::TitleGenerated {
-                    request_id: title_request_id,
-                    result,
-                    recipient: title_recipient,
-                })
-                .await
-                .is_err()
-            {
-                tracing::error!(
-                    "AI session actor stopped before a generated title could be handled"
-                );
-            }
-        });
+    if worker.run_turn(AgentTask {
+        session_id: session_id.to_owned(),
+        operation_id,
+        request_id: request_id.clone(),
+        model_id: pending_prompt.model_id,
+        context,
+    }).await.is_err() {
+        send_failure(session_id, &request_id, AgentFailureCode::AgentExecutionFailed, "The agent worker could not be started", sessions, &pending_prompt.recipient).await;
+        return;
     }
-    let tools = ToolRegistry::read_only();
-    let mut provider_messages = session
-        .messages
-        .iter()
-        .map(|message| OpenAiChatMessage {
-            role: match message.role {
-                ChatRole::User => "user".to_owned(),
-                ChatRole::Assistant => "assistant".to_owned(),
-            },
-            content: Some(message.content.clone()),
-            tool_calls: None,
-            tool_call_id: None,
-        })
-        .collect::<Vec<_>>();
-    let mut operation_usage = AiTokenUsage::default();
-    let mut reported_usage = false;
-    for _round in 0..8 {
-        if !persist_operation_transition(
-            session_id,
-            &operation_id,
-            &request_id,
-            OperationState::ModelInFlight {
-                attempt: (_round + 1) as u32,
-            },
-            &sessions,
-        )
-        .await
-        {
-            return;
-        }
-        let response = match stream_openai_compatible(
-            config,
-            &model.model_id,
-            &provider_messages,
-            &tools,
-            session_id,
-            &request_id,
-            recipient.clone(),
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(message) => {
-                send_failure(
-                    session_id,
-                    &request_id,
-                    AgentFailureCode::ModelStreamFailed,
-                    &message,
-                    &sessions,
-                    &recipient,
-                )
-                .await;
-                return;
-            }
-        };
-        if let Some(usage) = response.usage.as_ref() {
-            operation_usage.add_assign(usage);
-            reported_usage = true;
-        }
-        if !response.tool_calls.is_empty() {
-            if !persist_operation_transition(
-                session_id,
-                &operation_id,
-                &request_id,
-                OperationState::ToolsPlanned {
-                    tool_call_ids: response
-                        .tool_calls
-                        .iter()
-                        .map(|call| call.id.clone())
-                        .collect(),
-                },
-                &sessions,
-            )
-            .await
-            {
-                return;
-            }
-            provider_messages.push(OpenAiChatMessage {
-                role: "assistant".to_owned(),
-                content: (!response.content.is_empty()).then_some(response.content),
-                tool_calls: Some(response.tool_calls.clone()),
-                tool_call_id: None,
-            });
-            for call in response.tool_calls {
-                if !persist_operation_transition(
-                    session_id,
-                    &operation_id,
-                    &request_id,
-                    OperationState::ToolInFlight {
-                        tool_call_id: call.id.clone(),
-                    },
-                    &sessions,
-                )
-                .await
-                {
-                    return;
-                }
-                if call.id.trim().is_empty() || call.function.name.trim().is_empty() {
-                    send_failure(
-                        session_id,
-                        &request_id,
-                        AgentFailureCode::ModelStreamFailed,
-                        "The model emitted a tool call without a stable ID or name",
-                        &sessions,
-                        &recipient,
-                    )
-                    .await;
-                    return;
-                }
-                let arguments = serde_json::from_str(&call.function.arguments)
-                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
-                if let Err(error) = sessions
-                    .append(
-                        session_id,
-                        AiSessionRecord::ToolCall {
-                            version: AI_SESSION_RECORD_VERSION,
-                            tool_call_id: call.id.clone(),
-                            name: call.function.name.clone(),
-                            arguments: arguments.clone(),
-                            created_at_ms: now_ms(),
-                        },
-                    )
-                    .await
-                {
-                    send_failure(
-                        session_id,
-                        &request_id,
-                        AgentFailureCode::StorageWriteFailed,
-                        &error,
-                        &sessions,
-                        &recipient,
-                    )
-                    .await;
-                    return;
-                }
-                session.tool_calls.push(crate::models::AiSessionToolCall {
-                    tool_call_id: call.id.clone(),
-                    name: call.function.name.clone(),
-                    arguments: arguments.clone(),
-                    created_at_ms: now_ms(),
-                });
-                let _ = recipient
-                    .send(ServerMessage::AgentToolStarted {
-                        request_id: request_id.clone(),
-                        conversation_id: session_id.to_owned(),
-                        tool_call_id: call.id.clone(),
-                        name: call.function.name.clone(),
-                        arguments: arguments.clone(),
-                    })
-                    .await;
-                let result = tools
-                    .execute(tool_context.clone(), &call.function.name, arguments)
-                    .await;
-                if result.is_error {
-                    record_internal_failure(
-                        session_id,
-                        AgentFailureCode::ToolExecutionFailed,
-                        format!("tool {} failed: {}", call.function.name, result.content),
-                        &sessions,
-                    )
-                    .await;
-                }
-                if let Err(error) = sessions
-                    .append(
-                        session_id,
-                        AiSessionRecord::ToolResult {
-                            version: AI_SESSION_RECORD_VERSION,
-                            tool_call_id: call.id.clone(),
-                            content: result.content.clone(),
-                            is_error: result.is_error,
-                            created_at_ms: now_ms(),
-                        },
-                    )
-                    .await
-                {
-                    send_failure(
-                        session_id,
-                        &request_id,
-                        AgentFailureCode::StorageWriteFailed,
-                        &error,
-                        &sessions,
-                        &recipient,
-                    )
-                    .await;
-                    return;
-                }
-                session
-                    .tool_results
-                    .push(crate::models::AiSessionToolResult {
-                        tool_call_id: call.id.clone(),
-                        content: result.content.clone(),
-                        is_error: result.is_error,
-                        created_at_ms: now_ms(),
-                    });
-                let _ = recipient
-                    .send(ServerMessage::AgentToolCompleted {
-                        request_id: request_id.clone(),
-                        conversation_id: session_id.to_owned(),
-                        tool_call_id: call.id.clone(),
-                        is_error: result.is_error,
-                    })
-                    .await;
-                provider_messages.push(OpenAiChatMessage {
-                    role: "tool".to_owned(),
-                    content: Some(result.content),
-                    tool_calls: None,
-                    tool_call_id: Some(call.id),
-                });
-            }
-            continue;
-        }
-        {
-            if !response.content.is_empty() || response.thinking.is_some() {
-                if let Err(message) = sessions
-                    .append(
-                        session_id,
-                        AiSessionRecord::Message {
-                            version: AI_SESSION_RECORD_VERSION,
-                            role: ChatRole::Assistant,
-                            content: response.content.clone(),
-                            thinking: response.thinking.clone(),
-                            usage: reported_usage.then(|| operation_usage.clone()),
-                            created_at_ms: now_ms(),
-                        },
-                    )
-                    .await
-                {
-                    send_failure(
-                        session_id,
-                        &request_id,
-                        AgentFailureCode::StorageWriteFailed,
-                        &message,
-                        &sessions,
-                        &recipient,
-                    )
-                    .await;
-                    return;
-                }
-                session.messages.push(ChatMessage {
-                    role: ChatRole::Assistant,
-                    content: response.content,
-                    created_at_ms: now_ms(),
-                    thinking: response.thinking,
-                    usage: reported_usage.then(|| operation_usage.clone()),
-                });
-            }
-            if reported_usage {
-                let _ = recipient
-                    .send(ServerMessage::AgentUsage {
-                        request_id: request_id.clone(),
-                        conversation_id: session_id.to_owned(),
-                        usage: operation_usage,
-                    })
-                    .await;
-            }
-            let _ = persist_operation_transition(
-                session_id,
-                &operation_id,
-                &request_id,
-                OperationState::Completed,
-                &sessions,
-            )
-            .await;
-            recipient
-                .send(ServerMessage::AgentCompleted {
-                    request_id,
-                    conversation_id: session_id.to_owned(),
-                })
-                .await
-                .ok();
-            return;
-        }
-    }
-    send_failure(
-        session_id,
-        &request_id,
-        AgentFailureCode::TranscriptLimit,
-        "The agent exceeded its maximum tool-call rounds",
-        &sessions,
-        &recipient,
-    )
-    .await;
+    runners.insert(request_id, worker);
 }
 
 async fn persist_operation_transition(
@@ -692,6 +523,7 @@ async fn persist_operation_transition(
     request_id: &str,
     state: OperationState,
     sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
 ) -> bool {
     let transition = OperationTransition {
         operation_id: operation_id.to_owned(),
@@ -699,22 +531,99 @@ async fn persist_operation_transition(
         state,
         occurred_at_ms: now_ms(),
     };
-    match sessions
-        .append(
-            session_id,
-            AiSessionRecord::OperationTransition {
-                version: AI_SESSION_RECORD_VERSION,
-                transition,
-            },
-        )
-        .await
+    match append_and_publish(
+        session_id,
+        Some(operation_id),
+        AiSessionEventKind::OperationTransition { transition },
+        sessions,
+        recipient,
+    ).await
     {
-        Ok(()) => true,
+        Ok(_) => true,
         Err(error) => {
             tracing::error!(session_id, operation_id, request_id, %error, "could not persist AI operation transition");
             false
         }
     }
+}
+
+/// The actor that owns the session is the only durable writer. Publishing only
+/// happens after `append` acknowledges the JSONL record, making the event sent
+/// to a client safe to reconcile by its stable ID and sequence.
+async fn append_and_publish(
+    session_id: &str,
+    operation_id: Option<&str>,
+    kind: AiSessionEventKind,
+    sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
+) -> Result<AiSessionEvent, String> {
+    let event = sessions.append(session_id, operation_id, kind).await?;
+    if recipient
+        .send(ServerMessage::AgentSessionEvent {
+            conversation_id: session_id.to_owned(),
+            event: event.clone(),
+        })
+        .await
+        .is_err()
+    {
+        tracing::debug!(session_id, event_id = event.event_id, "AI session event recipient disconnected");
+    }
+    Ok(event)
+}
+
+async fn persist_cancelled_partial(
+    session_id: &str,
+    task: &AgentTask,
+    attempt: Option<u32>,
+    partial_text: String,
+    partial_thinking: String,
+    sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
+) -> bool {
+    if !partial_thinking.trim().is_empty()
+        && append_and_publish(
+            session_id,
+            Some(&task.operation_id),
+            AiSessionEventKind::Reasoning {
+                reasoning_id: attempt.map(|attempt| reasoning_message_id(task, attempt)),
+                content: partial_thinking,
+            },
+            sessions,
+            recipient,
+        )
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    if !partial_text.trim().is_empty()
+        && append_and_publish(
+            session_id,
+            Some(&task.operation_id),
+            AiSessionEventKind::Message {
+                message_id: attempt.map(|attempt| assistant_message_id(task, attempt)),
+                role: ChatRole::Assistant,
+                content: partial_text.trim_start().to_owned(),
+                thinking: None,
+                usage: None,
+            },
+            sessions,
+            recipient,
+        )
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    true
+}
+
+fn assistant_message_id(task: &AgentTask, attempt: u32) -> String {
+    format!("{}:assistant:{attempt}", task.operation_id)
+}
+
+fn reasoning_message_id(task: &AgentTask, attempt: u32) -> String {
+    format!("{}:reasoning:{attempt}", task.operation_id)
 }
 
 async fn send_failure(
@@ -725,45 +634,30 @@ async fn send_failure(
     sessions: &AiSessionService,
     recipient: &mpsc::Sender<ServerMessage>,
 ) {
-    tracing::error!(
-        session_id,
-        request_id,
-        code = code.as_str(),
-        detail,
-        "AI session operation failed"
-    );
-    if let Err(storage_error) = sessions
-        .append(
+    let operation_id = format!("operation-{request_id}");
+    tracing::error!(session_id, request_id, code = code.as_str(), detail, "AI session operation failed");
+    if let Err(storage_error) = append_and_publish(
             session_id,
-            AiSessionRecord::Failure {
-                version: AI_SESSION_RECORD_VERSION,
+            Some(&operation_id),
+            AiSessionEventKind::Failure {
                 code,
                 message: user_error().to_owned(),
                 detail: Some(detail.to_owned()),
-                created_at_ms: now_ms(),
             },
+            sessions,
+            recipient,
         )
         .await
     {
         tracing::error!(session_id, request_id, code = code.as_str(), error = %storage_error, "could not persist AI session failure");
     }
-    let operation_id = format!("operation-{request_id}");
-    let _ = persist_operation_transition(
-        session_id,
-        &operation_id,
-        request_id,
-        OperationState::Failed,
-        sessions,
-    )
-    .await;
-    recipient
-        .send(ServerMessage::AgentError {
-            request_id: request_id.to_owned(),
-            conversation_id: session_id.to_owned(),
-            message: user_error().to_owned(),
-        })
-        .await
-        .ok();
+    let _ = persist_operation_transition(session_id, &operation_id, request_id, OperationState::Failed, sessions, recipient).await;
+    let _ = recipient.send(ServerMessage::AgentError {
+        request_id: request_id.to_owned(),
+        conversation_id: session_id.to_owned(),
+        code: Some(code),
+        message: user_error().to_owned(),
+    }).await;
 }
 
 async fn record_internal_failure(
@@ -771,24 +665,14 @@ async fn record_internal_failure(
     code: AgentFailureCode,
     detail: String,
     sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
 ) {
-    tracing::error!(
-        session_id,
-        code = code.as_str(),
-        detail,
-        "AI session background task failed"
-    );
-    if let Err(storage_error) = sessions
-        .append(
-            session_id,
-            AiSessionRecord::Failure {
-                version: AI_SESSION_RECORD_VERSION,
-                code,
-                message: user_error().to_owned(),
-                detail: Some(detail),
-                created_at_ms: now_ms(),
-            },
-        )
+    tracing::error!(session_id, code = code.as_str(), detail, "AI session background task failed");
+    if let Err(storage_error) = append_and_publish(session_id, None, AiSessionEventKind::Failure {
+            code,
+            message: user_error().to_owned(),
+            detail: Some(detail),
+        }, sessions, recipient)
         .await
     {
         tracing::error!(session_id, code = code.as_str(), error = %storage_error, "could not persist AI session background failure");
@@ -800,24 +684,22 @@ const fn user_error() -> &'static str {
 }
 
 async fn ensure_session<'a>(
-    session: &'a mut Option<AiSession>,
+    session: &'a mut Option<AgentSessionLog>,
     session_id: &str,
     sessions: &AiSessionService,
-) -> Result<&'a mut AiSession, String> {
+) -> Result<&'a mut AgentSessionLog, String> {
     if session.is_none() {
         *session = Some(sessions.open_or_create(session_id).await?);
     }
     Ok(session.as_mut().expect("session was initialized"))
 }
 
-async fn stream_openai_compatible(
+pub(crate) async fn stream_openai_compatible(
     config: &OpenAiCompatibleConfig,
     model_id: &str,
     messages: &[OpenAiChatMessage],
     tools: &ToolRegistry,
-    conversation_id: &str,
-    request_id: &str,
-    sender: mpsc::Sender<ServerMessage>,
+    sender: mpsc::Sender<AgentStreamDelta>,
 ) -> Result<AssistantResponse, String> {
     let endpoint = chat_completions_endpoint(&config.base_url)?;
     let client = reqwest::Client::builder()
@@ -877,6 +759,9 @@ async fn stream_openai_compatible(
                     .filter(|reasoning| !reasoning.is_empty())
                 {
                     thinking.push_str(&reasoning);
+                    if sender.send(AgentStreamDelta::Thinking(reasoning)).await.is_err() {
+                        return Ok(AssistantResponse::new(response_text, thinking));
+                    }
                 }
                 if let Some(text) = choice.delta.content.filter(|text| !text.is_empty()) {
                     let text = if response_text.is_empty() {
@@ -888,15 +773,7 @@ async fn stream_openai_compatible(
                         continue;
                     }
                     response_text.push_str(&text);
-                    if sender
-                        .send(ServerMessage::AgentTextDelta {
-                            conversation_id: conversation_id.to_owned(),
-                            request_id: request_id.to_owned(),
-                            text,
-                        })
-                        .await
-                        .is_err()
-                    {
+                    if sender.send(AgentStreamDelta::Text(text)).await.is_err() {
                         return Ok(AssistantResponse::new(response_text, thinking));
                     }
                 }
@@ -982,10 +859,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let event = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let event = receiver.recv().await.expect("actor response");
+                if matches!(event, ServerMessage::AgentError { .. }) {
+                    return event;
+                }
+            }
+        })
+        .await
+        .unwrap();
         assert!(matches!(
             event,
             ServerMessage::AgentError {

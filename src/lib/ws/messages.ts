@@ -20,6 +20,7 @@ import {
   WorkspaceSymbolParams,
   Range,
 } from "vscode-languageserver-protocol";
+import type { AiSessionEvent } from "@/lib/generated/types.gen";
 
 export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
 export type FileId = string & { readonly __brand: "FileId" };
@@ -231,6 +232,7 @@ export type ClientMessage =
       model_id: string;
       prompt: string;
     }
+  | { kind: "AgentStop"; request_id: string; conversation_id: string }
   | {
       kind: "Ping";
     };
@@ -386,8 +388,10 @@ export type ServerMessage =
       diagnostics: LspDiagnostic[];
     }
   | { kind: "AgentSessionStarted"; request_id: string; conversation_id: string }
+  | { kind: "AgentSessionEvent"; conversation_id: string; event: AiSessionEvent }
   | { kind: "AgentStarted"; request_id: string; conversation_id: string }
-  | { kind: "AgentTextDelta"; request_id: string; conversation_id: string; text: string }
+  | { kind: "AgentTextDelta"; request_id: string; conversation_id: string; message_id: string; text: string }
+  | { kind: "AgentThinkingDelta"; request_id: string; conversation_id: string; reasoning_id: string; text: string }
   | {
       kind: "AgentToolStarted";
       request_id: string;
@@ -411,7 +415,8 @@ export type ServerMessage =
     }
   | { kind: "AgentSessionNamed"; request_id: string; conversation_id: string; title: string }
   | { kind: "AgentCompleted"; request_id: string; conversation_id: string }
-  | { kind: "AgentError"; request_id: string; conversation_id: string; message: string }
+  | { kind: "AgentStopped"; request_id: string; conversation_id: string }
+  | { kind: "AgentError"; request_id: string; conversation_id: string; code?: string; message: string }
   | {
       kind: "Error";
       context?: string;
