@@ -1045,10 +1045,17 @@ fn take_event(buffer: &mut String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
-    use axum::{Router, response::IntoResponse, routing::post};
-    use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
+    use axum::{Router, extract::State, response::IntoResponse, routing::post};
+    use tokio::{net::TcpListener, sync::{Notify, mpsc}, task::JoinHandle};
 
     use super::{AiSessionActor, chat_completions_endpoint, take_event};
     use crate::{
@@ -1057,6 +1064,34 @@ mod tests {
         models::{AiSessionEventKind, AiSessionModel, AssistantResponse, ChatRole, ServerMessage},
         services::ai_session::AiSessionService,
     };
+
+    #[derive(Clone)]
+    struct BlockingFakeModel {
+        calls: Arc<AtomicUsize>,
+        first_request: Arc<Notify>,
+        release_first: Arc<Notify>,
+    }
+
+    impl BlockingFakeModel {
+        fn new() -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                first_request: Arc::new(Notify::new()),
+                release_first: Arc::new(Notify::new()),
+            }
+        }
+    }
+
+    async fn blocking_completions(State(model): State<BlockingFakeModel>) -> impl IntoResponse {
+        if model.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            model.first_request.notify_one();
+            model.release_first.notified().await;
+        }
+        (
+            [("content-type", "text/event-stream")],
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Deterministic response\"}}]}\n\ndata: [DONE]\n\n",
+        )
+    }
 
     async fn fake_model() -> (OpenAiCompatibleConfig, JoinHandle<()>) {
         async fn completions() -> impl IntoResponse {
@@ -1073,6 +1108,24 @@ mod tests {
                 .unwrap();
         });
         (OpenAiCompatibleConfig::for_test(format!("http://{address}/v1")), server)
+    }
+
+    async fn blocking_fake_model() -> (OpenAiCompatibleConfig, BlockingFakeModel, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let model = BlockingFakeModel::new();
+        let server_model = model.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(blocking_completions))
+                    .with_state(server_model),
+            )
+            .await
+            .unwrap();
+        });
+        (OpenAiCompatibleConfig::for_test(format!("http://{address}/v1")), model, server)
     }
 
     async fn wait_for_completion(service: &AiSessionService, session_id: &str) {
@@ -1239,6 +1292,98 @@ mod tests {
         let session = reloaded.get("session").unwrap();
         assert!(session.events.iter().any(|event| matches!(&event.kind, AiSessionEventKind::ToolResult { tool_call_id, is_error: false, .. } if tool_call_id == "call-read")));
         fake_model.abort();
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rapid_prompts_execute_in_durable_operation_order() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-queue-order-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        // Keep title generation out of this test: only the turn runner should
+        // reach the fake completion endpoint.
+        let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        let (config, model, server) = blocking_fake_model().await;
+        let actor = AiSessionActor::spawn(
+            "session".into(), Some(config), sessions.clone(),
+            crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
+        );
+        let (recipient, _messages) = mpsc::channel(256);
+
+        actor.prompt("request-first".into(), "openai-compatible".into(), "test-model".into(), "First prompt".into(), recipient.clone()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), model.first_request.notified()).await.unwrap();
+        actor.prompt("request-second".into(), "openai-compatible".into(), "test-model".into(), "Second prompt".into(), recipient).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if sessions.get("session").is_some_and(|session| session.events.iter().any(|event| {
+                    matches!(&event.kind, AiSessionEventKind::UserMessageQueued { content, .. } if content == "Second prompt")
+                })) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the second prompt should be accepted while the first turn is active");
+        assert_eq!(model.calls.load(Ordering::SeqCst), 1, "the queued prompt must not begin while the first turn owns the runner");
+
+        model.release_first.notify_one();
+        wait_for_completion(&sessions, "session").await;
+        assert_eq!(model.calls.load(Ordering::SeqCst), 2);
+        let session = sessions.get("session").unwrap();
+        let prompts = session.events.iter().filter_map(|event| match &event.kind {
+            AiSessionEventKind::Message { role: ChatRole::User, content, .. } => Some(content.as_str()),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert_eq!(prompts, ["First prompt", "Second prompt"]);
+        assert_eq!(
+            session.operations.iter().map(|operation| operation.operation_sequence).collect::<Vec<_>>(),
+            [1, 2],
+        );
+        server.abort();
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_prompt_writes_a_tombstone_without_executing_it() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-queue-cancel-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
+        let (config, model, server) = blocking_fake_model().await;
+        let actor = AiSessionActor::spawn(
+            "session".into(), Some(config), sessions.clone(),
+            crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
+        );
+        let (recipient, _messages) = mpsc::channel(256);
+
+        actor.prompt("request-first".into(), "openai-compatible".into(), "test-model".into(), "Keep running".into(), recipient.clone()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), model.first_request.notified()).await.unwrap();
+        actor.prompt("request-queued".into(), "openai-compatible".into(), "test-model".into(), "Replace this prompt".into(), recipient.clone()).await.unwrap();
+        actor.stop("request-queued".into(), recipient).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if sessions.get("session").is_some_and(|session| session.events.iter().any(|event| {
+                    matches!(&event.kind, AiSessionEventKind::UserMessageCancelled { message_id, .. } if message_id == "operation-request-queued:user")
+                })) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("queued cancellation should be durable before the active turn settles");
+        assert_eq!(model.calls.load(Ordering::SeqCst), 1);
+
+        model.release_first.notify_one();
+        wait_for_completion(&sessions, "session").await;
+        let session = sessions.get("session").unwrap();
+        assert!(matches!(
+            session.operations.iter().find(|operation| operation.request_id == "request-queued").map(|operation| &operation.state),
+            Some(OperationState::Cancelled { .. })
+        ));
+        assert!(!session.events.iter().any(|event| matches!(
+            &event.kind,
+            AiSessionEventKind::Message { role: ChatRole::User, content, .. } if content == "Replace this prompt"
+        )));
+        assert_eq!(model.calls.load(Ordering::SeqCst), 1);
+        server.abort();
         tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
     }
 

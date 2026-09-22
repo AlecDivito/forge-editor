@@ -468,7 +468,7 @@ fn normalize_title(content: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{replay_session, DEFAULT_SESSION_TITLE};
+    use super::{AiSessionService, replay_session, DEFAULT_SESSION_TITLE};
     use crate::{
         agent::operation::{OperationState, OperationStatus, OperationTransition},
         models::{AI_SESSION_RECORD_VERSION, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, AiSessionRecord, ChatRole},
@@ -514,5 +514,39 @@ mod tests {
         let contents = records.iter().map(serde_json::to_string).collect::<Result<Vec<_>, _>>().unwrap().join("\n") + "\n";
         let session = replay_session("session-1", &contents).unwrap();
         assert_eq!(session.operations[0].status, OperationStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn ignores_only_an_incomplete_final_jsonl_record() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-torn-log-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        let service = AiSessionService::new(sessions_dir.clone(), None).unwrap();
+        service.open_or_create("session").await.unwrap();
+        drop(service);
+
+        let path = sessions_dir.join("session.jsonl");
+        let contents = tokio::fs::read_to_string(&path).await.unwrap();
+        tokio::fs::write(&path, format!("{contents}{{\"version\":"))
+            .await
+            .unwrap();
+
+        let reloaded = AiSessionService::new(sessions_dir.clone(), None)
+            .expect("a torn final write is recoverable");
+        assert_eq!(reloaded.get("session").unwrap().events.len(), 1);
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_corruption_before_the_final_jsonl_record() {
+        let sessions_dir = std::env::temp_dir().join(format!("forge-ai-corrupt-log-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+        tokio::fs::write(sessions_dir.join("session.jsonl"), "not json\n{}\n")
+            .await
+            .unwrap();
+
+        let error = AiSessionService::new(sessions_dir.clone(), None)
+            .expect_err("a corrupt committed record must not be silently replayed");
+        assert!(error.to_string().contains("corrupt"));
+        tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
     }
 }
