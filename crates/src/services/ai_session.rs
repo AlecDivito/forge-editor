@@ -404,7 +404,7 @@ fn apply_event(
                 return Err("The AI session storage has an operation without acceptance".to_owned());
             }
         }
-        AiSessionEventKind::Message { .. } | AiSessionEventKind::Reasoning { .. } | AiSessionEventKind::UserMessageQueued { .. } | AiSessionEventKind::ToolCall { .. }
+        AiSessionEventKind::Message { .. } | AiSessionEventKind::Reasoning { .. } | AiSessionEventKind::UserMessageQueued { .. } | AiSessionEventKind::UserMessageCancelled { .. } | AiSessionEventKind::ModelIntent { .. } | AiSessionEventKind::ToolCall { .. } | AiSessionEventKind::ToolIntent { .. }
         | AiSessionEventKind::ToolResult { .. } | AiSessionEventKind::Failure { .. } => {}
     }
     session.events.push(event_for_projection);

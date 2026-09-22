@@ -38,11 +38,20 @@ export function durableEventsToTranscriptEntries(events: AiSessionEvent[]): Agen
         return [{ id: (kind as { reasoning_id?: string | null }).reasoning_id ?? event.event_id, sequence: event.sequence, operationId, kind: "reasoning", text: kind.content }];
       case "user_message_queued":
         return [{
-          id: event.event_id,
+          id: (kind as { message_id?: string }).message_id ?? event.event_id,
           sequence: event.sequence,
           operationId,
           kind: "pending-message",
-          message: { id: event.event_id, role: "user", text: kind.content, createdAt: event.occurred_at_ms },
+          requestId: operationId?.replace(/^operation-/, "") ?? "",
+          message: { id: (kind as { message_id?: string }).message_id ?? event.event_id, role: "user", text: kind.content, createdAt: event.occurred_at_ms },
+        }];
+      case "user_message_cancelled":
+        return [{
+          id: (kind as { message_id?: string }).message_id ?? event.event_id,
+          sequence: event.sequence,
+          operationId,
+          kind: "pending-cancelled",
+          text: (kind as { reason?: string }).reason ?? "Cancelled before execution",
         }];
       case "tool_call":
         return [{
@@ -106,6 +115,11 @@ export function reduceAgentSessionPresentation(entries: AgentTranscriptEntry[]):
   for (const entry of entries) {
     if (entry.kind === "pending-message") {
       pending.set(entry.operationId ?? entry.id, entry);
+      continue;
+    }
+    if (entry.kind === "pending-cancelled") {
+      pending.delete(entry.operationId ?? entry.id);
+      items.push({ kind: "entry", entry });
       continue;
     }
     if (entry.kind === "message" && entry.message.role === "user") {

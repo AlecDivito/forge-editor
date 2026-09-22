@@ -11,10 +11,13 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
   const { startChat, stopChat } = useAgentChat();
   const { createSession, isCreating } = useCreateAgentSession();
   const conversation = useAgentHarnessStore((state) => state.conversations.find((item) => item.id === conversationId));
+  const queuedEdit = useAgentHarnessStore((state) => state.queuedEdit);
+  const clearQueuedEdit = useAgentHarnessStore((state) => state.clearQueuedEdit);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const attachmentRef = useRef<AgentAttachment[]>([]);
+  const lastQueuedAt = useRef(0);
   useEffect(() => {
     attachmentRef.current = attachments;
   }, [attachments]);
@@ -24,6 +27,11 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
     },
     [],
   );
+  useEffect(() => {
+    if (!queuedEdit) return;
+    setDraft(queuedEdit.content);
+    clearQueuedEdit();
+  }, [clearQueuedEdit, queuedEdit]);
   const addFiles = (files: File[]) => {
     const images = files.filter(isImage).slice(0, Math.max(0, 4 - attachments.length));
     if (images.length)
@@ -65,6 +73,7 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
     const sendPrompt = (id: string) => startChat({ conversationId: id, prompt: text, attachments, model });
     const sent = conversation ? sendPrompt(conversation.id) : createSession(sendPrompt);
     if (!sent) return false;
+    if (conversation?.status !== "idle") lastQueuedAt.current = Date.now();
     setDraft("");
     setAttachments([]);
     return true;
@@ -76,6 +85,13 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
   const stop = () => {
     const requestId = conversation?.activeRequestId;
     return Boolean(conversation && requestId && stopChat(conversation.id, requestId));
+  };
+  const handleEnter = () => {
+    const isDoubleEnter = conversation?.status !== "idle"
+      && !draft.trim()
+      && Date.now() - lastQueuedAt.current < 750;
+    if (isDoubleEnter) return stop();
+    return send();
   };
   return {
     attachments,
@@ -89,6 +105,7 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
     onPaste,
     removeAttachment,
     send,
+    handleEnter,
     setDraft,
     submit,
     stop,

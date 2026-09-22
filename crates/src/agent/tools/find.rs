@@ -25,6 +25,7 @@ impl AgentTool for FindTool {
             }),
             timeout: Duration::from_secs(15),
             max_attempts: 2,
+            replay_class: crate::agent::operation::ToolReplayClass::Safe,
         }
     }
 

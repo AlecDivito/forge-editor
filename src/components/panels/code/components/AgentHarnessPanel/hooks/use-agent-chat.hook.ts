@@ -59,10 +59,20 @@ export function useAgentChat() {
           break;
         case "AgentCompleted":
         case "AgentStopped":
+          if (useAgentHarnessStore.getState().conversations.find((conversation) =>
+            conversation.id === message.conversation_id,
+          )?.activeRequestId !== message.request_id) {
+            break;
+          }
           setConversationStatus(message.conversation_id, "idle");
           setActiveRequestId(message.conversation_id, undefined);
           break;
         case "AgentError":
+          if (useAgentHarnessStore.getState().conversations.find((conversation) =>
+            conversation.id === message.conversation_id,
+          )?.activeRequestId !== message.request_id) {
+            break;
+          }
           clearStreamingRequest(message.conversation_id, message.request_id);
           setConversationStatus(message.conversation_id, "idle");
           setActiveRequestId(message.conversation_id, undefined);
@@ -85,18 +95,23 @@ export function useAgentChat() {
         model_id: model.id,
         prompt,
       })) {
-        return false;
+        return null;
       }
-      return true;
+      return requestId;
     },
     [],
   );
 
-  const stopChat = useCallback(
+  const stopChat = useAgentStop();
+
+  return { startChat, stopChat };
+}
+
+/** Sends an AgentStop command without subscribing to the chat event stream. */
+export function useAgentStop() {
+  return useCallback(
     (conversationId: string, requestId: string) =>
       socket.send({ kind: "AgentStop", conversation_id: conversationId, request_id: requestId }),
     [],
   );
-
-  return { startChat, stopChat };
 }

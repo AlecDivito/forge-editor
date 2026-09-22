@@ -7,7 +7,7 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::{atomic::{Atomic
 use dashmap::DashMap;
 use serde_json::Value;
 
-use crate::{agent::error::AgentFailureCode, models::{FileId, WorkspaceId}};
+use crate::{agent::{error::AgentFailureCode, operation::ToolReplayClass}, models::{FileId, WorkspaceId}};
 
 pub use {find::FindTool, grep::GrepTool, read::ReadTool};
 
@@ -24,6 +24,7 @@ pub struct ToolDescriptor {
     /// Read-only tools are safe to retry after transient errors. Mutating
     /// tools will opt in explicitly when they are added.
     pub max_attempts: u32,
+    pub replay_class: ToolReplayClass,
 }
 
 #[derive(Clone)]
@@ -142,6 +143,10 @@ impl ToolRegistry {
                 }
             })
             .collect()
+    }
+
+    pub fn replay_class(&self, name: &str) -> Option<ToolReplayClass> {
+        self.tools.get(name).map(|tool| tool.descriptor().replay_class)
     }
 
     pub async fn execute(&self, context: ToolContext, name: &str, arguments: Value, cancellation: ToolCancellation) -> ToolResult {

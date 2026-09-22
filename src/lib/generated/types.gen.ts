@@ -96,9 +96,28 @@ export type AiSessionEventKind = {
 } | {
     type: 'user_message_queued';
     content: string;
+    message_id: string;
+} | {
+    type: 'user_message_cancelled';
+    message_id: string;
+    reason: string;
+} | {
+    type: 'model_intent';
+    assistant_message_id: string;
+    attempt: number;
+    model_id: string;
+    reasoning_message_id: string;
+    request_hash: string;
+    turn_id: string;
 } | {
     type: 'tool_call';
     name: string;
+    tool_call_id: string;
+} | {
+    type: 'tool_intent';
+    attempt: number;
+    name: string;
+    replay_class: ToolReplayClass;
     tool_call_id: string;
 } | {
     type: 'tool_result';
@@ -471,12 +490,21 @@ export type OperationState = {
     kind: 'preparing';
 } | {
     attempt: number;
+    kind: 'model_intent';
+    turn_id: string;
+} | {
+    attempt: number;
     kind: 'model_in_flight';
 } | {
     kind: 'tools_planned';
     tool_call_ids: Array<string>;
 } | {
     kind: 'tool_in_flight';
+    tool_call_id: string;
+} | {
+    attempt: number;
+    kind: 'tool_intent';
+    replay_class: ToolReplayClass;
     tool_call_id: string;
 } | {
     kind: 'completed';
@@ -564,6 +592,12 @@ export enum SessionState {
     TERMINATING = 'terminating',
     TERMINATED = 'terminated',
     FAILED = 'failed'
+}
+
+export enum ToolReplayClass {
+    SAFE = 'safe',
+    NEVER = 'never',
+    RECONCILE = 'reconcile'
 }
 
 export type WorkspaceQuery = {

@@ -42,7 +42,8 @@ export type AgentToolActivity = {
 export type AgentTranscriptEntry =
   | { id: string; sequence: number; operationId?: string; kind: "message"; message: AgentMessage }
   | { id: string; sequence: number; operationId?: string; kind: "reasoning"; text: string }
-  | { id: string; sequence: number; operationId?: string; kind: "pending-message"; message: AgentMessage }
+  | { id: string; sequence: number; operationId?: string; kind: "pending-message"; requestId: string; message: AgentMessage }
+  | { id: string; sequence: number; operationId?: string; kind: "pending-cancelled"; text: string }
   | { id: string; sequence: number; operationId?: string; kind: "tool-call"; activity: AgentToolActivity }
   | { id: string; sequence: number; operationId?: string; kind: "tool-result"; toolCallId: string; text: string; isError: boolean }
   | { id: string; sequence: number; operationId?: string; kind: "failure"; text: string }

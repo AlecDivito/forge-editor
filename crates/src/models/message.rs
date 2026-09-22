@@ -276,8 +276,31 @@ pub enum AiSessionEventKind {
         reasoning_id: Option<String>,
         content: String,
     },
-    UserMessageQueued { content: String },
+    UserMessageQueued { message_id: String, content: String },
+    /// Tombstone for a queued prompt that was edited or explicitly cancelled
+    /// before the scheduler made it model-visible.
+    UserMessageCancelled { message_id: String, reason: String },
+    /// A provider request is durably identified before it is sent. The
+    /// request hash identifies its committed context without persisting a
+    /// second mutable transcript.
+    ModelIntent {
+        turn_id: String,
+        attempt: u32,
+        model_id: String,
+        request_hash: String,
+        assistant_message_id: String,
+        reasoning_message_id: String,
+    },
     ToolCall { tool_call_id: String, name: String, arguments: Value },
+    /// Exact normalized arguments and replay policy are committed before a
+    /// tool begins an external effect.
+    ToolIntent {
+        tool_call_id: String,
+        name: String,
+        arguments: Value,
+        attempt: u32,
+        replay_class: crate::agent::operation::ToolReplayClass,
+    },
     ToolResult { tool_call_id: String, content: String, is_error: bool },
     Failure {
         #[serde(default)]

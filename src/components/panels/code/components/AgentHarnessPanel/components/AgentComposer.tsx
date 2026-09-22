@@ -64,7 +64,7 @@ export function AgentComposer() {
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              composer.send();
+              composer.handleEnter();
             }
           }}
           placeholder="Ask about your workspace"

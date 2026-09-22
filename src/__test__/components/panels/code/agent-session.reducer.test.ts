@@ -42,7 +42,7 @@ describe("agent session presentation reducer", () => {
         sequence: 2,
         operation_id: "operation-2",
         occurred_at_ms: 2,
-        kind: { type: "user_message_queued" as const, content: "Then summarize" },
+        kind: { type: "user_message_queued" as const, message_id: "queued", content: "Then summarize" },
       },
     ] satisfies AiSessionEvent[]).reduce(applyDurableSessionEvent, [] as AiSessionEvent[]);
 
@@ -74,5 +74,30 @@ describe("agent session presentation reducer", () => {
       kind: "message",
       message: { id: "operation-1:assistant:1", text: "Completed response" },
     }]);
+  });
+
+  it("replaces a queued prompt with its durable cancellation tombstone", () => {
+    const events: AiSessionEvent[] = [
+      {
+        event_id: "queued-event",
+        sequence: 1,
+        operation_id: "operation-request",
+        occurred_at_ms: 1,
+        kind: { type: "user_message_queued", message_id: "queued-message", content: "Old wording" },
+      },
+      {
+        event_id: "cancelled-event",
+        sequence: 2,
+        operation_id: "operation-request",
+        occurred_at_ms: 2,
+        kind: { type: "user_message_cancelled", message_id: "queued-message", reason: "Cancelled before execution" },
+      },
+    ];
+
+    const presentation = reduceAgentSessionPresentation(durableEventsToTranscriptEntries(events));
+    expect(presentation.pendingMessages).toHaveLength(0);
+    expect(presentation.items).toMatchObject([
+      { kind: "entry", entry: { kind: "pending-cancelled", id: "queued-message" } },
+    ]);
   });
 });

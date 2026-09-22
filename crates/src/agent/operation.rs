@@ -28,15 +28,27 @@ pub enum OperationStatus {
     Complete,
 }
 
+/// Whether an external tool effect may be repeated after Forge lost the
+/// settlement boundary. This is durable policy, not an implementation detail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolReplayClass {
+    Safe,
+    Never,
+    Reconcile,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationState {
     Accepted,
     Queued,
     Preparing,
+    ModelIntent { turn_id: String, attempt: u32 },
     ModelInFlight { attempt: u32 },
     ToolsPlanned { tool_call_ids: Vec<String> },
     ToolInFlight { tool_call_id: String },
+    ToolIntent { tool_call_id: String, attempt: u32, replay_class: ToolReplayClass },
     Completed,
     Failed,
     Cancelled { reason: String },

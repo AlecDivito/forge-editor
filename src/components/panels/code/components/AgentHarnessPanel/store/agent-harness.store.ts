@@ -20,6 +20,9 @@ type AgentHarnessState = {
   appendStreamingText: (conversationId: string, requestId: string, messageId: string, text: string) => void;
   appendStreamingReasoning: (conversationId: string, requestId: string, reasoningId: string, text: string) => void;
   clearStreamingRequest: (conversationId: string, requestId: string) => void;
+  queuedEdit: { requestId: string; content: string } | null;
+  editQueuedPrompt: (requestId: string, content: string) => void;
+  clearQueuedEdit: () => void;
   hydrateSession: (conversation: AgentConversation) => void;
 };
 
@@ -123,6 +126,9 @@ export const useAgentHarnessStore = create<AgentHarnessState>((set) => ({
         return { ...conversation, streaming };
       }),
     })),
+  queuedEdit: null,
+  editQueuedPrompt: (requestId, content) => set({ queuedEdit: { requestId, content } }),
+  clearQueuedEdit: () => set({ queuedEdit: null }),
   hydrateSession: (conversation) =>
     set((state) => {
       const exists = state.conversations.some((item) => item.id === conversation.id);

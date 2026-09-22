@@ -21,6 +21,7 @@ import { Brain, Loader2, Wrench } from "lucide-react";
 import { ToolActivityTimeline } from "./ToolActivityTimeline";
 import { durableEventsToTranscriptEntries, reduceAgentSessionPresentation } from "../store/agent-session.reducer";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
+import { useAgentStop } from "../hooks/use-agent-chat.hook";
 import { AgentMessage, AgentTranscriptEntry } from "../types/agent-harness.types";
 
 function formatTokens(tokens: number) {
@@ -112,6 +113,8 @@ function DurableEntry({ entry }: { entry: AgentTranscriptEntry }) {
       );
     case "failure":
       return <Marker variant="border" className="px-3 py-2 text-xs text-destructive"><MarkerContent>{entry.text}</MarkerContent></Marker>;
+    case "pending-cancelled":
+      return <Marker className="px-3 py-2 text-xs text-muted-foreground"><MarkerContent>Queued message cancelled: {entry.text}</MarkerContent></Marker>;
     case "status":
       return <Marker className="px-3 py-1 text-[10px] text-muted-foreground"><MarkerContent>{entry.text}</MarkerContent></Marker>;
   }
@@ -122,6 +125,8 @@ export function ConversationTranscript() {
   const conversation = useAgentHarnessStore((state) =>
     state.conversations.find((item) => item.id === activeConversationId),
   );
+  const editQueuedPrompt = useAgentHarnessStore((state) => state.editQueuedPrompt);
+  const stopChat = useAgentStop();
   const isWorking = conversation?.status !== undefined && conversation.status !== "idle";
   const presentation = reduceAgentSessionPresentation([
     ...durableEventsToTranscriptEntries(conversation?.events ?? []),
@@ -162,8 +167,19 @@ export function ConversationTranscript() {
               entry.kind === "pending-message" ? (
                 <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor>
                   <div className="space-y-1.5 opacity-60">
-                    <div className="text-right text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Queued
+                    <div className="flex justify-end gap-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      <span>Queued</span>
+                      <button
+                        type="button"
+                        className="hover:text-foreground"
+                        onClick={() => {
+                          if (!conversation || !entry.requestId) return;
+                          if (stopChat(conversation.id, entry.requestId)) {
+                            editQueuedPrompt(entry.requestId, entry.message.text);
+                          }
+                        }}>
+                        Edit
+                      </button>
                     </div>
                     <TranscriptMessage message={entry.message} />
                   </div>

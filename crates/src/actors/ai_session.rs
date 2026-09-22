@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     agent::error::AgentFailureCode,
-    agent::operation::{OperationState, OperationStatus, OperationTransition},
+    agent::operation::{OperationState, OperationStatus, OperationTransition, ToolReplayClass},
     agent::session::reducer::AgentProjection,
     agent::tools::{ToolContext, ToolRegistry},
     actors::AgentActor,
@@ -94,7 +94,10 @@ impl AiSessionActor {
                             sender
                         });
                         let outcome = ensure_session(&mut session, &session_id, &sessions).await;
-                        if let Ok(log) = &outcome {
+                        if outcome.is_ok() && runners.is_empty() {
+                            recover_uncertain_effects(&session_id, &sessions, &recovery_recipient).await;
+                        }
+                        if let Some(log) = sessions.get(&session_id) {
                             // A reconnect receives the same committed records
                             // available from the REST restore route. The UI can
                             // replace by event_id, so this is safe alongside a
@@ -108,7 +111,7 @@ impl AiSessionActor {
                                     break;
                                 }
                             }
-                            restore_pending_prompts(log, &recovery_recipient, &mut pending);
+                            restore_pending_prompts(&log, &recovery_recipient, &mut pending);
                             if let Some(config) = config.as_ref() {
                                 start_next_operation(
                                     &session_id, config, &sessions, &tool_context,
@@ -283,6 +286,32 @@ impl AiSessionActor {
                                 }).await;
                             }
                             AgentActorEvent::ModelStarted { task, attempt } => {
+                                let turn_id = model_turn_id(&task, attempt);
+                                let request_hash = format!("{}:{}:{}:{}", task.operation_id, task.model_id, attempt, task.context.len());
+                                if let Err(error) = append_and_publish(
+                                    &session_id,
+                                    Some(&task.operation_id),
+                                    AiSessionEventKind::ModelIntent {
+                                        turn_id: turn_id.clone(),
+                                        attempt,
+                                        model_id: task.model_id.clone(),
+                                        request_hash,
+                                        assistant_message_id: assistant_message_id(&task, attempt),
+                                        reasoning_message_id: reasoning_message_id(&task, attempt),
+                                    },
+                                    &sessions,
+                                    &recipient,
+                                ).await {
+                                    send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                    continue;
+                                }
+                                if !persist_operation_transition(
+                                    &session_id, &task.operation_id, &task.request_id,
+                                    OperationState::ModelIntent { turn_id, attempt },
+                                    &sessions, &recipient,
+                                ).await {
+                                    continue;
+                                }
                                 let _ = persist_operation_transition(
                                     &session_id,
                                     &task.operation_id,
@@ -321,6 +350,30 @@ impl AiSessionActor {
                             }
                             AgentActorEvent::ToolStarted { task, call } => {
                                 let arguments = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
+                                let replay_class = ToolRegistry::read_only().replay_class(&call.function.name).unwrap_or(ToolReplayClass::Never);
+                                if let Err(error) = append_and_publish(
+                                    &session_id,
+                                    Some(&task.operation_id),
+                                    AiSessionEventKind::ToolIntent {
+                                        tool_call_id: call.id.clone(),
+                                        name: call.function.name.clone(),
+                                        arguments: arguments.clone(),
+                                        attempt: 1,
+                                        replay_class,
+                                    },
+                                    &sessions,
+                                    &recipient,
+                                ).await {
+                                    send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
+                                    continue;
+                                }
+                                if !persist_operation_transition(
+                                    &session_id, &task.operation_id, &task.request_id,
+                                    OperationState::ToolIntent { tool_call_id: call.id.clone(), attempt: 1, replay_class },
+                                    &sessions, &recipient,
+                                ).await {
+                                    continue;
+                                }
                                 let _ = persist_operation_transition(&session_id, &task.operation_id, &task.request_id, OperationState::ToolInFlight { tool_call_id: call.id.clone() }, &sessions, &recipient).await;
                                 let _ = recipient.send(ServerMessage::AgentToolStarted { request_id: task.request_id, conversation_id: session_id.clone(), tool_call_id: call.id, name: call.function.name, arguments }).await;
                             }
@@ -403,6 +456,19 @@ impl AiSessionActor {
                             worker.stop().await;
                         } else if pending.remove(&request_id).is_some() {
                             let operation_id = format!("operation-{request_id}");
+                            let queued_message_id = queued_message_id(&operation_id);
+                            if let Err(error) = append_and_publish(
+                                &session_id,
+                                Some(&operation_id),
+                                AiSessionEventKind::UserMessageCancelled {
+                                    message_id: queued_message_id,
+                                    reason: "Cancelled before execution".into(),
+                                },
+                                &sessions,
+                                &recipient,
+                            ).await {
+                                tracing::error!(session_id, request_id, %error, "could not persist queued message cancellation tombstone");
+                            }
                             let _ = persist_operation_transition(
                                 &session_id,
                                 &operation_id,
@@ -486,7 +552,10 @@ async fn accept_prompt(
     match append_and_publish(
         session_id,
         Some(&operation_id),
-        AiSessionEventKind::UserMessageQueued { content: prompt.to_owned() },
+        AiSessionEventKind::UserMessageQueued {
+            message_id: queued_message_id(&operation_id),
+            content: prompt.to_owned(),
+        },
         sessions,
         recipient,
     ).await {
@@ -496,6 +565,48 @@ async fn accept_prompt(
             false
         }
     }
+}
+
+/// A provider request can have reached the remote backend even if Forge never
+/// received its settlement. Do not issue it again on replay. A safe tool is
+/// different: its durable intent explicitly authorizes a repeat.
+async fn recover_uncertain_effects(
+    session_id: &str,
+    sessions: &AiSessionService,
+    recipient: &mpsc::Sender<ServerMessage>,
+) {
+    let Some(log) = sessions.get(session_id) else { return };
+    let interrupted = log.operations.iter().filter_map(|operation| match &operation.state {
+        OperationState::ModelIntent { .. } | OperationState::ModelInFlight { .. } => Some((
+            operation.operation_id.clone(), operation.request_id.clone(),
+            "Forge restarted while a model request was in flight".to_owned(),
+        )),
+        OperationState::ToolIntent { tool_call_id, replay_class, .. }
+            if *replay_class != ToolReplayClass::Safe => Some((
+            operation.operation_id.clone(), operation.request_id.clone(),
+            format!("Forge restarted while non-replayable tool {tool_call_id} was in flight"),
+        )),
+        OperationState::ToolInFlight { tool_call_id }
+            if tool_replay_class(&log, &operation.operation_id, tool_call_id) != Some(ToolReplayClass::Safe) => Some((
+                operation.operation_id.clone(), operation.request_id.clone(),
+                format!("Forge restarted while non-replayable tool {tool_call_id} was in flight"),
+            )),
+        _ => None,
+    }).collect::<Vec<_>>();
+    for (operation_id, request_id, reason) in interrupted {
+        tracing::warn!(session_id, operation_id, request_id, %reason, "interrupted uncertain agent effect during recovery");
+        let _ = persist_operation_transition(
+            session_id, &operation_id, &request_id, OperationState::Interrupted { reason }, sessions, recipient,
+        ).await;
+    }
+}
+
+fn tool_replay_class(log: &AgentSessionLog, operation_id: &str, tool_call_id: &str) -> Option<ToolReplayClass> {
+    log.events.iter().rev().find_map(|event| match &event.kind {
+        AiSessionEventKind::ToolIntent { tool_call_id: id, replay_class, .. }
+            if event.operation_id.as_deref() == Some(operation_id) && id == tool_call_id => Some(*replay_class),
+        _ => None,
+    })
 }
 
 /// Claims the oldest durably accepted prompt only when no agent owns the
@@ -551,7 +662,7 @@ async fn start_next_operation(
     let Some(pending_prompt) = pending.remove(&request_id) else { return };
     let Some(prompt) = log.events.iter().find_map(|event| {
         (event.operation_id.as_deref() == Some(operation_id.as_str())).then(|| match &event.kind {
-            AiSessionEventKind::UserMessageQueued { content } => Some(content.clone()),
+            AiSessionEventKind::UserMessageQueued { content, .. } => Some(content.clone()),
             _ => None,
         }).flatten()
     }) else {
@@ -722,6 +833,14 @@ fn assistant_message_id(task: &AgentTask, attempt: u32) -> String {
 
 fn reasoning_message_id(task: &AgentTask, attempt: u32) -> String {
     format!("{}:reasoning:{attempt}", task.operation_id)
+}
+
+fn model_turn_id(task: &AgentTask, attempt: u32) -> String {
+    format!("{}:turn:{attempt}", task.operation_id)
+}
+
+fn queued_message_id(operation_id: &str) -> String {
+    format!("{operation_id}:user")
 }
 
 async fn send_failure(
@@ -933,7 +1052,7 @@ mod tests {
 
     use super::{AiSessionActor, chat_completions_endpoint, take_event};
     use crate::{
-        agent::operation::{OperationState, OperationStatus, OperationTransition},
+        agent::operation::{OperationState, OperationStatus, OperationTransition, ToolReplayClass},
         config::OpenAiCompatibleConfig,
         models::{AiSessionEventKind, AiSessionModel, AssistantResponse, ChatRole, ServerMessage},
         services::ai_session::AiSessionService,
@@ -979,7 +1098,7 @@ mod tests {
         service.append(session_id, Some(operation_id), AiSessionEventKind::ModelSelected {
             model: AiSessionModel { provider: "openai-compatible".into(), model_id: "test-model".into() },
         }).await.unwrap();
-        service.append(session_id, Some(operation_id), AiSessionEventKind::UserMessageQueued { content: "Inspect the project".into() }).await.unwrap();
+        service.append(session_id, Some(operation_id), AiSessionEventKind::UserMessageQueued { message_id: "queued-message".into(), content: "Inspect the project".into() }).await.unwrap();
         service.append(session_id, Some(operation_id), AiSessionEventKind::Message {
             message_id: None, role: ChatRole::User, content: "Inspect the project".into(), thinking: None, usage: None,
         }).await.unwrap();
@@ -1059,7 +1178,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_restart_resumes_a_waiting_model_turn_from_jsonl() {
+    async fn server_restart_interrupts_an_uncertain_model_request_without_replaying_it() {
         let sessions_dir = std::env::temp_dir().join(format!("forge-ai-recovery-test-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
         let service = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
@@ -1078,7 +1197,8 @@ mod tests {
         actor.recover().await.unwrap();
         wait_for_completion(&reloaded, "session").await;
         let session = reloaded.get("session").unwrap();
-        assert!(session.events.iter().any(|event| matches!(&event.kind, AiSessionEventKind::Message { role: ChatRole::Assistant, content, .. } if content == "Recovered response")));
+        assert!(matches!(session.operations[0].state, OperationState::Interrupted { .. }));
+        assert!(!session.events.iter().any(|event| matches!(&event.kind, AiSessionEventKind::Message { role: ChatRole::Assistant, .. })));
         fake_model.abort();
         tokio::fs::remove_dir_all(sessions_dir).await.unwrap();
     }
@@ -1095,6 +1215,16 @@ mod tests {
         append_waiting_prompt(&service, "session", OperationState::ToolsPlanned { tool_call_ids: vec!["call-read".into()] }).await;
         service.append("session", Some("operation-request"), AiSessionEventKind::ToolCall {
             tool_call_id: "call-read".into(), name: "read".into(), arguments: serde_json::json!({ "path": "main.go" }),
+        }).await.unwrap();
+        service.append("session", Some("operation-request"), AiSessionEventKind::ToolIntent {
+            tool_call_id: "call-read".into(), name: "read".into(), arguments: serde_json::json!({ "path": "main.go" }),
+            attempt: 1, replay_class: ToolReplayClass::Safe,
+        }).await.unwrap();
+        service.append("session", Some("operation-request"), AiSessionEventKind::OperationTransition {
+            transition: OperationTransition {
+                operation_id: "operation-request".into(), request_id: "request".into(),
+                state: OperationState::ToolInFlight { tool_call_id: "call-read".into() }, occurred_at_ms: 3,
+            },
         }).await.unwrap();
         drop(service);
 
