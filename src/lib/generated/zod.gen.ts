@@ -4,6 +4,11 @@ import * as z from 'zod';
 
 import { AgentFailureCode, ChatRole, FsFileType, OperationStatus, SessionState, ToolReplayClass } from './types.gen';
 
+export const zAgentAttachmentPath = z.object({
+    attachment_id: z.string(),
+    session_id: z.string()
+});
+
 export const zAgentFailureCode = z.enum(AgentFailureCode);
 
 export const zAgentModelDescriptor = z.object({
@@ -23,6 +28,15 @@ export const zAgentSessionPath = z.object({
 
 export const zAgentSessionSearchQuery = z.object({
     query: z.string().nullish()
+});
+
+export const zAiSessionAttachment = z.object({
+    attachment_id: z.string(),
+    byte_size: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    filename: z.string(),
+    media_type: z.string(),
+    object_key: z.string(),
+    sha256: z.string().nullish()
 });
 
 export const zAiSessionModel = z.object({
@@ -51,6 +65,15 @@ export const zAiTokenUsage = z.object({
 });
 
 export const zChatRole = z.enum(ChatRole);
+
+export const zCompleteAgentAttachment = z.object({
+    etag: z.string().nullish()
+});
+
+export const zCompletedAgentAttachment = z.object({
+    attachment_id: z.string(),
+    etag: z.string().nullish()
+});
 
 export const zCreateSession = z.object({
     activeFileId: z.string().nullish(),
@@ -252,6 +275,19 @@ export const zFsListDirectory = z.object({
     parent: z.string()
 });
 
+export const zPrepareAgentAttachment = z.object({
+    byte_size: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+    filename: z.string(),
+    media_type: z.string(),
+    sha256: z.string().nullish()
+});
+
+export const zPreparedAgentAttachment = z.object({
+    attachment: zAiSessionAttachment,
+    session_id: z.string(),
+    upload_url: z.string()
+});
+
 export const zPublicCapabilities = z.object({
     integratedTerminal: z.boolean()
 });
@@ -400,6 +436,7 @@ export const zAiSessionEventKind = z.union([
     }),
     z.object({
         type: z.literal('message'),
+        attachment_ids: z.array(z.string()).optional(),
         content: z.string(),
         message_id: z.string().nullish(),
         role: zChatRole,
@@ -413,12 +450,27 @@ export const zAiSessionEventKind = z.union([
     }),
     z.object({
         type: z.literal('user_message_queued'),
+        attachment_ids: z.array(z.string()).optional(),
         content: z.string(),
         message_id: z.string()
     }),
     z.object({
         type: z.literal('user_message_cancelled'),
         message_id: z.string(),
+        reason: z.string()
+    }),
+    z.object({
+        type: z.literal('attachment_prepared'),
+        attachment: zAiSessionAttachment
+    }),
+    z.object({
+        type: z.literal('attachment_uploaded'),
+        attachment_id: z.string(),
+        etag: z.string().nullish()
+    }),
+    z.object({
+        type: z.literal('attachment_abandoned'),
+        attachment_id: z.string(),
         reason: z.string()
     }),
     z.object({
@@ -499,6 +551,44 @@ export const zGetSessionPath = z.object({
  * The complete durable operation log
  */
 export const zGetSessionResponse = zAgentSessionLog;
+
+export const zPrepareAttachmentBody = zPrepareAgentAttachment;
+
+export const zPrepareAttachmentPath = z.object({
+    session_id: z.string()
+});
+
+/**
+ * Durable attachment metadata and a direct upload URL
+ */
+export const zPrepareAttachmentResponse = zPreparedAgentAttachment;
+
+export const zCompleteAttachmentBody = zCompleteAgentAttachment;
+
+export const zCompleteAttachmentPath = z.object({
+    attachment_id: z.string(),
+    session_id: z.string()
+});
+
+/**
+ * The durable uploaded attachment
+ */
+export const zCompleteAttachmentResponse = zCompletedAgentAttachment;
+
+export const zDownloadAttachmentPath = z.object({
+    attachment_id: z.string(),
+    session_id: z.string()
+});
+
+export const zAbandonAttachmentPath = z.object({
+    attachment_id: z.string(),
+    session_id: z.string()
+});
+
+/**
+ * The attachment was abandoned
+ */
+export const zAbandonAttachmentResponse = z.void();
 
 export const zListFilesQuery = z.object({
     workspace_id: z.string(),

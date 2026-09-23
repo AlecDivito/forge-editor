@@ -140,6 +140,7 @@ mod tests {
                 content: "first".into(),
                 thinking: None,
                 usage: None,
+                attachment_ids: Vec::new(),
             } } }])
             .await
             .unwrap();
@@ -152,6 +153,7 @@ mod tests {
                 content: "second".into(),
                 thinking: None,
                 usage: None,
+                attachment_ids: Vec::new(),
             } } }])
             .await
             .unwrap();

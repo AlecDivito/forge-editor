@@ -129,7 +129,7 @@ export function ConversationTranscript() {
   const stopChat = useAgentStop();
   const isWorking = conversation?.status !== undefined && conversation.status !== "idle";
   const presentation = reduceAgentSessionPresentation([
-    ...durableEventsToTranscriptEntries(conversation?.events ?? []),
+    ...durableEventsToTranscriptEntries(conversation?.events ?? [], conversation?.id),
     ...Object.values(conversation?.streaming ?? {}),
   ]);
   return (

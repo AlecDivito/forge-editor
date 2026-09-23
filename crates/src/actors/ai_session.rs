@@ -12,10 +12,10 @@ use crate::{
     config::OpenAiCompatibleConfig,
     models::{
         AgentActorEvent, AgentSessionLog, AgentStreamDelta, AgentTask, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, AiSessionModel,
-        AssistantResponse, ChatCompletionChunk, ChatCompletionRequest,
+        AiSessionAttachment, AssistantResponse, ChatCompletionChunk, ChatCompletionRequest, CompleteAgentAttachment, CompletedAgentAttachment, PrepareAgentAttachment, PreparedAgentAttachment,
         ChatRole, OpenAiChatMessage, OpenAiToolCall, OpenAiToolCallFunction, ServerMessage,
     },
-    services::ai_session::AiSessionService,
+    services::{ai_session::AiSessionService, attachments::AttachmentStore},
     util::time::now_ms,
 };
 
@@ -41,6 +41,7 @@ enum AiSessionCommand {
         provider: String,
         model_id: String,
         prompt: String,
+        attachment_ids: Vec<String>,
         recipient: mpsc::Sender<ServerMessage>,
     },
     TitleGenerated {
@@ -56,6 +57,23 @@ enum AiSessionCommand {
         event: AgentActorEvent,
         recipient: mpsc::Sender<ServerMessage>,
     },
+    PrepareAttachment {
+        request: PrepareAgentAttachment,
+        result: oneshot::Sender<anyhow::Result<PreparedAgentAttachment>>,
+    },
+    CompleteAttachment {
+        attachment_id: String,
+        request: CompleteAgentAttachment,
+        result: oneshot::Sender<anyhow::Result<CompletedAgentAttachment>>,
+    },
+    AbandonAttachment {
+        attachment_id: String,
+        result: oneshot::Sender<anyhow::Result<()>>,
+    },
+    AttachmentDownloadUrl {
+        attachment_id: String,
+        result: oneshot::Sender<anyhow::Result<String>>,
+    },
 }
 
 struct PendingPrompt {
@@ -68,6 +86,7 @@ impl AiSessionActor {
         session_id: String,
         config: Option<OpenAiCompatibleConfig>,
         sessions: Arc<AiSessionService>,
+        attachments: Arc<AttachmentStore>,
         tool_context: ToolContext,
     ) -> Arc<Self> {
         let (commands, mut receiver) = mpsc::channel(8);
@@ -114,7 +133,7 @@ impl AiSessionActor {
                             restore_pending_prompts(&log, &recovery_recipient, &mut pending);
                             if let Some(config) = config.as_ref() {
                                 start_next_operation(
-                                    &session_id, config, &sessions, &tool_context,
+                                    &session_id, config, &sessions, &attachments, &tool_context,
                                     &actor_commands, &mut pending, &mut runners,
                                 ).await;
                             }
@@ -126,6 +145,7 @@ impl AiSessionActor {
                         provider,
                         model_id,
                         prompt,
+                        attachment_ids,
                         recipient,
                     } => {
                         live_recipient = Some(recipient.clone());
@@ -146,7 +166,7 @@ impl AiSessionActor {
                                 continue;
                             }
                         };
-                        if !accept_prompt(&session_id, &request_id, &prompt, &sessions, &recipient).await {
+                        if !accept_prompt(&session_id, &request_id, &prompt, attachment_ids, &sessions, &recipient).await {
                             let _ = recipient.send(ServerMessage::AgentError { request_id, conversation_id: session_id.clone(), code: Some(AgentFailureCode::StorageWriteFailed), message: user_error().to_owned() }).await;
                             continue;
                         }
@@ -192,6 +212,7 @@ impl AiSessionActor {
                             &session_id,
                             config,
                             &sessions,
+                            &attachments,
                             &tool_context,
                             &actor_commands,
                             &mut pending,
@@ -257,6 +278,104 @@ impl AiSessionActor {
                                 .await;
                             }
                         }
+                    }
+                    AiSessionCommand::PrepareAttachment { request, result } => {
+                        let outcome = async {
+                            ensure_session(&mut session, &session_id, &sessions).await.map_err(anyhow::Error::msg)?;
+                            let (metadata, prepared) = attachments
+                                .prepare(&session_id, request.filename, request.media_type, request.byte_size, request.sha256)
+                                .await?;
+                            let attachment = AiSessionAttachment {
+                                attachment_id: metadata.attachment_id,
+                                object_key: metadata.object_key,
+                                filename: metadata.filename,
+                                media_type: metadata.media_type,
+                                byte_size: metadata.byte_size,
+                                sha256: metadata.sha256,
+                            };
+                            // This actor is the only session writer. The upload
+                            // URL is issued only after durable preparation.
+                            let event = sessions.append(&session_id, None, AiSessionEventKind::AttachmentPrepared { attachment: attachment.clone() }).await.map_err(anyhow::Error::msg)?;
+                            session = sessions.get(&session_id);
+                            if let Some(recipient) = live_recipient.as_ref() {
+                                let _ = recipient.send(ServerMessage::AgentSessionEvent { conversation_id: session_id.clone(), event }).await;
+                            }
+                            Ok(PreparedAgentAttachment { session_id: session_id.clone(), attachment, upload_url: prepared.upload_url })
+                        }.await;
+                        if let Err(error) = &outcome {
+                            tracing::error!(session_id, %error, "could not prepare AI session attachment");
+                        }
+                        let _ = result.send(outcome);
+                    }
+                    AiSessionCommand::CompleteAttachment { attachment_id, request, result } => {
+                        let outcome = async {
+                            let log = ensure_session(&mut session, &session_id, &sessions).await.map_err(anyhow::Error::msg)?;
+                            let attachment = attachment_from_log(log, &attachment_id)
+                                .ok_or_else(|| anyhow::anyhow!("attachment was not prepared for this session"))?;
+                            if attachment_is_terminal(log, &attachment_id) {
+                                return Err(anyhow::anyhow!("attachment is no longer uploadable"));
+                            }
+                            let verified_etag = attachments.verify_uploaded(&attachment_metadata(&attachment)).await?;
+                            if let (Some(expected), Some(actual)) = (request.etag.as_deref(), verified_etag.as_deref()) {
+                                if expected.trim_matches('"') != actual.trim_matches('"') {
+                                    return Err(anyhow::anyhow!("uploaded attachment ETag does not match"));
+                                }
+                            }
+                            let event = sessions.append(&session_id, None, AiSessionEventKind::AttachmentUploaded { attachment_id: attachment_id.clone(), etag: verified_etag.clone() }).await.map_err(anyhow::Error::msg)?;
+                            session = sessions.get(&session_id);
+                            if let Some(recipient) = live_recipient.as_ref() {
+                                let _ = recipient.send(ServerMessage::AgentSessionEvent { conversation_id: session_id.clone(), event }).await;
+                            }
+                            Ok(CompletedAgentAttachment { attachment_id: attachment_id.clone(), etag: verified_etag })
+                        }.await;
+                        if let Err(error) = &outcome {
+                            tracing::error!(session_id, attachment_id, %error, "could not complete AI session attachment");
+                        }
+                        let _ = result.send(outcome);
+                    }
+                    AiSessionCommand::AbandonAttachment { attachment_id, result } => {
+                        let outcome = async {
+                            let log = ensure_session(&mut session, &session_id, &sessions).await.map_err(anyhow::Error::msg)?;
+                            let attachment = attachment_from_log(log, &attachment_id)
+                                .ok_or_else(|| anyhow::anyhow!("attachment was not prepared for this session"))?;
+                            if attachment_is_terminal(log, &attachment_id) {
+                                return Ok(());
+                            }
+                            // Make removal durable before attempting remote cleanup. A
+                            // failed delete can be collected later; an unrecorded
+                            // tombstone would let a removed image re-enter a prompt.
+                            let event = sessions.append(&session_id, None, AiSessionEventKind::AttachmentAbandoned { attachment_id: attachment_id.clone(), reason: "Removed from the composer".into() }).await.map_err(anyhow::Error::msg)?;
+                            session = sessions.get(&session_id);
+                            if let Some(recipient) = live_recipient.as_ref() {
+                                let _ = recipient.send(ServerMessage::AgentSessionEvent { conversation_id: session_id.clone(), event }).await;
+                            }
+                            if let Err(error) = attachments.abandon(&attachment.object_key).await {
+                                tracing::error!(session_id, attachment_id, %error, "durably abandoned attachment could not be deleted from object storage");
+                            }
+                            Ok(())
+                        }.await;
+                        if let Err(error) = &outcome {
+                            tracing::error!(session_id, attachment_id, %error, "could not abandon AI session attachment");
+                        }
+                        let _ = result.send(outcome);
+                    }
+                    AiSessionCommand::AttachmentDownloadUrl { attachment_id, result } => {
+                        let outcome = async {
+                            let log = ensure_session(&mut session, &session_id, &sessions).await.map_err(anyhow::Error::msg)?;
+                            let attachment = attachment_from_log(log, &attachment_id)
+                                .ok_or_else(|| anyhow::anyhow!("attachment was not prepared for this session"))?;
+                            if attachment_is_terminal(log, &attachment_id) {
+                                return Err(anyhow::anyhow!("attachment is no longer available"));
+                            }
+                            if !attachments_are_uploaded(log, std::slice::from_ref(&attachment_id)) {
+                                return Err(anyhow::anyhow!("attachment has not finished uploading"));
+                            }
+                            attachments.download_url(&attachment_metadata(&attachment)).await
+                        }.await;
+                        if let Err(error) = &outcome {
+                            tracing::error!(session_id, attachment_id, %error, "could not create AI session attachment download URL");
+                        }
+                        let _ = result.send(outcome);
                     }
                     AiSessionCommand::AgentEvent { event, recipient } => {
                         // A reconnect supersedes the sender captured when the
@@ -329,7 +448,7 @@ impl AiSessionActor {
                                     }
                                 }
                                 if !response.content.is_empty() {
-                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Message { message_id: Some(assistant_message_id(&task, attempt)), role: ChatRole::Assistant, content: response.content, thinking: None, usage: response.usage }, &sessions, &recipient).await {
+                                    if let Err(error) = append_and_publish(&session_id, Some(&task.operation_id), AiSessionEventKind::Message { message_id: Some(assistant_message_id(&task, attempt)), role: ChatRole::Assistant, content: response.content, thinking: None, usage: response.usage, attachment_ids: Vec::new() }, &sessions, &recipient).await {
                                         send_failure(&session_id, &task.request_id, AgentFailureCode::StorageWriteFailed, &error, &sessions, &recipient).await;
                                     }
                                 }
@@ -414,14 +533,14 @@ impl AiSessionActor {
                                 runners.remove(&task.request_id);
                                 let _ = recipient.send(ServerMessage::AgentCompleted { request_id: task.request_id, conversation_id: session_id.clone() }).await;
                                 if let Some(config) = config.as_ref() {
-                                    start_next_operation(&session_id, config, &sessions, &tool_context, &actor_commands, &mut pending, &mut runners).await;
+                                    start_next_operation(&session_id, config, &sessions, &attachments, &tool_context, &actor_commands, &mut pending, &mut runners).await;
                                 }
                             }
                             AgentActorEvent::Failed { task, code, detail } => {
                                 runners.remove(&task.request_id);
                                 send_failure(&session_id, &task.request_id, code, &detail, &sessions, &recipient).await;
                                 if let Some(config) = config.as_ref() {
-                                    start_next_operation(&session_id, config, &sessions, &tool_context, &actor_commands, &mut pending, &mut runners).await;
+                                    start_next_operation(&session_id, config, &sessions, &attachments, &tool_context, &actor_commands, &mut pending, &mut runners).await;
                                 }
                             }
                             AgentActorEvent::Cancelled { task, partial_text, partial_thinking, attempt, cancelled_tool_call_id } => {
@@ -446,7 +565,7 @@ impl AiSessionActor {
                                 }
                                 let _ = persist_operation_transition(&session_id, &task.operation_id, &task.request_id, OperationState::Cancelled { reason: "Stopped by user".into() }, &sessions, &recipient).await;
                                 if let Some(config) = config.as_ref() {
-                                    start_next_operation(&session_id, config, &sessions, &tool_context, &actor_commands, &mut pending, &mut runners).await;
+                                    start_next_operation(&session_id, config, &sessions, &attachments, &tool_context, &actor_commands, &mut pending, &mut runners).await;
                                 }
                             }
                         }
@@ -516,6 +635,7 @@ impl AiSessionActor {
         provider: String,
         model_id: String,
         prompt: String,
+        attachment_ids: Vec<String>,
         recipient: mpsc::Sender<ServerMessage>,
     ) -> Result<(), ()> {
         self.commands
@@ -524,6 +644,7 @@ impl AiSessionActor {
                 provider,
                 model_id,
                 prompt,
+                attachment_ids,
                 recipient,
             })
             .await
@@ -532,6 +653,34 @@ impl AiSessionActor {
 
     pub async fn stop(&self, request_id: String, recipient: mpsc::Sender<ServerMessage>) -> Result<(), ()> {
         self.commands.send(AiSessionCommand::Stop { request_id, recipient }).await.map_err(|_| ())
+    }
+
+    pub async fn prepare_attachment(&self, request: PrepareAgentAttachment) -> anyhow::Result<PreparedAgentAttachment> {
+        let (result, receiver) = oneshot::channel();
+        self.commands.send(AiSessionCommand::PrepareAttachment { request, result }).await
+            .map_err(|_| anyhow::anyhow!("AI session is unavailable"))?;
+        receiver.await.map_err(|_| anyhow::anyhow!("AI session is unavailable"))?
+    }
+
+    pub async fn complete_attachment(&self, attachment_id: String, request: CompleteAgentAttachment) -> anyhow::Result<CompletedAgentAttachment> {
+        let (result, receiver) = oneshot::channel();
+        self.commands.send(AiSessionCommand::CompleteAttachment { attachment_id, request, result }).await
+            .map_err(|_| anyhow::anyhow!("AI session is unavailable"))?;
+        receiver.await.map_err(|_| anyhow::anyhow!("AI session is unavailable"))?
+    }
+
+    pub async fn abandon_attachment(&self, attachment_id: String) -> anyhow::Result<()> {
+        let (result, receiver) = oneshot::channel();
+        self.commands.send(AiSessionCommand::AbandonAttachment { attachment_id, result }).await
+            .map_err(|_| anyhow::anyhow!("AI session is unavailable"))?;
+        receiver.await.map_err(|_| anyhow::anyhow!("AI session is unavailable"))?
+    }
+
+    pub async fn attachment_download_url(&self, attachment_id: String) -> anyhow::Result<String> {
+        let (result, receiver) = oneshot::channel();
+        self.commands.send(AiSessionCommand::AttachmentDownloadUrl { attachment_id, result }).await
+            .map_err(|_| anyhow::anyhow!("AI session is unavailable"))?;
+        receiver.await.map_err(|_| anyhow::anyhow!("AI session is unavailable"))?
     }
 }
 
@@ -542,10 +691,16 @@ async fn accept_prompt(
     session_id: &str,
     request_id: &str,
     prompt: &str,
+    attachment_ids: Vec<String>,
     sessions: &AiSessionService,
     recipient: &mpsc::Sender<ServerMessage>,
 ) -> bool {
     let operation_id = format!("operation-{request_id}");
+    let Some(log) = sessions.get(session_id) else { return false };
+    if !attachments_are_uploaded(&log, &attachment_ids) {
+        tracing::warn!(session_id, request_id, "prompt referenced attachments that are not uploaded in this session");
+        return false;
+    }
     if !persist_operation_transition(session_id, &operation_id, request_id, OperationState::Accepted, sessions, recipient).await {
         return false;
     }
@@ -555,6 +710,7 @@ async fn accept_prompt(
         AiSessionEventKind::UserMessageQueued {
             message_id: queued_message_id(&operation_id),
             content: prompt.to_owned(),
+            attachment_ids: attachment_ids.clone(),
         },
         sessions,
         recipient,
@@ -635,6 +791,7 @@ async fn start_next_operation(
     session_id: &str,
     config: &OpenAiCompatibleConfig,
     sessions: &Arc<AiSessionService>,
+    attachments: &AttachmentStore,
     tool_context: &ToolContext,
     commands: &mpsc::Sender<AiSessionCommand>,
     pending: &mut HashMap<String, PendingPrompt>,
@@ -660,9 +817,9 @@ async fn start_next_operation(
     let request_id = operation.request_id.clone();
     let was_waiting = operation.status == OperationStatus::Waiting;
     let Some(pending_prompt) = pending.remove(&request_id) else { return };
-    let Some(prompt) = log.events.iter().find_map(|event| {
+    let Some((prompt, attachment_ids)) = log.events.iter().find_map(|event| {
         (event.operation_id.as_deref() == Some(operation_id.as_str())).then(|| match &event.kind {
-            AiSessionEventKind::UserMessageQueued { content, .. } => Some(content.clone()),
+            AiSessionEventKind::UserMessageQueued { content, attachment_ids, .. } => Some((content.clone(), attachment_ids.clone())),
             _ => None,
         }).flatten()
     }) else {
@@ -677,9 +834,10 @@ async fn start_next_operation(
         if let Err(error) = append_and_publish(session_id, Some(&operation_id), AiSessionEventKind::Message {
             message_id: None,
             role: ChatRole::User,
-            content: prompt,
+            content: prompt.clone(),
             thinking: None,
             usage: None,
+            attachment_ids: attachment_ids.clone(),
         }, sessions, &pending_prompt.recipient).await {
             send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, &error, sessions, &pending_prompt.recipient).await;
             return;
@@ -693,7 +851,27 @@ async fn start_next_operation(
         return;
     };
     let projection = AgentProjection::from_log(&log);
-    let context = projection.model_context(&log, &operation_id);
+    let mut context = projection.model_context(&log, &operation_id);
+    if !attachment_ids.is_empty() {
+        let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
+        for attachment_id in &attachment_ids {
+            let Some(attachment) = attachment_from_log(&log, attachment_id) else {
+                send_failure(session_id, &request_id, AgentFailureCode::InvalidPrompt, "The uploaded image is missing from the session", sessions, &pending_prompt.recipient).await;
+                return;
+            };
+            match attachments.cached_data_url(&attachment_metadata(&attachment)).await {
+                Ok(data_url) => parts.push(serde_json::json!({ "type": "image_url", "image_url": { "url": data_url } })),
+                Err(error) => {
+                    tracing::error!(session_id, request_id, attachment_id, %error, "could not prepare uploaded image for model input");
+                    send_failure(session_id, &request_id, AgentFailureCode::StorageWriteFailed, &error.to_string(), sessions, &pending_prompt.recipient).await;
+                    return;
+                }
+            }
+        }
+        if let Some(user_message) = context.iter_mut().rev().find(|message| message.role == "user") {
+            user_message.content = Some(serde_json::Value::Array(parts));
+        }
+    }
     let resume_tool_calls = if was_waiting {
         projection.pending_tool_calls.iter().filter(|call| call.operation_id == operation_id).map(|call| OpenAiToolCall {
             id: call.tool_call_id.clone(),
@@ -815,6 +993,7 @@ async fn persist_cancelled_partial(
                 content: partial_text.trim_start().to_owned(),
                 thinking: None,
                 usage: None,
+                attachment_ids: Vec::new(),
             },
             sessions,
             recipient,
@@ -841,6 +1020,43 @@ fn model_turn_id(task: &AgentTask, attempt: u32) -> String {
 
 fn queued_message_id(operation_id: &str) -> String {
     format!("{operation_id}:user")
+}
+
+fn attachment_from_log(log: &AgentSessionLog, attachment_id: &str) -> Option<AiSessionAttachment> {
+    log.events.iter().find_map(|event| match &event.kind {
+        AiSessionEventKind::AttachmentPrepared { attachment }
+            if attachment.attachment_id == attachment_id => Some(attachment.clone()),
+        _ => None,
+    })
+}
+
+fn attachment_is_terminal(log: &AgentSessionLog, attachment_id: &str) -> bool {
+    log.events.iter().any(|event| matches!(
+        &event.kind,
+        AiSessionEventKind::AttachmentAbandoned { attachment_id: id, .. } if id == attachment_id
+    ))
+}
+
+fn attachments_are_uploaded(log: &AgentSessionLog, attachment_ids: &[String]) -> bool {
+    attachment_ids.iter().all(|attachment_id| {
+        attachment_from_log(log, attachment_id).is_some()
+            && log.events.iter().any(|event| matches!(
+                &event.kind,
+                AiSessionEventKind::AttachmentUploaded { attachment_id: id, .. } if id == attachment_id
+            ))
+            && !attachment_is_terminal(log, attachment_id)
+    })
+}
+
+fn attachment_metadata(attachment: &AiSessionAttachment) -> crate::services::attachments::AttachmentMetadata {
+    crate::services::attachments::AttachmentMetadata {
+        attachment_id: attachment.attachment_id.clone(),
+        object_key: attachment.object_key.clone(),
+        filename: attachment.filename.clone(),
+        media_type: attachment.media_type.clone(),
+        byte_size: attachment.byte_size,
+        sha256: attachment.sha256.clone(),
+    }
 }
 
 async fn send_failure(
@@ -1065,6 +1281,10 @@ mod tests {
         services::ai_session::AiSessionService,
     };
 
+    fn attachment_store(sessions_dir: &std::path::Path) -> Arc<crate::services::attachments::AttachmentStore> {
+        crate::services::attachments::AttachmentStore::new(None, sessions_dir.join("attachment-cache"), 20 * 1024 * 1024, 100 * 1024 * 1024).unwrap()
+    }
+
     #[derive(Clone)]
     struct BlockingFakeModel {
         calls: Arc<AtomicUsize>,
@@ -1151,9 +1371,9 @@ mod tests {
         service.append(session_id, Some(operation_id), AiSessionEventKind::ModelSelected {
             model: AiSessionModel { provider: "openai-compatible".into(), model_id: "test-model".into() },
         }).await.unwrap();
-        service.append(session_id, Some(operation_id), AiSessionEventKind::UserMessageQueued { message_id: "queued-message".into(), content: "Inspect the project".into() }).await.unwrap();
+        service.append(session_id, Some(operation_id), AiSessionEventKind::UserMessageQueued { message_id: "queued-message".into(), content: "Inspect the project".into(), attachment_ids: Vec::new() }).await.unwrap();
         service.append(session_id, Some(operation_id), AiSessionEventKind::Message {
-            message_id: None, role: ChatRole::User, content: "Inspect the project".into(), thinking: None, usage: None,
+            message_id: None, role: ChatRole::User, content: "Inspect the project".into(), thinking: None, usage: None, attachment_ids: Vec::new(),
         }).await.unwrap();
         service.append(session_id, Some(operation_id), AiSessionEventKind::OperationTransition {
             transition: OperationTransition { operation_id: operation_id.into(), request_id: "request".into(), state, occurred_at_ms: 2 },
@@ -1170,6 +1390,7 @@ mod tests {
             "conversation-1".into(),
             None,
             sessions,
+            attachment_store(&sessions_dir),
             crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
         );
         let (sender, mut receiver) = mpsc::channel(1);
@@ -1179,6 +1400,7 @@ mod tests {
                 "openai-compatible".into(),
                 "model-1".into(),
                 "Hello".into(),
+                Vec::new(),
                 sender,
             )
             .await
@@ -1211,10 +1433,10 @@ mod tests {
         let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
         sessions.open_or_create("session").await.unwrap();
         sessions.append("session", Some("operation-request"), AiSessionEventKind::Message {
-            message_id: Some("user-message".into()), role: ChatRole::User, content: "Continue working".into(), thinking: None, usage: None,
+            message_id: Some("user-message".into()), role: ChatRole::User, content: "Continue working".into(), thinking: None, usage: None, attachment_ids: Vec::new(),
         }).await.unwrap();
         let actor = AiSessionActor::spawn(
-            "session".into(), None, sessions,
+            "session".into(), None, sessions, attachment_store(&sessions_dir),
             crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
         );
         let (sender, mut receiver) = mpsc::channel(8);
@@ -1244,7 +1466,7 @@ mod tests {
         let reloaded = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
         let (config, fake_model) = fake_model().await;
         let actor = AiSessionActor::spawn(
-            "session".into(), Some(config), reloaded.clone(),
+            "session".into(), Some(config), reloaded.clone(), attachment_store(&sessions_dir),
             crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
         );
         actor.recover().await.unwrap();
@@ -1284,7 +1506,7 @@ mod tests {
         let reloaded = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
         let (config, fake_model) = fake_model().await;
         let actor = AiSessionActor::spawn(
-            "session".into(), Some(config), reloaded.clone(),
+            "session".into(), Some(config), reloaded.clone(), attachment_store(&sessions_dir),
             crate::agent::tools::ToolContext::new(HashMap::from([("workspace".into(), workspace.clone())]), Default::default()),
         );
         actor.recover().await.unwrap();
@@ -1304,14 +1526,14 @@ mod tests {
         let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
         let (config, model, server) = blocking_fake_model().await;
         let actor = AiSessionActor::spawn(
-            "session".into(), Some(config), sessions.clone(),
+            "session".into(), Some(config), sessions.clone(), attachment_store(&sessions_dir),
             crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
         );
         let (recipient, _messages) = mpsc::channel(256);
 
-        actor.prompt("request-first".into(), "openai-compatible".into(), "test-model".into(), "First prompt".into(), recipient.clone()).await.unwrap();
+        actor.prompt("request-first".into(), "openai-compatible".into(), "test-model".into(), "First prompt".into(), Vec::new(), recipient.clone()).await.unwrap();
         tokio::time::timeout(Duration::from_secs(1), model.first_request.notified()).await.unwrap();
-        actor.prompt("request-second".into(), "openai-compatible".into(), "test-model".into(), "Second prompt".into(), recipient).await.unwrap();
+        actor.prompt("request-second".into(), "openai-compatible".into(), "test-model".into(), "Second prompt".into(), Vec::new(), recipient).await.unwrap();
 
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
@@ -1349,14 +1571,14 @@ mod tests {
         let sessions = Arc::new(AiSessionService::new(sessions_dir.clone(), None).unwrap());
         let (config, model, server) = blocking_fake_model().await;
         let actor = AiSessionActor::spawn(
-            "session".into(), Some(config), sessions.clone(),
+            "session".into(), Some(config), sessions.clone(), attachment_store(&sessions_dir),
             crate::agent::tools::ToolContext::new(Default::default(), Default::default()),
         );
         let (recipient, _messages) = mpsc::channel(256);
 
-        actor.prompt("request-first".into(), "openai-compatible".into(), "test-model".into(), "Keep running".into(), recipient.clone()).await.unwrap();
+        actor.prompt("request-first".into(), "openai-compatible".into(), "test-model".into(), "Keep running".into(), Vec::new(), recipient.clone()).await.unwrap();
         tokio::time::timeout(Duration::from_secs(1), model.first_request.notified()).await.unwrap();
-        actor.prompt("request-queued".into(), "openai-compatible".into(), "test-model".into(), "Replace this prompt".into(), recipient.clone()).await.unwrap();
+        actor.prompt("request-queued".into(), "openai-compatible".into(), "test-model".into(), "Replace this prompt".into(), Vec::new(), recipient.clone()).await.unwrap();
         actor.stop("request-queued".into(), recipient).await.unwrap();
 
         tokio::time::timeout(Duration::from_secs(1), async {

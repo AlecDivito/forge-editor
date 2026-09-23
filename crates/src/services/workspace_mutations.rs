@@ -512,7 +512,11 @@ mod tests {
                 }],
                 default_workspace_id: "workspace".into(),
                 openai_compatible: None,
+                s3_attachments: None,
                 agent_sessions_dir: root.join("sessions"),
+                agent_attachment_cache_dir: root.join("attachment-cache"),
+                agent_max_attachment_bytes: 20 * 1024 * 1024,
+                agent_attachment_cache_max_bytes: 100 * 1024 * 1024,
             })
             .expect("create app state"),
             root,

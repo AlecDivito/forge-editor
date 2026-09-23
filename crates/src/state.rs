@@ -16,7 +16,7 @@ use crate::{
     actors::{AiSessionActor, DocumentActor, LspServerActor, TerminalActor},
     config::Config,
     models::{ClientId, FileId, LanguageId, ServerMessage, TerminalId, WorkspaceId},
-    services::ai_session::AiSessionService,
+    services::{ai_session::AiSessionService, attachments::AttachmentStore},
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct AppState {
     pub open_files: Arc<DashMap<(WorkspaceId, FileId), Arc<DocumentActor>>>,
     pub terminals: Arc<DashMap<TerminalId, TerminalRecord>>,
     pub ai_sessions: Arc<AiSessionService>,
+    pub attachments: Arc<AttachmentStore>,
     ai_session_actors: Arc<DashMap<String, Arc<AiSessionActor>>>,
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
@@ -107,12 +108,19 @@ impl AppState {
             config.agent_sessions_dir.clone(),
             config.openai_compatible.clone(),
         )?);
+        let attachments = AttachmentStore::new(
+            config.s3_attachments.clone(),
+            config.agent_attachment_cache_dir.clone(),
+            config.agent_max_attachment_bytes,
+            config.agent_attachment_cache_max_bytes,
+        )?;
         let state = Self {
             config: Arc::new(config),
             workspaces: Arc::new(workspaces),
             open_files: Arc::new(DashMap::new()),
             terminals: Arc::new(DashMap::new()),
             ai_sessions,
+            attachments,
             ai_session_actors: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
@@ -155,6 +163,7 @@ impl AppState {
                     session_id,
                     self.config.openai_compatible.clone(),
                     self.ai_sessions.clone(),
+                    self.attachments.clone(),
                     self.agent_tool_context(),
                 )
             })
@@ -315,7 +324,11 @@ mod tests {
             ],
             default_workspace_id: "one".into(),
             openai_compatible: None,
+            s3_attachments: None,
             agent_sessions_dir: parent.join("sessions"),
+            agent_attachment_cache_dir: parent.join("attachment-cache"),
+            agent_max_attachment_bytes: 20 * 1024 * 1024,
+            agent_attachment_cache_max_bytes: 100 * 1024 * 1024,
         })
         .unwrap();
         assert_eq!(

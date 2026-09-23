@@ -77,7 +77,7 @@ impl AgentProjection {
                     }
                     messages.push(OpenAiChatMessage {
                         role: match role { crate::models::ChatRole::User => "user", crate::models::ChatRole::Assistant => "assistant" }.into(),
-                        content: Some(content.clone()), tool_calls: None, tool_call_id: None,
+                        content: Some(serde_json::Value::String(content.clone())), tool_calls: None, tool_call_id: None,
                     });
                 }
                 AiSessionEventKind::ToolCall { tool_call_id, name, arguments } => {
@@ -91,7 +91,7 @@ impl AgentProjection {
                             messages.push(OpenAiChatMessage { role: "assistant".into(), content: None, tool_calls: Some(tool_calls), tool_call_id: None });
                         }
                     }
-                    messages.push(OpenAiChatMessage { role: "tool".into(), content: Some(content.clone()), tool_calls: None, tool_call_id: Some(tool_call_id.clone()) });
+                    messages.push(OpenAiChatMessage { role: "tool".into(), content: Some(serde_json::Value::String(content.clone())), tool_calls: None, tool_call_id: Some(tool_call_id.clone()) });
                 }
                 _ => {}
             }
@@ -133,6 +133,7 @@ mod tests {
                 content: content.into(),
                 thinking: None,
                 usage: None,
+                attachment_ids: Vec::new(),
             },
         }
     }
@@ -149,7 +150,7 @@ mod tests {
             events: vec![message(1, "first", "finished request"), message(2, "second", "current request"), message(3, "future", "queued request")],
         };
         let messages = AgentProjection::from_log(&log).model_context(&log, "second");
-        assert_eq!(messages.iter().map(|message| message.content.as_deref()).collect::<Vec<_>>(), vec![Some("finished request"), Some("current request")]);
+        assert_eq!(messages.iter().map(|message| message.content.as_ref().and_then(serde_json::Value::as_str)).collect::<Vec<_>>(), vec![Some("finished request"), Some("current request")]);
     }
 
     #[test]

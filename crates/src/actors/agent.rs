@@ -115,7 +115,7 @@ async fn run_turn(
             result = tools.execute(tool_context.clone(), &call.function.name, arguments, tool_cancellation.clone()) => result,
         };
         let tool_result = crate::models::AgentToolResult { content: result.content, is_error: result.is_error, failure_code: result.failure_code, retry_failures: result.retry_failures };
-        context.push(crate::models::OpenAiChatMessage { role: "tool".into(), content: Some(tool_result.content.clone()), tool_calls: None, tool_call_id: Some(call.id.clone()) });
+        context.push(crate::models::OpenAiChatMessage { role: "tool".into(), content: Some(Value::String(tool_result.content.clone())), tool_calls: None, tool_call_id: Some(call.id.clone()) });
         let _ = events.send(AgentActorEvent::ToolFinished { task: task.clone(), call_id: call.id.clone(), result: tool_result }).await;
     }
 
@@ -178,7 +178,7 @@ async fn run_turn(
             return;
         }
         let _ = events.send(AgentActorEvent::ToolCallsProposed { task: task.clone(), calls: response.tool_calls.clone() }).await;
-        context.push(crate::models::OpenAiChatMessage { role: "assistant".into(), content: (!response.content.is_empty()).then_some(response.content), tool_calls: Some(response.tool_calls.clone()), tool_call_id: None });
+        context.push(crate::models::OpenAiChatMessage { role: "assistant".into(), content: (!response.content.is_empty()).then_some(Value::String(response.content)), tool_calls: Some(response.tool_calls.clone()), tool_call_id: None });
         for call in response.tool_calls {
             let arguments = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
             let _ = events.send(AgentActorEvent::ToolStarted { task: task.clone(), call: call.clone() }).await;
@@ -192,7 +192,7 @@ async fn run_turn(
                 result = tools.execute(tool_context.clone(), &call.function.name, arguments, tool_cancellation.clone()) => result,
             };
             let tool_result = crate::models::AgentToolResult { content: result.content, is_error: result.is_error, failure_code: result.failure_code, retry_failures: result.retry_failures };
-            context.push(crate::models::OpenAiChatMessage { role: "tool".into(), content: Some(tool_result.content.clone()), tool_calls: None, tool_call_id: Some(call.id.clone()) });
+            context.push(crate::models::OpenAiChatMessage { role: "tool".into(), content: Some(Value::String(tool_result.content.clone())), tool_calls: None, tool_call_id: Some(call.id.clone()) });
             let _ = events.send(AgentActorEvent::ToolFinished { task: task.clone(), call_id: call.id, result: tool_result }).await;
         }
     }

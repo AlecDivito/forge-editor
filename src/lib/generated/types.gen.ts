@@ -4,6 +4,17 @@ export type ClientOptions = {
     baseURL: 'http://localhost:8080' | (string & {});
 };
 
+export type AgentAttachmentPath = {
+    /**
+     * Opaque attachment ID created by the prepare endpoint.
+     */
+    attachment_id: string;
+    /**
+     * Opaque conversation ID that owns the attachment.
+     */
+    session_id: string;
+};
+
 export enum AgentFailureCode {
     INVALID_PROVIDER = 'invalid_provider',
     MISSING_MODEL_BACKEND = 'missing_model_backend',
@@ -61,6 +72,15 @@ export type AgentSessionSearchQuery = {
     query?: string | null;
 };
 
+export type AiSessionAttachment = {
+    attachment_id: string;
+    byte_size: number;
+    filename: string;
+    media_type: string;
+    object_key: string;
+    sha256?: string | null;
+};
+
 export type AiSessionEvent = {
     event_id: string;
     kind: AiSessionEventKind;
@@ -84,6 +104,7 @@ export type AiSessionEventKind = {
     transition: OperationTransition;
 } | {
     type: 'message';
+    attachment_ids?: Array<string>;
     content: string;
     message_id?: string | null;
     role: ChatRole;
@@ -95,11 +116,23 @@ export type AiSessionEventKind = {
     reasoning_id?: string | null;
 } | {
     type: 'user_message_queued';
+    attachment_ids?: Array<string>;
     content: string;
     message_id: string;
 } | {
     type: 'user_message_cancelled';
     message_id: string;
+    reason: string;
+} | {
+    type: 'attachment_prepared';
+    attachment: AiSessionAttachment;
+} | {
+    type: 'attachment_uploaded';
+    attachment_id: string;
+    etag?: string | null;
+} | {
+    type: 'attachment_abandoned';
+    attachment_id: string;
     reason: string;
 } | {
     type: 'model_intent';
@@ -160,6 +193,15 @@ export enum ChatRole {
     USER = 'user',
     ASSISTANT = 'assistant'
 }
+
+export type CompleteAgentAttachment = {
+    etag?: string | null;
+};
+
+export type CompletedAgentAttachment = {
+    attachment_id: string;
+    etag?: string | null;
+};
 
 export type ConfigurationList = {
     configurations: Array<ConfigurationSummary>;
@@ -543,6 +585,19 @@ export type PaginationParams = {
     size?: number | null;
 };
 
+export type PrepareAgentAttachment = {
+    byte_size: number;
+    filename: string;
+    media_type: string;
+    sha256?: string | null;
+};
+
+export type PreparedAgentAttachment = {
+    attachment: AiSessionAttachment;
+    session_id: string;
+    upload_url: string;
+};
+
 export type PublicCapabilities = {
     integratedTerminal: boolean;
 };
@@ -688,6 +743,114 @@ export type GetSessionResponses = {
 };
 
 export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
+
+export type PrepareAttachmentData = {
+    body: PrepareAgentAttachment;
+    path: {
+        /**
+         * Opaque conversation ID used to address the durable session.
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/agent/sessions/{session_id}/attachments/prepare';
+};
+
+export type PrepareAttachmentErrors = {
+    /**
+     * Invalid metadata or image storage configuration
+     */
+    400: unknown;
+};
+
+export type PrepareAttachmentResponses = {
+    /**
+     * Durable attachment metadata and a direct upload URL
+     */
+    200: PreparedAgentAttachment;
+};
+
+export type PrepareAttachmentResponse = PrepareAttachmentResponses[keyof PrepareAttachmentResponses];
+
+export type CompleteAttachmentData = {
+    body: CompleteAgentAttachment;
+    path: {
+        /**
+         * Opaque attachment ID created by the prepare endpoint.
+         */
+        attachment_id: string;
+        /**
+         * Opaque conversation ID that owns the attachment.
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/agent/sessions/{session_id}/attachments/{attachment_id}/complete';
+};
+
+export type CompleteAttachmentErrors = {
+    /**
+     * The upload is missing, mismatched, or invalid
+     */
+    400: unknown;
+};
+
+export type CompleteAttachmentResponses = {
+    /**
+     * The durable uploaded attachment
+     */
+    200: CompletedAgentAttachment;
+};
+
+export type CompleteAttachmentResponse = CompleteAttachmentResponses[keyof CompleteAttachmentResponses];
+
+export type DownloadAttachmentData = {
+    body?: never;
+    path: {
+        /**
+         * Opaque attachment ID created by the prepare endpoint.
+         */
+        attachment_id: string;
+        /**
+         * Opaque conversation ID that owns the attachment.
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/agent/sessions/{session_id}/attachments/{attachment_id}/download';
+};
+
+export type AbandonAttachmentData = {
+    body?: never;
+    path: {
+        /**
+         * Opaque attachment ID created by the prepare endpoint.
+         */
+        attachment_id: string;
+        /**
+         * Opaque conversation ID that owns the attachment.
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/agent/sessions/{session_id}/attachments/{attachment_id}';
+};
+
+export type AbandonAttachmentErrors = {
+    /**
+     * The attachment cannot be abandoned
+     */
+    400: unknown;
+};
+
+export type AbandonAttachmentResponses = {
+    /**
+     * The attachment was abandoned
+     */
+    204: void;
+};
+
+export type AbandonAttachmentResponse = AbandonAttachmentResponses[keyof AbandonAttachmentResponses];
 
 export type ListFilesData = {
     body?: never;

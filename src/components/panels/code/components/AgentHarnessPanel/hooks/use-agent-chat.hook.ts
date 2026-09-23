@@ -85,7 +85,7 @@ export function useAgentChat() {
   }, [appendStreamingReasoning, appendStreamingText, applyDurableSessionEvent, clearStreamingRequest, queryClient, setActiveRequestId, setConversationStatus, setConversationTitle]);
 
   const startChat = useCallback(
-    ({ conversationId, prompt, model }: StartChatInput) => {
+    ({ conversationId, prompt, attachments, model }: StartChatInput) => {
       const requestId = nanoid();
       if (!socket.send({
         kind: "AgentPrompt",
@@ -94,6 +94,7 @@ export function useAgentChat() {
         provider: model.provider,
         model_id: model.id,
         prompt,
+        attachment_ids: attachments.map((attachment) => attachment.id),
       })) {
         return null;
       }

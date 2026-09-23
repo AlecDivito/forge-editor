@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { commit, createFile, createSession, deleteFile, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listSessions, type Options, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
-import type { CommitData, CommitResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListSessionsData, ListSessionsResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { abandonAttachment, commit, completeAttachment, createFile, createSession, deleteFile, downloadAttachment, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listSessions, type Options, prepareAttachment, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
+import type { AbandonAttachmentData, AbandonAttachmentResponse, CommitData, CommitResponse, CompleteAttachmentData, CompleteAttachmentResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListSessionsData, ListSessionsResponse, PrepareAttachmentData, PrepareAttachmentResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -114,6 +114,78 @@ export const getSessionOptions = (options: Options<GetSessionData>) => queryOpti
     },
     queryKey: getSessionQueryKey(options)
 });
+
+/**
+ * Persist image metadata and create a short-lived direct S3 upload URL.
+ *
+ * The session is created when necessary, but stays untitled until a user
+ * prompt is actually submitted.
+ */
+export const prepareAttachmentMutation = (options?: Partial<Options<PrepareAttachmentData>>): UseMutationOptions<PrepareAttachmentResponse, AxiosError<DefaultError>, Options<PrepareAttachmentData>> => {
+    const mutationOptions: UseMutationOptions<PrepareAttachmentResponse, AxiosError<DefaultError>, Options<PrepareAttachmentData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await prepareAttachment({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Verify an uploaded object and make the attachment available to a session.
+ */
+export const completeAttachmentMutation = (options?: Partial<Options<CompleteAttachmentData>>): UseMutationOptions<CompleteAttachmentResponse, AxiosError<DefaultError>, Options<CompleteAttachmentData>> => {
+    const mutationOptions: UseMutationOptions<CompleteAttachmentResponse, AxiosError<DefaultError>, Options<CompleteAttachmentData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await completeAttachment({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const downloadAttachmentQueryKey = (options: Options<DownloadAttachmentData>) => createQueryKey('downloadAttachment', options);
+
+/**
+ * Redirect to a short-lived object-store URL for one uploaded attachment.
+ */
+export const downloadAttachmentOptions = (options: Options<DownloadAttachmentData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof downloadAttachmentQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await downloadAttachment({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: downloadAttachmentQueryKey(options)
+});
+
+/**
+ * Tombstone an unsent attachment and remove its object-store payload.
+ */
+export const abandonAttachmentMutation = (options?: Partial<Options<AbandonAttachmentData>>): UseMutationOptions<AbandonAttachmentResponse, AxiosError<DefaultError>, Options<AbandonAttachmentData>> => {
+    const mutationOptions: UseMutationOptions<AbandonAttachmentResponse, AxiosError<DefaultError>, Options<AbandonAttachmentData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await abandonAttachment({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
 
 export const listFilesQueryKey = (options: Options<ListFilesData>) => createQueryKey('listFiles', options);
 

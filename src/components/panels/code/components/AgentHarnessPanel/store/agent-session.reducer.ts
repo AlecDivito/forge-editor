@@ -1,5 +1,6 @@
 import { AgentTokenUsage, AgentToolActivity, AgentTranscriptEntry } from "../types/agent-harness.types";
 import type { AiSessionEvent, AiTokenUsage } from "@/lib/generated/types.gen";
+import { apiUrl } from "@/lib/transport";
 
 function tokenUsage(usage: AiTokenUsage | null | undefined): AgentTokenUsage | undefined {
   if (!usage) return undefined;
@@ -13,7 +14,18 @@ function tokenUsage(usage: AiTokenUsage | null | undefined): AgentTokenUsage | u
 }
 
 /** Converts the canonical durable protocol into the UI's presentation rows. */
-export function durableEventsToTranscriptEntries(events: AiSessionEvent[]): AgentTranscriptEntry[] {
+export function durableEventsToTranscriptEntries(events: AiSessionEvent[], sessionId?: string): AgentTranscriptEntry[] {
+  const attachments = new Map<string, { filename: string; mediaType: string }>();
+  const abandoned = new Set<string>();
+  for (const event of events) {
+    if (event.kind.type === "attachment_prepared") {
+      attachments.set(event.kind.attachment.attachment_id, {
+        filename: event.kind.attachment.filename,
+        mediaType: event.kind.attachment.media_type,
+      });
+    }
+    if (event.kind.type === "attachment_abandoned") abandoned.add(event.kind.attachment_id);
+  }
   return events.flatMap((event): AgentTranscriptEntry[] => {
     const operationId = event.operation_id ?? undefined;
     const kind = event.kind;
@@ -32,6 +44,19 @@ export function durableEventsToTranscriptEntries(events: AiSessionEvent[]): Agen
             thinking: kind.thinking ?? undefined,
             createdAt: event.occurred_at_ms,
             usage: tokenUsage(kind.usage),
+            attachments: (kind.attachment_ids ?? []).flatMap((attachmentId) => {
+              const attachment = attachments.get(attachmentId);
+              if (!attachment || abandoned.has(attachmentId) || !sessionId) return [];
+              return [{
+                id: attachmentId,
+                sessionId,
+                name: attachment.filename,
+                mimeType: attachment.mediaType,
+                previewUrl: apiUrl(`/api/agent/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}/download`),
+                status: "ready" as const,
+                progress: 100,
+              }];
+            }),
           },
         }];
       case "reasoning":

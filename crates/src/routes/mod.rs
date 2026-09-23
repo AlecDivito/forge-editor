@@ -8,12 +8,12 @@ mod ws;
 
 use rovo::{
     IntoNestRouter, Router,
-    routing::{any, get, post},
+    routing::{any, delete, get, post},
 };
 
 use crate::{
     routes::{
-        agent::{get_session, list_models, list_sessions},
+        agent::{abandon_attachment, complete_attachment, download_attachment, get_session, list_models, list_sessions, prepare_attachment},
         environment::get_environment,
         file_search::{search_and_replace_files, search_file_names, search_files},
         file_system::{create_file, delete_file, rename_file, save_file},
@@ -30,6 +30,10 @@ pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
         .route("/agent/models", get(list_models))
         .route("/agent/sessions", get(list_sessions))
         .route("/agent/sessions/{session_id}", get(get_session))
+        .route("/agent/sessions/{session_id}/attachments/prepare", post(prepare_attachment))
+        .route("/agent/sessions/{session_id}/attachments/{attachment_id}/complete", post(complete_attachment))
+        .route("/agent/sessions/{session_id}/attachments/{attachment_id}/download", get(download_attachment))
+        .route("/agent/sessions/{session_id}/attachments/{attachment_id}", delete(abandon_attachment))
         .route("/fs/list", get(list_files))
         // .route("/fs/open", post(open_file))
         // .route("/fs/close", post(close_file))

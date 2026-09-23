@@ -17,6 +17,20 @@ pub enum ChatRole {
     Assistant,
 }
 
+/// Durable metadata for a session-owned object-store image. Image bytes are
+/// never included in JSONL; the object key is only consumed by Forge's
+/// attachment store when it constructs a provider request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AiSessionAttachment {
+    pub attachment_id: String,
+    pub object_key: String,
+    pub filename: String,
+    pub media_type: String,
+    pub byte_size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
 /// A normalized text message held by an AI session actor.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatMessage {
@@ -88,7 +102,7 @@ pub struct OpenAiStreamOptions {
 pub struct OpenAiChatMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -270,16 +284,30 @@ pub enum AiSessionEventKind {
         thinking: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<AiTokenUsage>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachment_ids: Vec<String>,
     },
     Reasoning {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reasoning_id: Option<String>,
         content: String,
     },
-    UserMessageQueued { message_id: String, content: String },
+    UserMessageQueued {
+        message_id: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachment_ids: Vec<String>,
+    },
     /// Tombstone for a queued prompt that was edited or explicitly cancelled
     /// before the scheduler made it model-visible.
     UserMessageCancelled { message_id: String, reason: String },
+    AttachmentPrepared { attachment: AiSessionAttachment },
+    AttachmentUploaded {
+        attachment_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        etag: Option<String>,
+    },
+    AttachmentAbandoned { attachment_id: String, reason: String },
     /// A provider request is durably identified before it is sent. The
     /// request hash identifies its committed context without persisting a
     /// second mutable transcript.

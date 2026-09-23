@@ -725,6 +725,7 @@ async fn dispatch(
             provider,
             model_id,
             prompt,
+            attachment_ids,
         } => {
             let session = state.ai_session(conversation_id.clone());
             if session
@@ -733,6 +734,7 @@ async fn dispatch(
                     provider,
                     model_id,
                     prompt,
+                    attachment_ids,
                     document_tx.clone(),
                 )
                 .await

@@ -1,11 +1,9 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { nanoid } from "nanoid";
 import { useAgentChat } from "./use-agent-chat.hook";
 import { useCreateAgentSession } from "./use-create-agent-session.hook";
+import { useAgentAttachments } from "./use-agent-attachments.hook";
 import { useAgentHarnessStore } from "../store/agent-harness.store";
-import { AgentAttachment, AgentModelSelection } from "../types/agent-harness.types";
-
-const isImage = (file: File) => file.type.startsWith("image/");
+import { AgentModelSelection } from "../types/agent-harness.types";
 
 export function useAgentComposer(conversationId: string | null, model: AgentModelSelection | null) {
   const { startChat, stopChat } = useAgentChat();
@@ -14,68 +12,41 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
   const queuedEdit = useAgentHarnessStore((state) => state.queuedEdit);
   const clearQueuedEdit = useAgentHarnessStore((state) => state.clearQueuedEdit);
   const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const attachmentRef = useRef<AgentAttachment[]>([]);
+  const { attachments, attachmentError, clearSentAttachments, removeAttachment, uploadFiles } = useAgentAttachments(conversationId);
   const lastQueuedAt = useRef(0);
-  useEffect(() => {
-    attachmentRef.current = attachments;
-  }, [attachments]);
-  useEffect(
-    () => () => {
-      attachmentRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
-    },
-    [],
-  );
   useEffect(() => {
     if (!queuedEdit) return;
     setDraft(queuedEdit.content);
     clearQueuedEdit();
   }, [clearQueuedEdit, queuedEdit]);
-  const addFiles = (files: File[]) => {
-    const images = files.filter(isImage).slice(0, Math.max(0, 4 - attachments.length));
-    if (images.length)
-      setAttachments((current) => [
-        ...current,
-        ...images.map((file) => ({
-          id: nanoid(),
-          name: file.name,
-          mimeType: file.type,
-          previewUrl: URL.createObjectURL(file),
-        })),
-      ]);
-  };
-  const removeAttachment = (id: string) =>
-    setAttachments((current) => {
-      const attachment = current.find((item) => item.id === id);
-      if (attachment) URL.revokeObjectURL(attachment.previewUrl);
-      return current.filter((item) => item.id !== id);
-    });
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    addFiles(Array.from(event.target.files ?? []));
+    void uploadFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+  const onDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    addFiles(Array.from(event.dataTransfer.files));
+    void uploadFiles(Array.from(event.dataTransfer.files));
   };
   const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(event.clipboardData.files);
-    if (files.some(isImage)) {
+    if (files.some((file) => file.type.startsWith("image/"))) {
       event.preventDefault();
-      addFiles(files);
+      void uploadFiles(files);
     }
   };
   const send = () => {
     const text = draft.trim();
     if (!text || !model || isCreating) return false;
+    if (attachments.some((attachment) => attachment.status !== "ready")) return false;
+    const targetConversationId = conversation?.id ?? attachments[0]?.sessionId;
     const sendPrompt = (id: string) => startChat({ conversationId: id, prompt: text, attachments, model });
-    const sent = conversation ? sendPrompt(conversation.id) : createSession(sendPrompt);
+    const sent = targetConversationId ? sendPrompt(targetConversationId) : createSession(sendPrompt);
     if (!sent) return false;
     if (conversation?.status !== "idle") lastQueuedAt.current = Date.now();
     setDraft("");
-    setAttachments([]);
+    clearSentAttachments();
     return true;
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -95,6 +66,7 @@ export function useAgentComposer(conversationId: string | null, model: AgentMode
   };
   return {
     attachments,
+    attachmentError,
     draft,
     isDragging,
     isCreating,

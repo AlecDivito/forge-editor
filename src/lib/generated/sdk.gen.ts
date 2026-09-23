@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitData, CommitErrors, CommitResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListSessionsData, ListSessionsResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { AbandonAttachmentData, AbandonAttachmentErrors, AbandonAttachmentResponses, CommitData, CommitErrors, CommitResponses, CompleteAttachmentData, CompleteAttachmentErrors, CompleteAttachmentResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListSessionsData, ListSessionsResponses, PrepareAttachmentData, PrepareAttachmentErrors, PrepareAttachmentResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -56,6 +56,45 @@ export const getSession = <ThrowOnError extends boolean = false>(options: Option
     url: '/api/agent/sessions/{session_id}',
     ...options
 });
+
+/**
+ * Persist image metadata and create a short-lived direct S3 upload URL.
+ *
+ * The session is created when necessary, but stays untitled until a user
+ * prompt is actually submitted.
+ */
+export const prepareAttachment = <ThrowOnError extends boolean = false>(options: Options<PrepareAttachmentData, ThrowOnError>) => (options.client ?? client).post<PrepareAttachmentResponses, PrepareAttachmentErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/sessions/{session_id}/attachments/prepare',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Verify an uploaded object and make the attachment available to a session.
+ */
+export const completeAttachment = <ThrowOnError extends boolean = false>(options: Options<CompleteAttachmentData, ThrowOnError>) => (options.client ?? client).post<CompleteAttachmentResponses, CompleteAttachmentErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/sessions/{session_id}/attachments/{attachment_id}/complete',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Redirect to a short-lived object-store URL for one uploaded attachment.
+ */
+export const downloadAttachment = <ThrowOnError extends boolean = false>(options: Options<DownloadAttachmentData, ThrowOnError>) => (options.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/agent/sessions/{session_id}/attachments/{attachment_id}/download', ...options });
+
+/**
+ * Tombstone an unsent attachment and remove its object-store payload.
+ */
+export const abandonAttachment = <ThrowOnError extends boolean = false>(options: Options<AbandonAttachmentData, ThrowOnError>) => (options.client ?? client).delete<AbandonAttachmentResponses, AbandonAttachmentErrors, ThrowOnError>({ url: '/api/agent/sessions/{session_id}/attachments/{attachment_id}', ...options });
 
 /**
  * Get list of files for directory

@@ -1,5 +1,5 @@
 use rovo::schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{AiTokenUsage, AssistantResponse, OpenAiChatMessage, OpenAiToolCall};
 
@@ -14,6 +14,32 @@ pub struct AgentModelDescriptor {
 pub struct AgentModelCatalog {
     pub configured: bool,
     pub models: Vec<AgentModelDescriptor>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct PrepareAgentAttachment {
+    pub filename: String,
+    pub media_type: String,
+    pub byte_size: u64,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PreparedAgentAttachment {
+    pub session_id: String,
+    pub attachment: super::AiSessionAttachment,
+    pub upload_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct CompleteAgentAttachment {
+    pub etag: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CompletedAgentAttachment {
+    pub attachment_id: String,
+    pub etag: Option<String>,
 }
 
 /// Immutable work handed from the durable session coordinator to one

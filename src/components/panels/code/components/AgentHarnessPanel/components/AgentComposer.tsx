@@ -20,7 +20,8 @@ export function AgentComposer() {
   const canSend =
     Boolean(composer.draft.trim()) &&
     Boolean(selectedModel) &&
-    !composer.isCreating;
+    !composer.isCreating &&
+    composer.attachments.every((attachment) => attachment.status === "ready");
 
   return (
     <form onSubmit={composer.submit} className="shrink-0 border-t border-border bg-card p-3">
@@ -44,12 +45,23 @@ export function AgentComposer() {
                   alt={attachment.name}
                   className="size-full rounded-md border border-border object-cover"
                 />
+                {attachment.status === "uploading" ? (
+                  <div className="absolute inset-x-1 bottom-1 overflow-hidden rounded bg-background/80 text-center text-[9px] font-medium text-foreground">
+                    {attachment.progress}%
+                  </div>
+                ) : null}
+                {attachment.status === "failed" ? (
+                  <div className="absolute inset-x-1 bottom-1 rounded bg-destructive px-1 text-center text-[9px] font-medium text-destructive-foreground">
+                    Failed
+                  </div>
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"
                   size="icon"
                   className="absolute -right-1.5 -top-1.5 size-5 rounded-full"
-                  onClick={() => composer.removeAttachment(attachment.id)}>
+                  disabled={attachment.status === "uploading"}
+                  onClick={() => void composer.removeAttachment(attachment.id)}>
                   <X className="size-3" />
                   <span className="sr-only">Remove {attachment.name}</span>
                 </Button>
@@ -57,10 +69,19 @@ export function AgentComposer() {
             ))}
           </div>
         )}
+        {composer.attachmentError && (
+          <p role="alert" className="px-1 pb-2 text-xs text-destructive">
+            {composer.attachmentError}
+          </p>
+        )}
         <Textarea
           value={composer.draft}
           onChange={(event) => composer.setDraft(event.target.value)}
           onPaste={composer.onPaste}
+          onDrop={composer.onDrop}
+          onDragEnter={composer.onDragEnter}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={composer.onDragLeave}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();

@@ -224,13 +224,14 @@ export type ClientMessage =
       params: unknown;
     }
   | { kind: "AgentSessionStart"; request_id: string; conversation_id: string }
-  | {
+    | {
       kind: "AgentPrompt";
       request_id: string;
       conversation_id: string;
       provider: string;
       model_id: string;
       prompt: string;
+      attachment_ids?: string[];
     }
   | { kind: "AgentStop"; request_id: string; conversation_id: string }
   | {

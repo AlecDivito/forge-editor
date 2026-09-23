@@ -2,9 +2,13 @@ import type { AiSessionEvent } from "@/lib/generated/types.gen";
 
 export type AgentAttachment = {
   id: string;
+  sessionId: string;
   name: string;
   mimeType: string;
   previewUrl: string;
+  status: "uploading" | "ready" | "failed";
+  progress: number;
+  error?: string;
 };
 export type AgentMessage = {
   id: string;

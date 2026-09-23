@@ -26,6 +26,28 @@ pub struct OpenAiCompatibleConfig {
     api_key: String,
 }
 
+#[derive(Clone)]
+pub struct S3AttachmentConfig {
+    pub endpoint: String,
+    pub bucket: String,
+    pub region: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+}
+
+impl std::fmt::Debug for S3AttachmentConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("S3AttachmentConfig")
+            .field("endpoint", &self.endpoint)
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("access_key_id", &"[redacted]")
+            .field("secret_access_key", &"[redacted]")
+            .finish()
+    }
+}
+
 impl std::fmt::Debug for OpenAiCompatibleConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -54,7 +76,11 @@ pub struct Config {
     pub workspaces: Vec<WorkspaceConfig>,
     pub default_workspace_id: String,
     pub openai_compatible: Option<OpenAiCompatibleConfig>,
+    pub s3_attachments: Option<S3AttachmentConfig>,
     pub agent_sessions_dir: PathBuf,
+    pub agent_attachment_cache_dir: PathBuf,
+    pub agent_max_attachment_bytes: u64,
+    pub agent_attachment_cache_max_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,11 +113,58 @@ impl Config {
             }
             (None, None) => None,
         };
+        let s3_attachments = match (
+            get("FORGE_S3_ENDPOINT").filter(|value| !value.trim().is_empty()),
+            get("FORGE_S3_BUCKET").filter(|value| !value.trim().is_empty()),
+            get("FORGE_S3_ACCESS_KEY_ID").filter(|value| !value.trim().is_empty()),
+            get("FORGE_S3_SECRET_ACCESS_KEY").filter(|value| !value.trim().is_empty()),
+        ) {
+            (Some(endpoint), Some(bucket), Some(access_key_id), Some(secret_access_key)) => Some(S3AttachmentConfig {
+                endpoint,
+                bucket,
+                region: get("FORGE_S3_REGION").filter(|value| !value.trim().is_empty()).unwrap_or_else(|| "us-east-1".into()),
+                access_key_id,
+                secret_access_key,
+            }),
+            (None, None, None, None) => None,
+            _ => {
+                tracing::warn!("FORGE_S3_ENDPOINT, FORGE_S3_BUCKET, FORGE_S3_ACCESS_KEY_ID, and FORGE_S3_SECRET_ACCESS_KEY must all be set; image attachments are disabled");
+                None
+            }
+        };
         let agent_sessions_dir = get("FORGE_AGENT_SESSIONS_DIR")
             .filter(|value| !value.trim().is_empty())
             .context("FORGE_AGENT_SESSIONS_DIR is required for AI session storage")?;
         let agent_sessions_dir =
             canonical_directory(Path::new(&agent_sessions_dir), "FORGE_AGENT_SESSIONS_DIR")?;
+        let agent_attachment_cache_dir = match get("FORGE_AGENT_ATTACHMENT_CACHE_DIR")
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                if !path.is_absolute() {
+                    bail!("FORGE_AGENT_ATTACHMENT_CACHE_DIR must be an absolute path");
+                }
+                path
+            }
+            None => agent_sessions_dir.join("attachment-cache"),
+        };
+        let agent_max_attachment_bytes = get("FORGE_AGENT_MAX_ATTACHMENT_BYTES")
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.parse::<u64>().context("FORGE_AGENT_MAX_ATTACHMENT_BYTES must be a positive integer"))
+            .transpose()?
+            .unwrap_or(20 * 1024 * 1024);
+        if agent_max_attachment_bytes == 0 {
+            bail!("FORGE_AGENT_MAX_ATTACHMENT_BYTES must be greater than zero");
+        }
+        let agent_attachment_cache_max_bytes = get("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES")
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.parse::<u64>().context("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES must be a positive integer"))
+            .transpose()?
+            .unwrap_or_else(|| agent_max_attachment_bytes.saturating_mul(5));
+        if agent_attachment_cache_max_bytes == 0 {
+            bail!("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES must be greater than zero");
+        }
 
         let Some(json) = get("FORGE_WORKSPACES_JSON") else {
             let base = get("BASE_DIRECTORY").context(
@@ -111,7 +184,11 @@ impl Config {
                 }],
                 default_workspace_id: "default".into(),
                 openai_compatible,
+                s3_attachments,
                 agent_sessions_dir,
+                agent_attachment_cache_dir,
+                agent_max_attachment_bytes,
+                agent_attachment_cache_max_bytes,
             });
         };
 
@@ -176,7 +253,11 @@ impl Config {
             workspaces,
             default_workspace_id,
             openai_compatible,
+            s3_attachments,
             agent_sessions_dir,
+            agent_attachment_cache_dir,
+            agent_max_attachment_bytes,
+            agent_attachment_cache_max_bytes,
         })
     }
 }

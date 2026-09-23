@@ -178,13 +178,13 @@ impl AiSessionService {
             messages: vec![
                 OpenAiChatMessage {
                     role: "system".to_owned(),
-                    content: Some("Create a concise 3-6 word title for the user's request. Return only the title, with no quotes or punctuation.".to_string()),
+                    content: Some(serde_json::Value::String("Create a concise 3-6 word title for the user's request. Return only the title, with no quotes or punctuation.".to_string())),
                     tool_calls: None,
                     tool_call_id: None,
                 },
                 OpenAiChatMessage {
                     role: "user".to_owned(),
-                    content: Some(prompt.to_owned()),
+                    content: Some(serde_json::Value::String(prompt.to_owned())),
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -404,7 +404,7 @@ fn apply_event(
                 return Err("The AI session storage has an operation without acceptance".to_owned());
             }
         }
-        AiSessionEventKind::Message { .. } | AiSessionEventKind::Reasoning { .. } | AiSessionEventKind::UserMessageQueued { .. } | AiSessionEventKind::UserMessageCancelled { .. } | AiSessionEventKind::ModelIntent { .. } | AiSessionEventKind::ToolCall { .. } | AiSessionEventKind::ToolIntent { .. }
+        AiSessionEventKind::Message { .. } | AiSessionEventKind::Reasoning { .. } | AiSessionEventKind::UserMessageQueued { .. } | AiSessionEventKind::UserMessageCancelled { .. } | AiSessionEventKind::AttachmentPrepared { .. } | AiSessionEventKind::AttachmentUploaded { .. } | AiSessionEventKind::AttachmentAbandoned { .. } | AiSessionEventKind::ModelIntent { .. } | AiSessionEventKind::ToolCall { .. } | AiSessionEventKind::ToolIntent { .. }
         | AiSessionEventKind::ToolResult { .. } | AiSessionEventKind::Failure { .. } => {}
     }
     session.events.push(event_for_projection);
@@ -485,7 +485,7 @@ mod tests {
             } },
             AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
                 event_id: "user".into(), sequence: 2, operation_id: Some("operation-1".into()), operation_sequence: Some(1),
-                occurred_at_ms: 2, kind: AiSessionEventKind::Message { message_id: None, role: ChatRole::User, content: "hello".into(), thinking: None, usage: None },
+                occurred_at_ms: 2, kind: AiSessionEventKind::Message { message_id: None, role: ChatRole::User, content: "hello".into(), thinking: None, usage: None, attachment_ids: Vec::new() },
             } },
         ];
         let contents = records.iter().map(serde_json::to_string).collect::<Result<Vec<_>, _>>().unwrap().join("\n") + "\n";
