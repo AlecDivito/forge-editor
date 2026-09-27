@@ -11,7 +11,11 @@ use serde::Deserialize;
 use crate::{
     agent::error::{AgentError, AgentFailureCode},
     error::AppError,
-    models::{AgentModelCatalog, AgentModelDescriptor, AgentSessionLog, AiSessionSummary, CompleteAgentAttachment, CompletedAgentAttachment, PrepareAgentAttachment, PreparedAgentAttachment},
+    models::{
+        AgentModelCatalog, AgentModelDescriptor, AgentSessionLog, AiSessionSummary,
+        CompleteAgentAttachment, CompletedAgentAttachment, PrepareAgentAttachment,
+        PreparedAgentAttachment,
+    },
     state::AppState,
 };
 
@@ -204,7 +208,9 @@ pub async fn prepare_attachment(
     Path(AgentSessionPath { session_id }): Path<AgentSessionPath>,
     Json(request): Json<PrepareAgentAttachment>,
 ) -> impl IntoApiResponse {
-    prepare_attachment_impl(state, session_id, request).await.into_response()
+    prepare_attachment_impl(state, session_id, request)
+        .await
+        .into_response()
 }
 
 async fn prepare_attachment_impl(
@@ -213,7 +219,11 @@ async fn prepare_attachment_impl(
     request: PrepareAgentAttachment,
 ) -> Result<Json<PreparedAgentAttachment>, AppError> {
     let session = state.ai_session(session_id);
-    session.prepare_attachment(request).await.map(Json).map_err(attachment_app_error)
+    session
+        .prepare_attachment(request)
+        .await
+        .map(Json)
+        .map_err(attachment_app_error)
 }
 
 /// Verify an uploaded object and make the attachment available to a session.
@@ -231,10 +241,15 @@ async fn prepare_attachment_impl(
 #[rovo]
 pub async fn complete_attachment(
     State(state): State<AppState>,
-    Path(AgentAttachmentPath { session_id, attachment_id }): Path<AgentAttachmentPath>,
+    Path(AgentAttachmentPath {
+        session_id,
+        attachment_id,
+    }): Path<AgentAttachmentPath>,
     Json(request): Json<CompleteAgentAttachment>,
 ) -> impl IntoApiResponse {
-    complete_attachment_impl(state, session_id, attachment_id, request).await.into_response()
+    complete_attachment_impl(state, session_id, attachment_id, request)
+        .await
+        .into_response()
 }
 
 async fn complete_attachment_impl(
@@ -244,7 +259,11 @@ async fn complete_attachment_impl(
     request: CompleteAgentAttachment,
 ) -> Result<Json<CompletedAgentAttachment>, AppError> {
     let session = state.ai_session(session_id);
-    session.complete_attachment(attachment_id, request).await.map(Json).map_err(attachment_app_error)
+    session
+        .complete_attachment(attachment_id, request)
+        .await
+        .map(Json)
+        .map_err(attachment_app_error)
 }
 
 /// Tombstone an unsent attachment and remove its object-store payload.
@@ -262,9 +281,14 @@ async fn complete_attachment_impl(
 #[rovo]
 pub async fn abandon_attachment(
     State(state): State<AppState>,
-    Path(AgentAttachmentPath { session_id, attachment_id }): Path<AgentAttachmentPath>,
+    Path(AgentAttachmentPath {
+        session_id,
+        attachment_id,
+    }): Path<AgentAttachmentPath>,
 ) -> impl IntoApiResponse {
-    abandon_attachment_impl(state, session_id, attachment_id).await.into_response()
+    abandon_attachment_impl(state, session_id, attachment_id)
+        .await
+        .into_response()
 }
 
 async fn abandon_attachment_impl(
@@ -273,7 +297,11 @@ async fn abandon_attachment_impl(
     attachment_id: String,
 ) -> Result<axum::http::StatusCode, AppError> {
     let session = state.ai_session(session_id);
-    session.abandon_attachment(attachment_id).await.map(|_| axum::http::StatusCode::NO_CONTENT).map_err(attachment_app_error)
+    session
+        .abandon_attachment(attachment_id)
+        .await
+        .map(|_| axum::http::StatusCode::NO_CONTENT)
+        .map_err(attachment_app_error)
 }
 
 /// Redirect to a short-lived object-store URL for one uploaded attachment.
@@ -290,7 +318,10 @@ async fn abandon_attachment_impl(
 #[rovo]
 pub async fn download_attachment(
     State(state): State<AppState>,
-    Path(AgentAttachmentPath { session_id, attachment_id }): Path<AgentAttachmentPath>,
+    Path(AgentAttachmentPath {
+        session_id,
+        attachment_id,
+    }): Path<AgentAttachmentPath>,
 ) -> impl IntoApiResponse {
     let session = state.ai_session(session_id);
     match session.attachment_download_url(attachment_id).await {

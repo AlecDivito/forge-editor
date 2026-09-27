@@ -122,7 +122,9 @@ async fn append_records(
 #[cfg(test)]
 mod tests {
     use super::SessionWriter;
-    use crate::models::{AI_SESSION_RECORD_VERSION, AiSessionEvent, AiSessionEventKind, AiSessionRecord, ChatRole};
+    use crate::models::{
+        AI_SESSION_RECORD_VERSION, AiSessionEvent, AiSessionEventKind, AiSessionRecord, ChatRole,
+    };
 
     #[tokio::test]
     async fn serializes_whole_records_in_submission_order() {
@@ -132,29 +134,45 @@ mod tests {
         ));
         let writer = SessionWriter::spawn(path.clone());
         writer
-            .append(vec![AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
-                event_id: "first".into(), sequence: 1, operation_id: None, operation_sequence: None,
-                occurred_at_ms: 1, kind: AiSessionEventKind::Message {
-                message_id: None,
-                role: ChatRole::User,
-                content: "first".into(),
-                thinking: None,
-                usage: None,
-                attachment_ids: Vec::new(),
-            } } }])
+            .append(vec![AiSessionRecord::Event {
+                version: AI_SESSION_RECORD_VERSION,
+                event: AiSessionEvent {
+                    event_id: "first".into(),
+                    sequence: 1,
+                    operation_id: None,
+                    operation_sequence: None,
+                    occurred_at_ms: 1,
+                    kind: AiSessionEventKind::Message {
+                        message_id: None,
+                        role: ChatRole::User,
+                        content: "first".into(),
+                        thinking: None,
+                        usage: None,
+                        attachment_ids: Vec::new(),
+                    },
+                },
+            }])
             .await
             .unwrap();
         writer
-            .append(vec![AiSessionRecord::Event { version: AI_SESSION_RECORD_VERSION, event: AiSessionEvent {
-                event_id: "second".into(), sequence: 2, operation_id: None, operation_sequence: None,
-                occurred_at_ms: 2, kind: AiSessionEventKind::Message {
-                message_id: None,
-                role: ChatRole::Assistant,
-                content: "second".into(),
-                thinking: None,
-                usage: None,
-                attachment_ids: Vec::new(),
-            } } }])
+            .append(vec![AiSessionRecord::Event {
+                version: AI_SESSION_RECORD_VERSION,
+                event: AiSessionEvent {
+                    event_id: "second".into(),
+                    sequence: 2,
+                    operation_id: None,
+                    operation_sequence: None,
+                    occurred_at_ms: 2,
+                    kind: AiSessionEventKind::Message {
+                        message_id: None,
+                        role: ChatRole::Assistant,
+                        content: "second".into(),
+                        thinking: None,
+                        usage: None,
+                        attachment_ids: Vec::new(),
+                    },
+                },
+            }])
             .await
             .unwrap();
         let contents = tokio::fs::read_to_string(&path).await.unwrap();

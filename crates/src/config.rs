@@ -65,7 +65,10 @@ impl OpenAiCompatibleConfig {
 
     #[cfg(test)]
     pub(crate) fn for_test(base_url: String) -> Self {
-        Self { base_url, api_key: "test-key".into() }
+        Self {
+            base_url,
+            api_key: "test-key".into(),
+        }
     }
 }
 
@@ -78,9 +81,11 @@ pub struct Config {
     pub openai_compatible: Option<OpenAiCompatibleConfig>,
     pub s3_attachments: Option<S3AttachmentConfig>,
     pub agent_sessions_dir: PathBuf,
+    pub agent_resources_dir: PathBuf,
     pub agent_attachment_cache_dir: PathBuf,
     pub agent_max_attachment_bytes: u64,
     pub agent_attachment_cache_max_bytes: u64,
+    pub agent_max_model_rounds: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,17 +123,26 @@ impl Config {
             get("FORGE_S3_BUCKET").filter(|value| !value.trim().is_empty()),
             get("FORGE_S3_ACCESS_KEY_ID").filter(|value| !value.trim().is_empty()),
             get("FORGE_S3_SECRET_ACCESS_KEY").filter(|value| !value.trim().is_empty()),
+            get("FORGE_S3_REGION").filter(|value| !value.trim().is_empty()),
         ) {
-            (Some(endpoint), Some(bucket), Some(access_key_id), Some(secret_access_key)) => Some(S3AttachmentConfig {
+            (
+                Some(endpoint),
+                Some(bucket),
+                Some(access_key_id),
+                Some(secret_access_key),
+                Some(region),
+            ) => Some(S3AttachmentConfig {
                 endpoint,
                 bucket,
-                region: get("FORGE_S3_REGION").filter(|value| !value.trim().is_empty()).unwrap_or_else(|| "us-east-1".into()),
+                region,
                 access_key_id,
                 secret_access_key,
             }),
-            (None, None, None, None) => None,
+            (None, None, None, None, None) => None,
             _ => {
-                tracing::warn!("FORGE_S3_ENDPOINT, FORGE_S3_BUCKET, FORGE_S3_ACCESS_KEY_ID, and FORGE_S3_SECRET_ACCESS_KEY must all be set; image attachments are disabled");
+                tracing::warn!(
+                    "FORGE_S3_ENDPOINT, FORGE_S3_BUCKET, FORGE_S3_ACCESS_KEY_ID, FORGE_S3_REGION, and FORGE_S3_SECRET_ACCESS_KEY must all be set; image attachments are disabled"
+                );
                 None
             }
         };
@@ -137,6 +151,11 @@ impl Config {
             .context("FORGE_AGENT_SESSIONS_DIR is required for AI session storage")?;
         let agent_sessions_dir =
             canonical_directory(Path::new(&agent_sessions_dir), "FORGE_AGENT_SESSIONS_DIR")?;
+        let agent_resources_dir = get("FORGE_AGENT_RESOURCES_DIR")
+            .filter(|value| !value.trim().is_empty())
+            .context("FORGE_AGENT_RESOURCES_DIR is required for agent skills, rules, prompts, and policies")?;
+        let agent_resources_dir =
+            canonical_directory(Path::new(&agent_resources_dir), "FORGE_AGENT_RESOURCES_DIR")?;
         let agent_attachment_cache_dir = match get("FORGE_AGENT_ATTACHMENT_CACHE_DIR")
             .filter(|value| !value.trim().is_empty())
         {
@@ -151,7 +170,11 @@ impl Config {
         };
         let agent_max_attachment_bytes = get("FORGE_AGENT_MAX_ATTACHMENT_BYTES")
             .filter(|value| !value.trim().is_empty())
-            .map(|value| value.parse::<u64>().context("FORGE_AGENT_MAX_ATTACHMENT_BYTES must be a positive integer"))
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .context("FORGE_AGENT_MAX_ATTACHMENT_BYTES must be a positive integer")
+            })
             .transpose()?
             .unwrap_or(20 * 1024 * 1024);
         if agent_max_attachment_bytes == 0 {
@@ -159,11 +182,27 @@ impl Config {
         }
         let agent_attachment_cache_max_bytes = get("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES")
             .filter(|value| !value.trim().is_empty())
-            .map(|value| value.parse::<u64>().context("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES must be a positive integer"))
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .context("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES must be a positive integer")
+            })
             .transpose()?
             .unwrap_or_else(|| agent_max_attachment_bytes.saturating_mul(5));
         if agent_attachment_cache_max_bytes == 0 {
             bail!("FORGE_AGENT_ATTACHMENT_CACHE_MAX_BYTES must be greater than zero");
+        }
+        let agent_max_model_rounds = get("FORGE_AGENT_MAX_MODEL_ROUNDS")
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| {
+                value
+                    .parse::<u32>()
+                    .context("FORGE_AGENT_MAX_MODEL_ROUNDS must be a positive integer")
+            })
+            .transpose()?
+            .unwrap_or(16);
+        if agent_max_model_rounds == 0 {
+            bail!("FORGE_AGENT_MAX_MODEL_ROUNDS must be greater than zero");
         }
 
         let Some(json) = get("FORGE_WORKSPACES_JSON") else {
@@ -186,9 +225,11 @@ impl Config {
                 openai_compatible,
                 s3_attachments,
                 agent_sessions_dir,
+                agent_resources_dir,
                 agent_attachment_cache_dir,
                 agent_max_attachment_bytes,
                 agent_attachment_cache_max_bytes,
+                agent_max_model_rounds,
             });
         };
 
@@ -255,9 +296,11 @@ impl Config {
             openai_compatible,
             s3_attachments,
             agent_sessions_dir,
+            agent_resources_dir,
             agent_attachment_cache_dir,
             agent_max_attachment_bytes,
             agent_attachment_cache_max_bytes,
+            agent_max_model_rounds,
         })
     }
 }
@@ -333,6 +376,9 @@ mod tests {
         values
             .entry("FORGE_AGENT_SESSIONS_DIR")
             .or_insert_with(|| env::temp_dir().display().to_string());
+        values
+            .entry("FORGE_AGENT_RESOURCES_DIR")
+            .or_insert_with(|| env::temp_dir().display().to_string());
         Config::from_values(|key| values.get(key).cloned())
     }
 
@@ -369,6 +415,33 @@ mod tests {
             ("FORGE_WORKSPACES_ROOT", root.to_string_lossy().into_owned()),
             ("FORGE_WORKSPACES_JSON", r#"[{"id":"one","name":"One","path":"one"},{"id":"two","name":"Two","path":"two"}]"#.into()),
         ])).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configures_agent_model_round_limit() {
+        let root = root();
+        let config = parse(HashMap::from([
+            ("FORGE_WORKSPACES_ROOT", root.to_string_lossy().into_owned()),
+            (
+                "FORGE_WORKSPACES_JSON",
+                r#"[{"id":"one","name":"One","path":"one"}]"#.into(),
+            ),
+            ("FORGE_AGENT_MAX_MODEL_ROUNDS", "24".into()),
+        ]))
+        .unwrap();
+        assert_eq!(config.agent_max_model_rounds, 24);
+        assert!(
+            parse(HashMap::from([
+                ("FORGE_WORKSPACES_ROOT", root.to_string_lossy().into_owned()),
+                (
+                    "FORGE_WORKSPACES_JSON",
+                    r#"[{"id":"one","name":"One","path":"one"}]"#.into()
+                ),
+                ("FORGE_AGENT_MAX_MODEL_ROUNDS", "0".into()),
+            ]))
+            .is_err()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

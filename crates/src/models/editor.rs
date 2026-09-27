@@ -345,6 +345,12 @@ pub enum ClientMessage {
         request_id: String,
         conversation_id: String,
     },
+    AgentConfirmTool {
+        request_id: String,
+        conversation_id: String,
+        confirmation_id: String,
+        decision: crate::models::ToolApprovalDecision,
+    },
 
     Ping,
 }
@@ -494,8 +500,22 @@ impl std::fmt::Display for ClientMessage {
                 f,
                 "AgentPrompt({request_id}, {conversation_id}, {provider}, {model_id})"
             ),
-            ClientMessage::AgentStop { request_id, conversation_id } => {
+            ClientMessage::AgentStop {
+                request_id,
+                conversation_id,
+            } => {
                 write!(f, "AgentStop({request_id}, {conversation_id})")
+            }
+            ClientMessage::AgentConfirmTool {
+                request_id,
+                conversation_id,
+                confirmation_id,
+                decision,
+            } => {
+                write!(
+                    f,
+                    "AgentConfirmTool({request_id}, {conversation_id}, {confirmation_id}, {decision:?})"
+                )
             }
 
             ClientMessage::Ping => write!(f, "Ping"),

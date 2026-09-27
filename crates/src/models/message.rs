@@ -17,6 +17,24 @@ pub enum ChatRole {
     Assistant,
 }
 
+/// The source and scope of a durable tool approval decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolApprovalDecision {
+    AllowOnce,
+    AllowAlways,
+    Deny,
+}
+
+/// The exact, user-facing action awaiting approval. New side-effecting tools
+/// must add a typed variant here instead of leaking arbitrary JSON arguments
+/// into the approval contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolConfirmationRequest {
+    Bash { command: String },
+}
+
 /// Durable metadata for a session-owned object-store image. Image bytes are
 /// never included in JSONL; the object key is only consumed by Forge's
 /// attachment store when it constructs a provider request.
@@ -271,10 +289,18 @@ pub struct AiSessionEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AiSessionEventKind {
-    SessionCreated { metadata: AiSessionMetadata },
-    SessionNamed { title: String },
-    ModelSelected { model: AiSessionModel },
-    OperationTransition { transition: OperationTransition },
+    SessionCreated {
+        metadata: AiSessionMetadata,
+    },
+    SessionNamed {
+        title: String,
+    },
+    ModelSelected {
+        model: AiSessionModel,
+    },
+    OperationTransition {
+        transition: OperationTransition,
+    },
     Message {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
@@ -300,14 +326,22 @@ pub enum AiSessionEventKind {
     },
     /// Tombstone for a queued prompt that was edited or explicitly cancelled
     /// before the scheduler made it model-visible.
-    UserMessageCancelled { message_id: String, reason: String },
-    AttachmentPrepared { attachment: AiSessionAttachment },
+    UserMessageCancelled {
+        message_id: String,
+        reason: String,
+    },
+    AttachmentPrepared {
+        attachment: AiSessionAttachment,
+    },
     AttachmentUploaded {
         attachment_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         etag: Option<String>,
     },
-    AttachmentAbandoned { attachment_id: String, reason: String },
+    AttachmentAbandoned {
+        attachment_id: String,
+        reason: String,
+    },
     /// A provider request is durably identified before it is sent. The
     /// request hash identifies its committed context without persisting a
     /// second mutable transcript.
@@ -319,7 +353,29 @@ pub enum AiSessionEventKind {
         assistant_message_id: String,
         reasoning_message_id: String,
     },
-    ToolCall { tool_call_id: String, name: String, arguments: Value },
+    ToolCall {
+        tool_call_id: String,
+        name: String,
+        arguments: Value,
+    },
+    /// A side-effecting tool is paused until a human resolves this exact
+    /// normalized call. This is durable so a prompt is never mistaken for an
+    /// already-authorized command after reconnect or restart.
+    ToolConfirmationRequested {
+        confirmation_id: String,
+        tool_call_id: String,
+        request: ToolConfirmationRequest,
+    },
+    ToolConfirmationResolved {
+        confirmation_id: String,
+        decision: ToolApprovalDecision,
+    },
+    /// A later user prompt superseded an outstanding approval. This is not a
+    /// denial: no person made a decision about the command.
+    ToolConfirmationCancelled {
+        confirmation_id: String,
+        reason: String,
+    },
     /// Exact normalized arguments and replay policy are committed before a
     /// tool begins an external effect.
     ToolIntent {
@@ -329,7 +385,11 @@ pub enum AiSessionEventKind {
         attempt: u32,
         replay_class: crate::agent::operation::ToolReplayClass,
     },
-    ToolResult { tool_call_id: String, content: String, is_error: bool },
+    ToolResult {
+        tool_call_id: String,
+        content: String,
+        is_error: bool,
+    },
     Failure {
         #[serde(default)]
         code: AgentFailureCode,
@@ -344,10 +404,7 @@ pub enum AiSessionEventKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AiSessionRecord {
-    Event {
-        version: u8,
-        event: AiSessionEvent,
-    },
+    Event { version: u8, event: AiSessionEvent },
 }
 
 /// The in-memory projection of one session-scoped event log. It contains no
@@ -368,9 +425,18 @@ impl AgentSessionLog {
         self.events
             .iter()
             .filter_map(|event| match &event.kind {
-                AiSessionEventKind::Message { role, content, thinking, usage, .. } => Some(ChatMessage {
-                    role: role.clone(), content: content.clone(), thinking: thinking.clone(),
-                    usage: usage.clone(), created_at_ms: event.occurred_at_ms,
+                AiSessionEventKind::Message {
+                    role,
+                    content,
+                    thinking,
+                    usage,
+                    ..
+                } => Some(ChatMessage {
+                    role: role.clone(),
+                    content: content.clone(),
+                    thinking: thinking.clone(),
+                    usage: usage.clone(),
+                    created_at_ms: event.occurred_at_ms,
                 }),
                 _ => None,
             })
@@ -378,7 +444,10 @@ impl AgentSessionLog {
     }
 
     pub fn message_count(&self) -> usize {
-        self.events.iter().filter(|event| matches!(event.kind, AiSessionEventKind::Message { .. })).count()
+        self.events
+            .iter()
+            .filter(|event| matches!(event.kind, AiSessionEventKind::Message { .. }))
+            .count()
     }
 }
 

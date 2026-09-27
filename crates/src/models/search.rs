@@ -30,7 +30,10 @@ impl SearchCancellation {
     pub fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
         // A timeout drops the search future. Keep this armed so the blocking
         // worker observes that drop through the shared operation flag.
-        Self { cancelled, armed: true }
+        Self {
+            cancelled,
+            armed: true,
+        }
     }
 
     pub fn disarm(&mut self) {

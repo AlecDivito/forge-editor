@@ -234,6 +234,7 @@ export type ClientMessage =
       attachment_ids?: string[];
     }
   | { kind: "AgentStop"; request_id: string; conversation_id: string }
+  | { kind: "AgentConfirmTool"; request_id: string; conversation_id: string; confirmation_id: string; decision: "allow_once" | "allow_always" | "deny" }
   | {
       kind: "Ping";
     };

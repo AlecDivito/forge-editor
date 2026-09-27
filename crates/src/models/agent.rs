@@ -76,16 +76,55 @@ pub enum AgentStreamDelta {
 /// these into durable session events after writer acknowledgement.
 #[derive(Clone, Debug)]
 pub enum AgentActorEvent {
-    Started { task: AgentTask },
-    ModelStarted { task: AgentTask, attempt: u32 },
-    ThinkingDelta { task: AgentTask, attempt: u32, text: String },
-    TextDelta { task: AgentTask, attempt: u32, text: String },
-    ModelSettled { task: AgentTask, attempt: u32, response: AssistantResponse },
-    ToolCallsProposed { task: AgentTask, calls: Vec<OpenAiToolCall> },
-    ToolStarted { task: AgentTask, call: OpenAiToolCall },
-    ToolFinished { task: AgentTask, call_id: String, result: AgentToolResult },
-    Completed { task: AgentTask, usage: Option<AiTokenUsage> },
-    Failed { task: AgentTask, code: crate::agent::error::AgentFailureCode, detail: String },
+    Started {
+        task: AgentTask,
+    },
+    ModelStarted {
+        task: AgentTask,
+        attempt: u32,
+    },
+    ThinkingDelta {
+        task: AgentTask,
+        attempt: u32,
+        text: String,
+    },
+    TextDelta {
+        task: AgentTask,
+        attempt: u32,
+        text: String,
+    },
+    ModelSettled {
+        task: AgentTask,
+        attempt: u32,
+        response: AssistantResponse,
+    },
+    ToolCallsProposed {
+        task: AgentTask,
+        calls: Vec<OpenAiToolCall>,
+    },
+    ToolConfirmationRequested {
+        task: AgentTask,
+        call: OpenAiToolCall,
+        confirmation_id: String,
+    },
+    ToolStarted {
+        task: AgentTask,
+        call: OpenAiToolCall,
+    },
+    ToolFinished {
+        task: AgentTask,
+        call_id: String,
+        result: AgentToolResult,
+    },
+    Completed {
+        task: AgentTask,
+        usage: Option<AiTokenUsage>,
+    },
+    Failed {
+        task: AgentTask,
+        code: crate::agent::error::AgentFailureCode,
+        detail: String,
+    },
     /// Cancellation is cooperative so deltas already observed from the model
     /// can be committed by the session owner before the operation closes.
     Cancelled {

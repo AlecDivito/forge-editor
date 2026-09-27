@@ -39,6 +39,7 @@ export type AgentToolActivity = {
   arguments: unknown;
   createdAt: number;
   status: "running" | "completed" | "error";
+  error?: string;
 };
 
 /** A single ordered durable row. Restored sessions use this instead of trying
@@ -49,6 +50,9 @@ export type AgentTranscriptEntry =
   | { id: string; sequence: number; operationId?: string; kind: "pending-message"; requestId: string; message: AgentMessage }
   | { id: string; sequence: number; operationId?: string; kind: "pending-cancelled"; text: string }
   | { id: string; sequence: number; operationId?: string; kind: "tool-call"; activity: AgentToolActivity }
+  | { id: string; sequence: number; operationId?: string; kind: "bash"; toolCallId: string; command: string; status: "awaiting-confirmation" | "running" | "completed" | "error"; output?: string; exitCode?: number | null; truncated?: boolean }
+  | { id: string; sequence: number; operationId?: string; kind: "tool-confirmation"; requestId: string; confirmationId: string; toolCallId: string; name: string; arguments: unknown }
+  | { id: string; sequence: number; operationId?: string; kind: "tool-confirmation-result"; confirmationId: string; outcome: "approved" | "denied" | "cancelled" | "auto-approved"; policyId?: string; ruleId?: string; reason?: string }
   | { id: string; sequence: number; operationId?: string; kind: "tool-result"; toolCallId: string; text: string; isError: boolean }
   | { id: string; sequence: number; operationId?: string; kind: "failure"; text: string }
   | { id: string; sequence: number; operationId?: string; kind: "status"; text: string };

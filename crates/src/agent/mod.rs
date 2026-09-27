@@ -6,5 +6,6 @@
 
 pub mod error;
 pub mod operation;
+pub mod resources;
 pub mod session;
 pub mod tools;

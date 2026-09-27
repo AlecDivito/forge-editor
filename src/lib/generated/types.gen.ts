@@ -147,6 +147,19 @@ export type AiSessionEventKind = {
     name: string;
     tool_call_id: string;
 } | {
+    type: 'tool_confirmation_requested';
+    confirmation_id: string;
+    name: string;
+    tool_call_id: string;
+} | {
+    type: 'tool_confirmation_resolved';
+    approved: boolean;
+    confirmation_id: string;
+} | {
+    type: 'tool_confirmation_cancelled';
+    confirmation_id: string;
+    reason: string;
+} | {
     type: 'tool_intent';
     attempt: number;
     name: string;
@@ -540,6 +553,10 @@ export type OperationState = {
 } | {
     kind: 'tools_planned';
     tool_call_ids: Array<string>;
+} | {
+    confirmation_id: string;
+    kind: 'waiting_confirmation';
+    tool_call_id: string;
 } | {
     kind: 'tool_in_flight';
     tool_call_id: string;

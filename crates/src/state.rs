@@ -14,6 +14,7 @@ use tokio::{
 
 use crate::{
     actors::{AiSessionActor, DocumentActor, LspServerActor, TerminalActor},
+    agent::resources::AgentRuntime,
     config::Config,
     models::{ClientId, FileId, LanguageId, ServerMessage, TerminalId, WorkspaceId},
     services::{ai_session::AiSessionService, attachments::AttachmentStore},
@@ -27,6 +28,7 @@ pub struct AppState {
     pub terminals: Arc<DashMap<TerminalId, TerminalRecord>>,
     pub ai_sessions: Arc<AiSessionService>,
     pub attachments: Arc<AttachmentStore>,
+    pub agent_runtime: Arc<AgentRuntime>,
     ai_session_actors: Arc<DashMap<String, Arc<AiSessionActor>>>,
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
@@ -114,6 +116,7 @@ impl AppState {
             config.agent_max_attachment_bytes,
             config.agent_attachment_cache_max_bytes,
         )?;
+        let agent_runtime = Arc::new(AgentRuntime::load(config.agent_resources_dir.clone())?);
         let state = Self {
             config: Arc::new(config),
             workspaces: Arc::new(workspaces),
@@ -121,6 +124,7 @@ impl AppState {
             terminals: Arc::new(DashMap::new()),
             ai_sessions,
             attachments,
+            agent_runtime,
             ai_session_actors: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
@@ -162,6 +166,8 @@ impl AppState {
                 AiSessionActor::spawn(
                     session_id,
                     self.config.openai_compatible.clone(),
+                    self.config.agent_max_model_rounds,
+                    self.agent_runtime.clone(),
                     self.ai_sessions.clone(),
                     self.attachments.clone(),
                     self.agent_tool_context(),
@@ -171,6 +177,13 @@ impl AppState {
     }
 
     fn agent_tool_context(&self) -> crate::agent::tools::ToolContext {
+        let command_cwd = self
+            .config
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == self.config.default_workspace_id)
+            .map(|workspace| workspace.root.clone())
+            .expect("configuration validates the default Forge workspace");
         crate::agent::tools::ToolContext::new(
             self.config
                 .workspaces
@@ -178,6 +191,7 @@ impl AppState {
                 .map(|workspace| (workspace.id.clone(), workspace.root.clone()))
                 .collect(),
             self.open_files.clone(),
+            command_cwd,
         )
     }
 }
@@ -304,6 +318,9 @@ mod tests {
         let one = one.canonicalize().unwrap();
         let two = two.canonicalize().unwrap();
         std::fs::create_dir_all(parent.join("sessions")).unwrap();
+        for directory in ["skills", "rules", "prompts", "policies"] {
+            std::fs::create_dir_all(parent.join("agent-resources").join(directory)).unwrap();
+        }
         let state = AppState::new(Config {
             port: 0,
             environment: EnvironmentConfig {
@@ -326,9 +343,11 @@ mod tests {
             openai_compatible: None,
             s3_attachments: None,
             agent_sessions_dir: parent.join("sessions"),
+            agent_resources_dir: parent.join("agent-resources"),
             agent_attachment_cache_dir: parent.join("attachment-cache"),
             agent_max_attachment_bytes: 20 * 1024 * 1024,
             agent_attachment_cache_max_bytes: 100 * 1024 * 1024,
+            agent_max_model_rounds: 16,
         })
         .unwrap();
         assert_eq!(

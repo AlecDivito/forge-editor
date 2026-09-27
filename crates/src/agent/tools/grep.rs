@@ -26,6 +26,7 @@ impl AgentTool for GrepTool {
             timeout: Duration::from_secs(20),
             max_attempts: 2,
             replay_class: crate::agent::operation::ToolReplayClass::Safe,
+            requires_confirmation: false,
         }
     }
 

@@ -375,6 +375,11 @@ export const zOperationState = z.union([
         tool_call_ids: z.array(z.string())
     }),
     z.object({
+        confirmation_id: z.string(),
+        kind: z.literal('waiting_confirmation'),
+        tool_call_id: z.string()
+    }),
+    z.object({
         kind: z.literal('tool_in_flight'),
         tool_call_id: z.string()
     }),
@@ -488,6 +493,22 @@ export const zAiSessionEventKind = z.union([
         tool_call_id: z.string()
     }),
     z.object({
+        type: z.literal('tool_confirmation_requested'),
+        confirmation_id: z.string(),
+        name: z.string(),
+        tool_call_id: z.string()
+    }),
+    z.object({
+        type: z.literal('tool_confirmation_resolved'),
+        approved: z.boolean(),
+        confirmation_id: z.string()
+    }),
+    z.object({
+        type: z.literal('tool_confirmation_cancelled'),
+        confirmation_id: z.string(),
+        reason: z.string()
+    }),
+    z.object({
         type: z.literal('tool_intent'),
         attempt: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
         name: z.string(),
@@ -502,7 +523,7 @@ export const zAiSessionEventKind = z.union([
     }),
     z.object({
         type: z.literal('failure'),
-        code: zAgentFailureCode.optional().default(AgentFailureCode.UNKNOWN),
+        code: zAgentFailureCode.optional().default('unknown'),
         detail: z.string().nullish(),
         message: z.string()
     })
