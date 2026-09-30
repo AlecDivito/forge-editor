@@ -2,7 +2,7 @@ import { javascript } from "@codemirror/lang-javascript";
 import { classHighlighter, highlightCode } from "@lezer/highlight";
 import { gruvboxDarkStyle } from "@uiw/codemirror-theme-gruvbox-dark";
 import { CreateThemeOptions } from "@uiw/codemirror-themes";
-import { EditorView } from "codemirror";
+import { EditorView } from "@codemirror/view";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import { MarkedString, MarkupContent } from "vscode-languageserver-protocol";

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import VSCodeLayout from "./VsCodeLayout";
 import { useDiagnosticsStore } from "./panels/code/state/diagnostics.store";
+import { useBreakpointStore } from "./panels/code/state/breakpoints.store";
 import { useEditorSessionStore } from "./panels/code/state/editor-session.store";
 import { socket } from "@/lib/ws/connection";
 import { subscribeFilesystemEvents } from "@/lib/documents/registry";
@@ -17,6 +18,8 @@ export default function WebPageInitializer({ }: Props) {
   const publishDiagnostics = useDiagnosticsStore((s) => s.publish)
   const remapDiagnostics = useDiagnosticsStore((s) => s.remapPath)
   const removeDiagnostics = useDiagnosticsStore((s) => s.removePath)
+  const remapBreakpoints = useBreakpointStore((s) => s.remapPath)
+  const removeBreakpoints = useBreakpointStore((s) => s.removePath)
   const remapPanels = useEditorSessionStore((s) => s.remapPath)
   const queryClient = useQueryClient()
 
@@ -30,8 +33,10 @@ export default function WebPageInitializer({ }: Props) {
       if (event.kind === "FsRenamed") {
         remapPanels(event.workspace_id, event.from as FileId, event.to as FileId, event.entry_type)
         remapDiagnostics(event.workspace_id, event.from as FileId, event.to as FileId, event.entry_type)
+        remapBreakpoints(event.workspace_id, event.from as FileId, event.to as FileId, event.entry_type)
       } else if (event.kind === "FsDeleted") {
         removeDiagnostics(event.workspace_id, event.path as FileId, event.entry_type)
+        removeBreakpoints(event.workspace_id, event.path as FileId, event.entry_type)
       }
       // The websocket event is the cross-client source of truth. Invalidate
       // every directory listing because a directory move/delete changes both
@@ -44,7 +49,7 @@ export default function WebPageInitializer({ }: Props) {
       })
     })
     return () => { unsubscribe(); unsubscribeFilesystem(); }
-  }, [publishDiagnostics, queryClient, remapDiagnostics, remapPanels, removeDiagnostics]);
+  }, [publishDiagnostics, queryClient, remapBreakpoints, remapDiagnostics, remapPanels, removeBreakpoints, removeDiagnostics]);
 
   return (
     <VSCodeLayout />
