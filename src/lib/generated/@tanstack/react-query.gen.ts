@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { abandonAttachment, commit, completeAttachment, createFile, createSession, deleteFile, downloadAttachment, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listSessions, type Options, prepareAttachment, push, renameFile, saveFile, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
-import type { AbandonAttachmentData, AbandonAttachmentResponse, CommitData, CommitResponse, CompleteAttachmentData, CompleteAttachmentResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListSessionsData, ListSessionsResponse, PrepareAttachmentData, PrepareAttachmentResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { abandonAttachment, commit, completeAttachment, createFile, createSession, deleteFile, downloadAttachment, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listRules, listSessions, listSkills, type Options, prepareAttachment, push, renameFile, saveFile, saveRule, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
+import type { AbandonAttachmentData, AbandonAttachmentResponse, CommitData, CommitResponse, CompleteAttachmentData, CompleteAttachmentResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListRulesData, ListRulesResponse, ListSessionsData, ListSessionsResponse, ListSkillsData, ListSkillsResponse, PrepareAttachmentData, PrepareAttachmentResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SaveRuleData, SaveRuleResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -75,6 +75,64 @@ export const listModelsOptions = (options?: Options<ListModelsData>) => queryOpt
     },
     queryKey: listModelsQueryKey(options)
 });
+
+export const listRulesQueryKey = (options?: Options<ListRulesData>) => createQueryKey('listRules', options);
+
+/**
+ * List the manually managed rules applied to future agent turns.
+ */
+export const listRulesOptions = (options?: Options<ListRulesData>) => queryOptions<ListRulesResponse, AxiosError<DefaultError>, ListRulesResponse, ReturnType<typeof listRulesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listRules({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listRulesQueryKey(options)
+});
+
+export const listSkillsQueryKey = (options?: Options<ListSkillsData>) => createQueryKey('listSkills', options);
+
+/**
+ * List skill metadata available to the Forge composer. Instruction bodies are
+ *
+ * intentionally not returned by this endpoint.
+ */
+export const listSkillsOptions = (options?: Options<ListSkillsData>) => queryOptions<ListSkillsResponse, AxiosError<DefaultError>, ListSkillsResponse, ReturnType<typeof listSkillsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listSkills({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listSkillsQueryKey(options)
+});
+
+/**
+ * Create or replace one manually managed agent rule.
+ *
+ * The id becomes `rules/<rule_id>.md` in the configured agent resources
+ * directory. The new rule applies to agent turns started after this request.
+ */
+export const saveRuleMutation = (options?: Partial<Options<SaveRuleData>>): UseMutationOptions<SaveRuleResponse, AxiosError<DefaultError>, Options<SaveRuleData>> => {
+    const mutationOptions: UseMutationOptions<SaveRuleResponse, AxiosError<DefaultError>, Options<SaveRuleData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await saveRule({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
 
 export const listSessionsQueryKey = (options?: Options<ListSessionsData>) => createQueryKey('listSessions', options);
 

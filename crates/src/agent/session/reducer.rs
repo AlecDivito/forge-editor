@@ -6,8 +6,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    agent::context,
     agent::operation::OperationStatus,
-    models::{AgentSessionLog, AiSessionEventKind, OpenAiChatMessage, OpenAiToolCall, OpenAiToolCallFunction},
+    models::{
+        AgentSessionLog, AiSessionEventKind, OpenAiChatMessage, OpenAiToolCall,
+        OpenAiToolCallFunction,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,13 +44,19 @@ impl AgentProjection {
             .events
             .iter()
             .filter_map(|event| match (&event.operation_id, &event.kind) {
-                (Some(operation_id), AiSessionEventKind::ToolCall { tool_call_id, name, arguments })
-                    if !settled_calls.contains(tool_call_id.as_str()) => Some(PendingToolCall {
-                        operation_id: operation_id.clone(),
-                        tool_call_id: tool_call_id.clone(),
-                        name: name.clone(),
-                        arguments: arguments.clone(),
-                    }),
+                (
+                    Some(operation_id),
+                    AiSessionEventKind::ToolCall {
+                        tool_call_id,
+                        name,
+                        arguments,
+                    },
+                ) if !settled_calls.contains(tool_call_id.as_str()) => Some(PendingToolCall {
+                    operation_id: operation_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                }),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -56,43 +66,109 @@ impl AgentProjection {
             .filter(|operation| operation.status != OperationStatus::Complete)
             .map(|operation| operation.operation_id.clone())
             .collect();
-        Self { runnable_operation_ids, pending_tool_calls }
+        Self {
+            runnable_operation_ids,
+            pending_tool_calls,
+        }
     }
 
     /// Reconstructs provider messages from events only. An unfinished tool
     /// round is represented as the model's tool-call message followed by every
     /// settled tool result, exactly as OpenAI expects for the next round.
-    pub fn model_context(&self, log: &AgentSessionLog, operation_id: &str) -> Vec<OpenAiChatMessage> {
+    pub fn model_context(
+        &self,
+        log: &AgentSessionLog,
+        operation_id: &str,
+    ) -> Vec<OpenAiChatMessage> {
         let mut messages = Vec::new();
+        let compaction = context::latest_compaction(log);
+        if let Some((_first_kept_sequence, summary)) = compaction {
+            messages.push(OpenAiChatMessage {
+                role: "system".into(),
+                content: Some(serde_json::Value::String(format!(
+                    "Conversation checkpoint. Treat this as authoritative context for earlier history:\n{summary}"
+                ))),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
         let mut calls = HashMap::<String, Vec<OpenAiToolCall>>::new();
         for event in &log.events {
+            if compaction.is_some_and(|(first_kept_sequence, _)| event.sequence < first_kept_sequence) {
+                continue;
+            }
             match &event.kind {
                 AiSessionEventKind::Message { role, content, .. } => {
                     // Future accepted operations remain visible in history but
                     // do not become input to the currently claimed operation.
-                    if event.operation_id.as_deref().is_some_and(|id| id != operation_id)
-                        && log.operations.iter().any(|operation| operation.operation_id == event.operation_id.clone().unwrap_or_default() && operation.status != OperationStatus::Complete)
+                    if event
+                        .operation_id
+                        .as_deref()
+                        .is_some_and(|id| id != operation_id)
+                        && log.operations.iter().any(|operation| {
+                            operation.operation_id == event.operation_id.clone().unwrap_or_default()
+                                && operation.status != OperationStatus::Complete
+                        })
                     {
                         continue;
                     }
                     messages.push(OpenAiChatMessage {
-                        role: match role { crate::models::ChatRole::User => "user", crate::models::ChatRole::Assistant => "assistant" }.into(),
-                        content: Some(serde_json::Value::String(content.clone())), tool_calls: None, tool_call_id: None,
+                        role: role.to_string(),
+                        content: Some(serde_json::Value::String(content.clone())),
+                        tool_calls: None,
+                        tool_call_id: None,
                     });
                 }
-                AiSessionEventKind::ToolCall { tool_call_id, name, arguments } => {
-                    calls.entry(event.operation_id.clone().unwrap_or_default()).or_default().push(OpenAiToolCall {
-                        id: tool_call_id.clone(), kind: "function", function: OpenAiToolCallFunction { name: name.clone(), arguments: arguments.to_string() },
+                AiSessionEventKind::SkillInvoked { skill_id, content } => {
+                    messages.push(OpenAiChatMessage {
+                        role: "system".into(),
+                        content: Some(serde_json::Value::String(format!(
+                            "The user explicitly invoked skill {skill_id}. Follow these instructions for this request:\n{content}"
+                        ))),
+                        tool_calls: None,
+                        tool_call_id: None,
                     });
                 }
-                AiSessionEventKind::ToolResult { tool_call_id, content, .. } => {
+                AiSessionEventKind::ToolCall {
+                    tool_call_id,
+                    name,
+                    arguments,
+                } => {
+                    calls
+                        .entry(event.operation_id.clone().unwrap_or_default())
+                        .or_default()
+                        .push(OpenAiToolCall {
+                            id: tool_call_id.clone(),
+                            kind: "function",
+                            function: OpenAiToolCallFunction {
+                                name: name.clone(),
+                                arguments: arguments.to_string(),
+                            },
+                        });
+                }
+                AiSessionEventKind::ToolResult {
+                    tool_call_id,
+                    content,
+                    ..
+                } => {
                     if let Some(owner) = event.operation_id.as_ref() {
                         if let Some(tool_calls) = calls.remove(owner) {
-                            messages.push(OpenAiChatMessage { role: "assistant".into(), content: None, tool_calls: Some(tool_calls), tool_call_id: None });
+                            messages.push(OpenAiChatMessage {
+                                role: "assistant".into(),
+                                content: None,
+                                tool_calls: Some(tool_calls),
+                                tool_call_id: None,
+                            });
                         }
                     }
-                    messages.push(OpenAiChatMessage { role: "tool".into(), content: Some(serde_json::Value::String(content.clone())), tool_calls: None, tool_call_id: Some(tool_call_id.clone()) });
+                    messages.push(OpenAiChatMessage {
+                        role: "tool".into(),
+                        content: Some(serde_json::Value::String(content.clone())),
+                        tool_calls: None,
+                        tool_call_id: Some(tool_call_id.clone()),
+                    });
                 }
+                AiSessionEventKind::Compaction { .. } => {}
                 _ => {}
             }
         }
@@ -117,7 +193,10 @@ mod tests {
     use super::AgentProjection;
     use crate::{
         agent::operation::{OperationSnapshot, OperationState, OperationStatus},
-        models::{AgentSessionLog, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, ChatRole, OpenAiChatMessage},
+        models::{
+            AgentSessionLog, AiSessionEvent, AiSessionEventKind, AiSessionMetadata, ChatRole,
+            OpenAiChatMessage,
+        },
     };
 
     fn message(sequence: u64, operation_id: &str, content: &str) -> AiSessionEvent {
@@ -141,31 +220,112 @@ mod tests {
     #[test]
     fn model_context_excludes_future_unfinished_operations() {
         let log = AgentSessionLog {
-            metadata: AiSessionMetadata { id: "session".into(), title: "Test".into(), created_at_ms: 1, model: None },
+            metadata: AiSessionMetadata {
+                id: "session".into(),
+                title: "Test".into(),
+                created_at_ms: 1,
+                model: None,
+            },
             operations: vec![
-                OperationSnapshot { operation_id: "first".into(), request_id: "first".into(), operation_sequence: 1, status: OperationStatus::Complete, state: OperationState::Completed, accepted_at_ms: 1, updated_at_ms: 2 },
-                OperationSnapshot { operation_id: "second".into(), request_id: "second".into(), operation_sequence: 2, status: OperationStatus::Waiting, state: OperationState::Preparing, accepted_at_ms: 3, updated_at_ms: 3 },
-                OperationSnapshot { operation_id: "future".into(), request_id: "future".into(), operation_sequence: 3, status: OperationStatus::Pending, state: OperationState::Queued, accepted_at_ms: 4, updated_at_ms: 4 },
+                OperationSnapshot {
+                    operation_id: "first".into(),
+                    request_id: "first".into(),
+                    operation_sequence: 1,
+                    status: OperationStatus::Complete,
+                    state: OperationState::Completed,
+                    accepted_at_ms: 1,
+                    updated_at_ms: 2,
+                },
+                OperationSnapshot {
+                    operation_id: "second".into(),
+                    request_id: "second".into(),
+                    operation_sequence: 2,
+                    status: OperationStatus::Waiting,
+                    state: OperationState::Preparing,
+                    accepted_at_ms: 3,
+                    updated_at_ms: 3,
+                },
+                OperationSnapshot {
+                    operation_id: "future".into(),
+                    request_id: "future".into(),
+                    operation_sequence: 3,
+                    status: OperationStatus::Pending,
+                    state: OperationState::Queued,
+                    accepted_at_ms: 4,
+                    updated_at_ms: 4,
+                },
             ],
-            events: vec![message(1, "first", "finished request"), message(2, "second", "current request"), message(3, "future", "queued request")],
+            events: vec![
+                message(1, "first", "finished request"),
+                message(2, "second", "current request"),
+                message(3, "future", "queued request"),
+            ],
         };
         let messages = AgentProjection::from_log(&log).model_context(&log, "second");
-        assert_eq!(messages.iter().map(|message| message.content.as_ref().and_then(serde_json::Value::as_str)).collect::<Vec<_>>(), vec![Some("finished request"), Some("current request")]);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.content.as_ref().and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            vec![Some("finished request"), Some("current request")]
+        );
     }
 
     #[test]
     fn preserves_an_unsettled_tool_plan_for_recovery() {
         let log = AgentSessionLog {
-            metadata: AiSessionMetadata { id: "session".into(), title: "Test".into(), created_at_ms: 1, model: None },
-            operations: vec![OperationSnapshot { operation_id: "op".into(), request_id: "request".into(), operation_sequence: 1, status: OperationStatus::Waiting, state: OperationState::ToolsPlanned { tool_call_ids: vec!["call".into()] }, accepted_at_ms: 1, updated_at_ms: 2 }],
+            metadata: AiSessionMetadata {
+                id: "session".into(),
+                title: "Test".into(),
+                created_at_ms: 1,
+                model: None,
+            },
+            operations: vec![OperationSnapshot {
+                operation_id: "op".into(),
+                request_id: "request".into(),
+                operation_sequence: 1,
+                status: OperationStatus::Waiting,
+                state: OperationState::ToolsPlanned {
+                    tool_call_ids: vec!["call".into()],
+                },
+                accepted_at_ms: 1,
+                updated_at_ms: 2,
+            }],
             events: vec![AiSessionEvent {
-                event_id: "call-event".into(), sequence: 1, operation_id: Some("op".into()), operation_sequence: Some(1), occurred_at_ms: 1,
-                kind: AiSessionEventKind::ToolCall { tool_call_id: "call".into(), name: "read".into(), arguments: serde_json::json!({ "path": "main.go" }) },
+                event_id: "call-event".into(),
+                sequence: 1,
+                operation_id: Some("op".into()),
+                operation_sequence: Some(1),
+                occurred_at_ms: 1,
+                kind: AiSessionEventKind::ToolCall {
+                    tool_call_id: "call".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({ "path": "main.go" }),
+                },
             }],
         };
         let projection = AgentProjection::from_log(&log);
         assert_eq!(projection.pending_tool_calls.len(), 1);
         let context = projection.model_context(&log, "op");
-        assert!(matches!(context.as_slice(), [OpenAiChatMessage { role, tool_calls: Some(calls), .. }] if role == "assistant" && calls[0].id == "call"));
+        assert!(
+            matches!(context.as_slice(), [OpenAiChatMessage { role, tool_calls: Some(calls), .. }] if role == "assistant" && calls[0].id == "call")
+        );
+    }
+
+    #[test]
+    fn restores_only_checkpoint_and_retained_tail_after_compaction() {
+        let mut log = AgentSessionLog {
+            metadata: AiSessionMetadata { id: "session".into(), title: "Test".into(), created_at_ms: 1, model: None },
+            operations: vec![OperationSnapshot { operation_id: "op".into(), request_id: "op".into(), operation_sequence: 1, status: OperationStatus::Complete, state: OperationState::Completed, accepted_at_ms: 1, updated_at_ms: 1 }],
+            events: vec![message(1, "op", "discarded history"), message(2, "op", "retained prompt")],
+        };
+        log.events.push(AiSessionEvent {
+            event_id: "compact".into(), sequence: 3, operation_id: Some("op".into()), operation_sequence: Some(1), occurred_at_ms: 3,
+            kind: AiSessionEventKind::Compaction { summary: "The earlier goal".into(), through_sequence: 1, first_kept_sequence: 2, estimated_tokens_before: 100, estimated_tokens_after: 20 },
+        });
+        let context = AgentProjection::from_log(&log).model_context(&log, "op");
+        assert_eq!(context.len(), 2);
+        assert!(context[0].content.as_ref().unwrap().to_string().contains("The earlier goal"));
+        assert_eq!(context[1].content.as_ref().unwrap(), "retained prompt");
     }
 }

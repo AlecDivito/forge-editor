@@ -5,6 +5,7 @@ import {
 } from "@/components/panels/code/components/AgentHarnessPanel/store/agent-session.reducer";
 import { ChatRole } from "@/lib/generated/types.gen";
 import type { AiSessionEvent } from "@/lib/generated/types.gen";
+import { buildInlineDiff } from "@/components/panels/code/components/AgentHarnessPanel/components/ToolFilePreview";
 
 describe("agent session presentation reducer", () => {
   it("orders and deduplicates backend events before deriving the transcript", () => {
@@ -99,5 +100,60 @@ describe("agent session presentation reducer", () => {
     expect(presentation.items).toMatchObject([
       { kind: "entry", entry: { kind: "pending-cancelled", id: "queued-message" } },
     ]);
+  });
+
+  it("attaches successful edit and write previews to their tool activities", () => {
+    const events: AiSessionEvent[] = [
+      {
+        event_id: "edit-call",
+        sequence: 1,
+        occurred_at_ms: 1,
+        kind: { type: "tool_call", tool_call_id: "edit", name: "edit" },
+      },
+      {
+        event_id: "edit-result",
+        sequence: 2,
+        occurred_at_ms: 2,
+        kind: {
+          type: "tool_result",
+          tool_call_id: "edit",
+          is_error: false,
+          content: JSON.stringify({ path: "src/example.ts", diff: { removed: "before", added: "after" } }),
+        },
+      },
+      {
+        event_id: "write-call",
+        sequence: 3,
+        occurred_at_ms: 3,
+        kind: { type: "tool_call", tool_call_id: "write", name: "write" },
+      },
+      {
+        event_id: "write-result",
+        sequence: 4,
+        occurred_at_ms: 4,
+        kind: {
+          type: "tool_result",
+          tool_call_id: "write",
+          is_error: false,
+          content: JSON.stringify({ path: "src/new.ts", created_lines: ["export {};"], created_line_count: 12 }),
+        },
+      },
+    ];
+
+    const presentation = reduceAgentSessionPresentation(durableEventsToTranscriptEntries(events));
+    expect(presentation.items).toMatchObject([{
+      kind: "tools",
+      activities: [
+        { preview: { kind: "edit", path: "src/example.ts", removed: "before", added: "after" } },
+        { preview: { kind: "write", path: "src/new.ts", createdLines: ["export {};"], createdLineCount: 12 } },
+      ],
+    }]);
+  });
+
+  it("renders edit previews as a unified inline diff", () => {
+    const diff = buildInlineDiff("same\nremoved\n", "same\nadded\n");
+    expect(diff.text).toBe("  same\n- removed\n+ added");
+    expect([...diff.removed]).toEqual([2]);
+    expect([...diff.added]).toEqual([3]);
   });
 });

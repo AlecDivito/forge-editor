@@ -726,6 +726,7 @@ async fn dispatch(
             model_id,
             prompt,
             attachment_ids,
+            skill_ids,
         } => {
             let session = state.ai_session(conversation_id.clone());
             if session
@@ -735,6 +736,7 @@ async fn dispatch(
                     model_id,
                     prompt,
                     attachment_ids,
+                    skill_ids,
                     document_tx.clone(),
                 )
                 .await
@@ -753,12 +755,55 @@ async fn dispatch(
             Ok(())
         }
 
-        ClientMessage::AgentStop { request_id, conversation_id } => {
+        ClientMessage::AgentStop {
+            request_id,
+            conversation_id,
+        } => {
             let session = state.ai_session(conversation_id.clone());
-            if session.stop(request_id.clone(), document_tx.clone()).await.is_err() {
-                document_tx.send(ServerMessage::AgentError {
-                    request_id, conversation_id, code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable), message: "The AI session is unavailable".into(),
-                }).await.ok();
+            if session
+                .stop(request_id.clone(), document_tx.clone())
+                .await
+                .is_err()
+            {
+                document_tx
+                    .send(ServerMessage::AgentError {
+                        request_id,
+                        conversation_id,
+                        code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable),
+                        message: "The AI session is unavailable".into(),
+                    })
+                    .await
+                    .ok();
+            }
+            Ok(())
+        }
+
+        ClientMessage::AgentConfirmTool {
+            request_id,
+            conversation_id,
+            confirmation_id,
+            decision,
+        } => {
+            let session = state.ai_session(conversation_id.clone());
+            if session
+                .confirm_tool(
+                    request_id.clone(),
+                    confirmation_id,
+                    decision,
+                    document_tx.clone(),
+                )
+                .await
+                .is_err()
+            {
+                document_tx
+                    .send(ServerMessage::AgentError {
+                        request_id,
+                        conversation_id,
+                        code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable),
+                        message: "The AI session is unavailable".into(),
+                    })
+                    .await
+                    .ok();
             }
             Ok(())
         }

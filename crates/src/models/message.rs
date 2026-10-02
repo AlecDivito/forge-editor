@@ -17,6 +17,15 @@ pub enum ChatRole {
     Assistant,
 }
 
+impl std::fmt::Display for ChatRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+        })
+    }
+}
+
 /// The source and scope of a durable tool approval decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +41,11 @@ pub enum ToolApprovalDecision {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolConfirmationRequest {
-    Bash { command: String },
+    Bash {
+        command: String,
+        /// The exact command prefix covered by an `allow_always` decision.
+        allow_always_prefix: String,
+    },
 }
 
 /// Durable metadata for a session-owned object-store image. Image bytes are
@@ -101,6 +114,8 @@ pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<OpenAiChatMessage>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OpenAiToolDefinition>>,
     /// Provider-specific OpenAI-compatible request options. vLLM uses this
@@ -330,6 +345,21 @@ pub enum AiSessionEventKind {
         message_id: String,
         reason: String,
     },
+    /// An explicit composer selection. Keeping the exact content makes an
+    /// operation reproducible if the source file changes before recovery.
+    SkillInvoked {
+        skill_id: String,
+        content: String,
+    },
+    /// A derived, immutable checkpoint. Entries before `first_kept_sequence`
+    /// remain canonical session history but are no longer sent to the model.
+    Compaction {
+        summary: String,
+        through_sequence: u64,
+        first_kept_sequence: u64,
+        estimated_tokens_before: u32,
+        estimated_tokens_after: u32,
+    },
     AttachmentPrepared {
         attachment: AiSessionAttachment,
     },
@@ -369,6 +399,8 @@ pub enum AiSessionEventKind {
     ToolConfirmationResolved {
         confirmation_id: String,
         decision: ToolApprovalDecision,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allow_always_prefix: Option<String>,
     },
     /// A later user prompt superseded an outstanding approval. This is not a
     /// denial: no person made a decision about the command.

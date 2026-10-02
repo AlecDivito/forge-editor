@@ -1,0 +1,9 @@
+.git
+.next
+node_modules
+crates/target
+coverage
+.workspace-cache
+.env
+.env.*
+!.env.example

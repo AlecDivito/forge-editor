@@ -184,15 +184,25 @@ impl AppState {
             .find(|workspace| workspace.id == self.config.default_workspace_id)
             .map(|workspace| workspace.root.clone())
             .expect("configuration validates the default Forge workspace");
-        crate::agent::tools::ToolContext::new(
-            self.config
-                .workspaces
-                .iter()
-                .map(|workspace| (workspace.id.clone(), workspace.root.clone()))
-                .collect(),
+        let workspace_roots: HashMap<WorkspaceId, PathBuf> = self
+            .config
+            .workspaces
+            .iter()
+            .map(|workspace| (workspace.id.clone(), workspace.root.clone()))
+            .collect();
+        let spawner = crate::agent::tools::SubagentSpawner::new(
+            self.config.openai_compatible.clone(),
+            self.config.agent_max_model_rounds,
+            self.agent_runtime.clone(),
+            self.ai_sessions.clone(),
+            self.attachments.clone(),
+            self.ai_session_actors.clone(),
+            workspace_roots.clone(),
             self.open_files.clone(),
-            command_cwd,
-        )
+            command_cwd.clone(),
+        );
+        crate::agent::tools::ToolContext::new(workspace_roots, self.open_files.clone(), command_cwd)
+            .with_subagent_spawner(Arc::new(spawner))
     }
 }
 
@@ -322,6 +332,7 @@ mod tests {
             std::fs::create_dir_all(parent.join("agent-resources").join(directory)).unwrap();
         }
         let state = AppState::new(Config {
+            bind_address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             port: 0,
             environment: EnvironmentConfig {
                 id: "test".into(),

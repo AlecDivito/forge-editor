@@ -2,7 +2,7 @@
 
 import * as z from 'zod';
 
-import { AgentFailureCode, ChatRole, FsFileType, OperationStatus, SessionState, ToolReplayClass } from './types.gen';
+import { AgentFailureCode, ChatRole, FsFileType, OperationStatus, SessionState, ToolApprovalDecision, ToolReplayClass } from './types.gen';
 
 export const zAgentAttachmentPath = z.object({
     attachment_id: z.string(),
@@ -22,12 +22,27 @@ export const zAgentModelCatalog = z.object({
     models: z.array(zAgentModelDescriptor)
 });
 
+export const zAgentRule = z.object({
+    content: z.string(),
+    id: z.string()
+});
+
+export const zAgentRulePath = z.object({
+    rule_id: z.string()
+});
+
 export const zAgentSessionPath = z.object({
     session_id: z.string()
 });
 
 export const zAgentSessionSearchQuery = z.object({
     query: z.string().nullish()
+});
+
+export const zAgentSkill = z.object({
+    description: z.string(),
+    id: z.string(),
+    model_invocable: z.boolean()
 });
 
 export const zAiSessionAttachment = z.object({
@@ -325,6 +340,10 @@ export const zEnvironmentSnapshot = z.object({
     workspaces: z.array(zPublicWorkspace)
 });
 
+export const zSaveAgentRule = z.object({
+    content: z.string()
+});
+
 export const zSaveFile = z.object({
     contents: z.array(z.int().gte(0).lte(255)),
     path: z.string()
@@ -347,6 +366,14 @@ export const zSessionSnapshot = z.object({
     sessionId: z.string(),
     state: zSessionState,
     workspaceId: z.string()
+});
+
+export const zToolApprovalDecision = z.enum(ToolApprovalDecision);
+
+export const zToolConfirmationRequest = z.object({
+    type: z.literal('bash'),
+    allow_always_prefix: z.string(),
+    command: z.string()
 });
 
 export const zToolReplayClass = z.enum(ToolReplayClass);
@@ -465,6 +492,11 @@ export const zAiSessionEventKind = z.union([
         reason: z.string()
     }),
     z.object({
+        type: z.literal('skill_invoked'),
+        content: z.string(),
+        skill_id: z.string()
+    }),
+    z.object({
         type: z.literal('attachment_prepared'),
         attachment: zAiSessionAttachment
     }),
@@ -495,13 +527,14 @@ export const zAiSessionEventKind = z.union([
     z.object({
         type: z.literal('tool_confirmation_requested'),
         confirmation_id: z.string(),
-        name: z.string(),
+        request: zToolConfirmationRequest,
         tool_call_id: z.string()
     }),
     z.object({
         type: z.literal('tool_confirmation_resolved'),
-        approved: z.boolean(),
-        confirmation_id: z.string()
+        allow_always_prefix: z.string().nullish(),
+        confirmation_id: z.string(),
+        decision: zToolApprovalDecision
     }),
     z.object({
         type: z.literal('tool_confirmation_cancelled'),
@@ -554,6 +587,27 @@ export const zGetEnvironmentResponse = zEnvironmentSnapshot;
  * The available model catalog or an unconfigured catalog
  */
 export const zListModelsResponse = zAgentModelCatalog;
+
+/**
+ * The current shared rule catalog
+ */
+export const zListRulesResponse = z.array(zAgentRule);
+
+/**
+ * The shared skill catalog
+ */
+export const zListSkillsResponse = z.array(zAgentSkill);
+
+export const zSaveRuleBody = zSaveAgentRule;
+
+export const zSaveRulePath = z.object({
+    rule_id: z.string()
+});
+
+/**
+ * The saved rule
+ */
+export const zSaveRuleResponse = zAgentRule;
 
 export const zListSessionsQuery = z.object({
     query: z.string().nullish()

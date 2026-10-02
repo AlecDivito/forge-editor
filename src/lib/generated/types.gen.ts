@@ -49,6 +49,24 @@ export type AgentModelDescriptor = {
     provider: string;
 };
 
+export type AgentRule = {
+    /**
+     * Markdown instruction supplied to the model.
+     */
+    content: string;
+    /**
+     * Stable filesystem-safe identifier. Stored as `rules/<id>.md`.
+     */
+    id: string;
+};
+
+export type AgentRulePath = {
+    /**
+     * Filesystem-safe rule identifier, stored as `rules/<rule_id>.md`.
+     */
+    rule_id: string;
+};
+
 export type AgentSessionLog = {
     /**
      * The canonical ordered presentation stream.
@@ -70,6 +88,12 @@ export type AgentSessionSearchQuery = {
      * Case-insensitive text matched against session titles and message content.
      */
     query?: string | null;
+};
+
+export type AgentSkill = {
+    description: string;
+    id: string;
+    model_invocable: boolean;
 };
 
 export type AiSessionAttachment = {
@@ -124,6 +148,10 @@ export type AiSessionEventKind = {
     message_id: string;
     reason: string;
 } | {
+    type: 'skill_invoked';
+    content: string;
+    skill_id: string;
+} | {
     type: 'attachment_prepared';
     attachment: AiSessionAttachment;
 } | {
@@ -149,12 +177,13 @@ export type AiSessionEventKind = {
 } | {
     type: 'tool_confirmation_requested';
     confirmation_id: string;
-    name: string;
+    request: ToolConfirmationRequest;
     tool_call_id: string;
 } | {
     type: 'tool_confirmation_resolved';
-    approved: boolean;
+    allow_always_prefix?: string | null;
     confirmation_id: string;
+    decision: ToolApprovalDecision;
 } | {
     type: 'tool_confirmation_cancelled';
     confirmation_id: string;
@@ -629,6 +658,10 @@ export type PublicWorkspace = {
     name: string;
 };
 
+export type SaveAgentRule = {
+    content: string;
+};
+
 export type SaveFile = {
     contents: Array<number>;
     path: string;
@@ -665,6 +698,21 @@ export enum SessionState {
     TERMINATED = 'terminated',
     FAILED = 'failed'
 }
+
+export enum ToolApprovalDecision {
+    ALLOW_ONCE = 'allow_once',
+    ALLOW_ALWAYS = 'allow_always',
+    DENY = 'deny'
+}
+
+export type ToolConfirmationRequest = {
+    type: 'bash';
+    /**
+     * The exact command prefix covered by an `allow_always` decision.
+     */
+    allow_always_prefix: string;
+    command: string;
+};
 
 export enum ToolReplayClass {
     SAFE = 'safe',
@@ -711,6 +759,70 @@ export type ListModelsResponses = {
 };
 
 export type ListModelsResponse = ListModelsResponses[keyof ListModelsResponses];
+
+export type ListRulesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/agent/rules';
+};
+
+export type ListRulesResponses = {
+    /**
+     * The current shared rule catalog
+     */
+    200: Array<AgentRule>;
+};
+
+export type ListRulesResponse = ListRulesResponses[keyof ListRulesResponses];
+
+export type ListSkillsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/agent/skills';
+};
+
+export type ListSkillsResponses = {
+    /**
+     * The shared skill catalog
+     */
+    200: Array<AgentSkill>;
+};
+
+export type ListSkillsResponse = ListSkillsResponses[keyof ListSkillsResponses];
+
+export type SaveRuleData = {
+    body: SaveAgentRule;
+    path: {
+        /**
+         * Filesystem-safe rule identifier, stored as `rules/<rule_id>.md`.
+         */
+        rule_id: string;
+    };
+    query?: never;
+    url: '/api/agent/rules/{rule_id}';
+};
+
+export type SaveRuleErrors = {
+    /**
+     * The rule id or content is invalid
+     */
+    400: unknown;
+    /**
+     * The rule could not be persisted
+     */
+    500: unknown;
+};
+
+export type SaveRuleResponses = {
+    /**
+     * The saved rule
+     */
+    200: AgentRule;
+};
+
+export type SaveRuleResponse = SaveRuleResponses[keyof SaveRuleResponses];
 
 export type ListSessionsData = {
     body?: never;

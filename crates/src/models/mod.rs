@@ -10,6 +10,8 @@ pub mod rpc;
 pub mod search;
 pub mod workspace_mutation;
 
+pub use crate::agent::models::{AgentRule, AgentSkill, SaveAgentRule};
+
 pub use agent::*;
 pub use editor::*;
 pub use environment::*;

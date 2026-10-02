@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttachmentData, AbandonAttachmentErrors, AbandonAttachmentResponses, CommitData, CommitErrors, CommitResponses, CompleteAttachmentData, CompleteAttachmentErrors, CompleteAttachmentResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListSessionsData, ListSessionsResponses, PrepareAttachmentData, PrepareAttachmentErrors, PrepareAttachmentResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { AbandonAttachmentData, AbandonAttachmentErrors, AbandonAttachmentResponses, CommitData, CommitErrors, CommitResponses, CompleteAttachmentData, CompleteAttachmentErrors, CompleteAttachmentResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListRulesData, ListRulesResponses, ListSessionsData, ListSessionsResponses, ListSkillsData, ListSkillsResponses, PrepareAttachmentData, PrepareAttachmentErrors, PrepareAttachmentResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SaveRuleData, SaveRuleErrors, SaveRuleResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -34,6 +34,42 @@ export const listModels = <ThrowOnError extends boolean = false>(options?: Optio
     responseType: 'json',
     url: '/api/agent/models',
     ...options
+});
+
+/**
+ * List the manually managed rules applied to future agent turns.
+ */
+export const listRules = <ThrowOnError extends boolean = false>(options?: Options<ListRulesData, ThrowOnError>) => (options?.client ?? client).get<ListRulesResponses, unknown, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/rules',
+    ...options
+});
+
+/**
+ * List skill metadata available to the Forge composer. Instruction bodies are
+ *
+ * intentionally not returned by this endpoint.
+ */
+export const listSkills = <ThrowOnError extends boolean = false>(options?: Options<ListSkillsData, ThrowOnError>) => (options?.client ?? client).get<ListSkillsResponses, unknown, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/skills',
+    ...options
+});
+
+/**
+ * Create or replace one manually managed agent rule.
+ *
+ * The id becomes `rules/<rule_id>.md` in the configured agent resources
+ * directory. The new rule applies to agent turns started after this request.
+ */
+export const saveRule = <ThrowOnError extends boolean = false>(options: Options<SaveRuleData, ThrowOnError>) => (options.client ?? client).put<SaveRuleResponses, SaveRuleErrors, ThrowOnError>({
+    responseType: 'json',
+    url: '/api/agent/rules/{rule_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

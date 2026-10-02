@@ -224,7 +224,7 @@ export type ClientMessage =
       params: unknown;
     }
   | { kind: "AgentSessionStart"; request_id: string; conversation_id: string }
-    | {
+  | {
       kind: "AgentPrompt";
       request_id: string;
       conversation_id: string;
@@ -232,9 +232,16 @@ export type ClientMessage =
       model_id: string;
       prompt: string;
       attachment_ids?: string[];
+      skill_ids?: string[];
     }
   | { kind: "AgentStop"; request_id: string; conversation_id: string }
-  | { kind: "AgentConfirmTool"; request_id: string; conversation_id: string; confirmation_id: string; decision: "allow_once" | "allow_always" | "deny" }
+  | {
+      kind: "AgentConfirmTool";
+      request_id: string;
+      conversation_id: string;
+      confirmation_id: string;
+      decision: "allow_once" | "allow_always" | "deny";
+    }
   | {
       kind: "Ping";
     };

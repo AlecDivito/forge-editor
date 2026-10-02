@@ -44,15 +44,36 @@ pub enum OperationState {
     Accepted,
     Queued,
     Preparing,
-    ModelIntent { turn_id: String, attempt: u32 },
-    ModelInFlight { attempt: u32 },
-    ToolsPlanned { tool_call_ids: Vec<String> },
-    ToolInFlight { tool_call_id: String },
-    ToolIntent { tool_call_id: String, attempt: u32, replay_class: ToolReplayClass },
+    ModelIntent {
+        turn_id: String,
+        attempt: u32,
+    },
+    ModelInFlight {
+        attempt: u32,
+    },
+    ToolsPlanned {
+        tool_call_ids: Vec<String>,
+    },
+    WaitingConfirmation {
+        confirmation_id: String,
+        tool_call_id: String,
+    },
+    ToolInFlight {
+        tool_call_id: String,
+    },
+    ToolIntent {
+        tool_call_id: String,
+        attempt: u32,
+        replay_class: ToolReplayClass,
+    },
     Completed,
     Failed,
-    Cancelled { reason: String },
-    Interrupted { reason: String },
+    Cancelled {
+        reason: String,
+    },
+    Interrupted {
+        reason: String,
+    },
 }
 
 impl OperationState {
@@ -137,7 +158,13 @@ mod tests {
 
     #[test]
     fn accepted_operations_are_pending_until_the_scheduler_claims_them() {
-        assert_eq!(OperationStatus::for_state(&OperationState::Accepted), OperationStatus::Pending);
-        assert_eq!(OperationStatus::for_state(&OperationState::Preparing), OperationStatus::Waiting);
+        assert_eq!(
+            OperationStatus::for_state(&OperationState::Accepted),
+            OperationStatus::Pending
+        );
+        assert_eq!(
+            OperationStatus::for_state(&OperationState::Preparing),
+            OperationStatus::Waiting
+        );
     }
 }

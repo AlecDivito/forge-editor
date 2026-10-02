@@ -1,5 +1,6 @@
 use rovo::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
 use super::{AiTokenUsage, AssistantResponse, OpenAiChatMessage, OpenAiToolCall};
 
@@ -74,7 +75,7 @@ pub enum AgentStreamDelta {
 
 /// Ephemeral observations emitted by an executor. `AiSessionActor` translates
 /// these into durable session events after writer acknowledgement.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum AgentActorEvent {
     Started {
         task: AgentTask,
@@ -82,6 +83,10 @@ pub enum AgentActorEvent {
     ModelStarted {
         task: AgentTask,
         attempt: u32,
+        /// The worker must wait for this permit before sending a provider
+        /// request. `true` means the session actor committed the intent and
+        /// state transition to JSONL and synced it successfully.
+        permit: oneshot::Sender<bool>,
     },
     ThinkingDelta {
         task: AgentTask,
@@ -110,6 +115,8 @@ pub enum AgentActorEvent {
     ToolStarted {
         task: AgentTask,
         call: OpenAiToolCall,
+        /// The worker must wait for this permit before invoking the tool.
+        permit: oneshot::Sender<bool>,
     },
     ToolFinished {
         task: AgentTask,

@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     env,
+    net::IpAddr,
     path::{Component, Path, PathBuf},
 };
 
@@ -23,6 +24,11 @@ pub struct WorkspaceConfig {
 #[derive(Clone)]
 pub struct OpenAiCompatibleConfig {
     pub base_url: String,
+    /// The actual server-side context window. OpenAI-compatible discovery does
+    /// not reliably expose this for local vLLM deployments, so it is explicit.
+    pub max_context_tokens: u32,
+    pub compaction_reserve_tokens: u32,
+    pub compaction_keep_recent_tokens: u32,
     api_key: String,
 }
 
@@ -53,6 +59,9 @@ impl std::fmt::Debug for OpenAiCompatibleConfig {
         formatter
             .debug_struct("OpenAiCompatibleConfig")
             .field("base_url", &self.base_url)
+            .field("max_context_tokens", &self.max_context_tokens)
+            .field("compaction_reserve_tokens", &self.compaction_reserve_tokens)
+            .field("compaction_keep_recent_tokens", &self.compaction_keep_recent_tokens)
             .field("api_key", &"[redacted]")
             .finish()
     }
@@ -67,6 +76,9 @@ impl OpenAiCompatibleConfig {
     pub(crate) fn for_test(base_url: String) -> Self {
         Self {
             base_url,
+            max_context_tokens: 32_768,
+            compaction_reserve_tokens: 6_144,
+            compaction_keep_recent_tokens: 12_288,
             api_key: "test-key".into(),
         }
     }
@@ -74,6 +86,7 @@ impl OpenAiCompatibleConfig {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub bind_address: IpAddr,
     pub port: u16,
     pub environment: EnvironmentConfig,
     pub workspaces: Vec<WorkspaceConfig>,
@@ -101,15 +114,25 @@ impl Config {
     }
 
     fn from_values(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
+        let bind_address = get("FORGE_BIND_ADDRESS")
+            .unwrap_or_else(|| "127.0.0.1".into())
+            .parse()
+            .context("FORGE_BIND_ADDRESS must be a valid IP address")?;
         let port = get("PORT")
             .unwrap_or_else(|| "8080".into())
             .parse()
             .context("PORT must be a valid TCP port")?;
+        let max_context_tokens = positive_u32(&get, "FORGE_AGENT_MAX_CONTEXT_TOKENS", 32_768)?;
+        let compaction_reserve_tokens = positive_u32(&get, "FORGE_AGENT_COMPACTION_RESERVE_TOKENS", 6_144)?;
+        let compaction_keep_recent_tokens = positive_u32(&get, "FORGE_AGENT_COMPACTION_KEEP_RECENT_TOKENS", 12_288)?;
+        if compaction_reserve_tokens.saturating_add(compaction_keep_recent_tokens) >= max_context_tokens {
+            bail!("FORGE_AGENT_COMPACTION_RESERVE_TOKENS plus FORGE_AGENT_COMPACTION_KEEP_RECENT_TOKENS must be less than FORGE_AGENT_MAX_CONTEXT_TOKENS");
+        }
         let openai_compatible = match (
             get("OPENAI_API_BASE_URL").filter(|value| !value.trim().is_empty()),
             get("OPENAI_API_KEY").filter(|value| !value.trim().is_empty()),
         ) {
-            (Some(base_url), Some(api_key)) => Some(OpenAiCompatibleConfig { base_url, api_key }),
+            (Some(base_url), Some(api_key)) => Some(OpenAiCompatibleConfig { base_url, max_context_tokens, compaction_reserve_tokens, compaction_keep_recent_tokens, api_key }),
             (Some(_), None) | (None, Some(_)) => {
                 tracing::warn!(
                     "OPENAI_API_BASE_URL and OPENAI_API_KEY must both be set; the model provider is disabled"
@@ -151,11 +174,20 @@ impl Config {
             .context("FORGE_AGENT_SESSIONS_DIR is required for AI session storage")?;
         let agent_sessions_dir =
             canonical_directory(Path::new(&agent_sessions_dir), "FORGE_AGENT_SESSIONS_DIR")?;
-        let agent_resources_dir = get("FORGE_AGENT_RESOURCES_DIR")
-            .filter(|value| !value.trim().is_empty())
-            .context("FORGE_AGENT_RESOURCES_DIR is required for agent skills, rules, prompts, and policies")?;
         let agent_resources_dir =
-            canonical_directory(Path::new(&agent_resources_dir), "FORGE_AGENT_RESOURCES_DIR")?;
+            match get("FORGE_AGENT_RESOURCES_DIR").filter(|value| !value.trim().is_empty()) {
+                Some(path) => {
+                    let path = PathBuf::from(path);
+                    if !path.is_absolute() {
+                        bail!("FORGE_AGENT_RESOURCES_DIR must be an absolute path");
+                    }
+                    path
+                }
+                // Resources are authored files, not existing state that must be
+                // restored. Bootstrap a local directory now; a future sync layer
+                // can populate this same root from object storage.
+                None => agent_sessions_dir.join("resources"),
+            };
         let agent_attachment_cache_dir = match get("FORGE_AGENT_ATTACHMENT_CACHE_DIR")
             .filter(|value| !value.trim().is_empty())
         {
@@ -211,6 +243,7 @@ impl Config {
             )?;
             tracing::warn!("BASE_DIRECTORY is deprecated; configure FORGE_WORKSPACES_JSON instead");
             return Ok(Self {
+                bind_address,
                 port,
                 environment: EnvironmentConfig {
                     id: "local".into(),
@@ -289,6 +322,7 @@ impl Config {
             }
         };
         Ok(Self {
+            bind_address,
             port,
             environment,
             workspaces,
@@ -303,6 +337,12 @@ impl Config {
             agent_max_model_rounds,
         })
     }
+}
+
+fn positive_u32(get: &impl Fn(&str) -> Option<String>, key: &str, default: u32) -> anyhow::Result<u32> {
+    let value = get(key).filter(|value| !value.trim().is_empty()).map(|value| value.parse::<u32>().with_context(|| format!("{key} must be a positive integer"))).transpose()?.unwrap_or(default);
+    if value == 0 { bail!("{key} must be greater than zero"); }
+    Ok(value)
 }
 
 fn validate_id(label: &str, value: &str) -> anyhow::Result<String> {
@@ -393,6 +433,28 @@ mod tests {
         let config = parse(values).unwrap();
         assert_eq!(config.default_workspace_id, "two");
         assert_eq!(config.workspaces.len(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parses_bind_address_and_defaults_to_loopback() {
+        let root = root();
+        let base = HashMap::from([
+            ("FORGE_WORKSPACES_ROOT", root.to_string_lossy().into_owned()),
+            ("FORGE_WORKSPACES_JSON", r#"[{"id":"one","name":"One","path":"one"}]"#.into()),
+        ]);
+        assert_eq!(
+            parse(base.clone()).unwrap().bind_address,
+            "127.0.0.1".parse::<IpAddr>().unwrap()
+        );
+
+        let mut externally_reachable = base;
+        externally_reachable.insert("FORGE_BIND_ADDRESS", "0.0.0.0".into());
+        assert_eq!(
+            parse(externally_reachable).unwrap().bind_address,
+            "0.0.0.0".parse::<IpAddr>().unwrap()
+        );
+
         std::fs::remove_dir_all(root).unwrap();
     }
 

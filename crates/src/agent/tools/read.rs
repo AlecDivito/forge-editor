@@ -3,13 +3,19 @@ use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{AgentTool, MAX_TOOL_RESULT_BYTES, ToolCancellation, ToolContext, ToolDescriptor, ToolResult};
+use super::{
+    AgentTool, MAX_TOOL_RESULT_BYTES, ToolCancellation, ToolContext, ToolDescriptor, ToolResult,
+};
+
+use crate::utils::workspace_path::normalize_workspace_relative;
 
 pub struct ReadTool;
 
 #[derive(Deserialize)]
 struct ReadArguments {
     path: String,
+    #[serde(default)]
+    workspace_id: Option<String>,
 }
 
 impl AgentTool for ReadTool {
@@ -22,12 +28,14 @@ impl AgentTool for ReadTool {
                 "additionalProperties": false,
                 "required": ["path"],
                 "properties": {
-                    "path": { "type": "string", "description": "Workspace-relative path." }
+                    "path": { "type": "string", "description": "Workspace-relative path." },
+                    "workspace_id": { "type": "string", "description": "Optional configured workspace ID. Supply it for an @file reference." }
                 }
             }),
             timeout: Duration::from_secs(15),
             max_attempts: 2,
             replay_class: crate::agent::operation::ToolReplayClass::Safe,
+            requires_confirmation: false,
         }
     }
 
@@ -38,25 +46,48 @@ impl AgentTool for ReadTool {
         cancellation: ToolCancellation,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>> {
         Box::pin(async move {
-            if cancellation.is_cancelled() { return failure("Tool execution cancelled".into()); }
+            if cancellation.is_cancelled() {
+                return failure("Tool execution cancelled".into());
+            }
             let arguments = match serde_json::from_value::<ReadArguments>(arguments) {
                 Ok(arguments) => arguments,
                 Err(error) => return failure(format!("Invalid read arguments: {error}")),
             };
-            let relative = match crate::utils::workspace_path::normalize_workspace_relative(
-                PathBuf::from(&arguments.path).as_path(),
-            ) {
-                Ok(path) if !path.as_os_str().is_empty() => path,
-                Ok(_) => return failure("A file path is required".into()),
-                Err(error) => return failure(format!("Invalid path: {error}")),
-            };
+            let relative =
+                match normalize_workspace_relative(PathBuf::from(&arguments.path).as_path()) {
+                    Ok(path) if !path.as_os_str().is_empty() => path,
+                    Ok(_) => return failure("A file path is required".into()),
+                    Err(error) => return failure(format!("Invalid path: {error}")),
+                };
             let file_id = format!("/{}", relative.to_string_lossy().replace('\\', "/"));
-            if let Some(document) = context.open_document(&file_id) {
+            let open_document = arguments
+                .workspace_id
+                .as_ref()
+                .and_then(|workspace_id| context.open_workspace_document(workspace_id, &file_id))
+                .or_else(|| {
+                    arguments
+                        .workspace_id
+                        .is_none()
+                        .then(|| context.open_document(&file_id))
+                        .flatten()
+                });
+            if let Some(document) = open_document {
                 let content = document.content().await;
                 return success(content, "open_document");
             }
-            for (_, root) in context.workspaces() {
-                if cancellation.is_cancelled() { return failure("Tool execution cancelled".into()); }
+            let workspaces = context.workspaces();
+            let workspaces = if let Some(workspace_id) = arguments.workspace_id.as_deref() {
+                match workspaces.into_iter().find(|(id, _)| id == workspace_id) {
+                    Some(workspace) => vec![workspace],
+                    None => return failure(format!("Unknown workspace: {workspace_id}")),
+                }
+            } else {
+                workspaces
+            };
+            for (_, root) in workspaces {
+                if cancellation.is_cancelled() {
+                    return failure("Tool execution cancelled".into());
+                }
                 let path = root.join(&relative);
                 let canonical = match path.canonicalize() {
                     Ok(path) if path.starts_with(&root) => path,
@@ -116,9 +147,14 @@ mod tests {
         let context = ToolContext::new(
             HashMap::from([("workspace".into(), root.clone())]),
             Arc::new(DashMap::new()),
+            root.clone(),
         );
         let result = ReadTool
-            .execute(context, serde_json::json!({ "path": "notes.txt" }), super::super::ToolCancellation::default())
+            .execute(
+                context,
+                serde_json::json!({ "path": "notes.txt" }),
+                super::super::ToolCancellation::default(),
+            )
             .await;
         assert!(!result.is_error);
         assert!(result.content.contains("hello from Forge"));

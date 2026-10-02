@@ -340,6 +340,8 @@ pub enum ClientMessage {
         prompt: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachment_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skill_ids: Vec<String>,
     },
     AgentStop {
         request_id: String,

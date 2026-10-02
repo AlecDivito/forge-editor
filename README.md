@@ -64,6 +64,8 @@ JSON manifest are relative to `FORGE_WORKSPACES_ROOT`; physical roots are never
 sent to the browser. Copy `.env.example` and adjust it for your machine:
 
 ```dotenv
+FORGE_BIND_ADDRESS=127.0.0.1
+FORGE_CORS_ALLOWED_ORIGIN=http://localhost:3000
 PORT=8080
 FORGE_ENVIRONMENT_ID=local
 FORGE_ENVIRONMENT_NAME="Local projects"

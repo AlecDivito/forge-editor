@@ -5,6 +5,8 @@
 //! belong here so provider and title tasks cannot write session files directly.
 
 pub mod error;
+pub mod context;
+pub mod models;
 pub mod operation;
 pub mod resources;
 pub mod session;
