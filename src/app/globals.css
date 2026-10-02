@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --font-geist-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 /* ==========================================================================
    CodeMirror
    ========================================================================== */

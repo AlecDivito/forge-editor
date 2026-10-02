@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1
+
+FROM rust:1-bookworm AS builder
+WORKDIR /src
+ARG FORGE_BUILD_REVISION=unknown
+ENV FORGE_BUILD_REVISION=${FORGE_BUILD_REVISION}
+
+COPY crates/Cargo.toml crates/Cargo.lock ./
+RUN mkdir src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo fetch --locked \
+    && rm -rf src
+
+COPY crates/src ./src
+RUN cargo build --locked --release
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git bash \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 forge \
+    && useradd --uid 10001 --gid forge --create-home --home-dir /home/forge forge
+
+COPY --from=builder /src/target/release/code-server /usr/local/bin/forge-runtime
+COPY --chown=10001:10001 agent-resources /opt/forge/agent-resources
+
+USER 10001:10001
+ARG FORGE_BUILD_REVISION=unknown
+LABEL org.opencontainers.image.title="Forge runtime" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.revision="${FORGE_BUILD_REVISION}"
+ENV HOME=/home/forge \
+    PORT=8080 \
+    FORGE_AGENT_RESOURCES_DIR=/opt/forge/agent-resources \
+    FORGE_AGENT_SESSIONS_DIR=/var/lib/forge/sessions \
+    FORGE_AGENT_ATTACHMENT_CACHE_DIR=/var/lib/forge/attachment-cache \
+    TMPDIR=/tmp
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/forge-runtime"]

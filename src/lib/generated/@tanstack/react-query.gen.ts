@@ -4,8 +4,8 @@ import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOption
 import type { AxiosError } from 'axios';
 
 import { client } from '../client.gen';
-import { abandonAttachment, commit, completeAttachment, createFile, createSession, deleteFile, downloadAttachment, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listRules, listSessions, listSkills, type Options, prepareAttachment, push, renameFile, saveFile, saveRule, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
-import type { AbandonAttachmentData, AbandonAttachmentResponse, CommitData, CommitResponse, CompleteAttachmentData, CompleteAttachmentResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListRulesData, ListRulesResponse, ListSessionsData, ListSessionsResponse, ListSkillsData, ListSkillsResponse, PrepareAttachmentData, PrepareAttachmentResponse, PushData, PushResponse, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SaveRuleData, SaveRuleResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
+import { abandonAttachment, commit, completeAttachment, createFile, createSession, deleteFile, downloadAttachment, getConfigurations, getDiff, getEnvironment, getSession, getSession2, getStatus, listFiles, listModels, listRules, listSessions, listSkills, livez, metrics, type Options, prepareAttachment, push, readyz, renameFile, saveFile, saveRule, searchAndReplaceFiles, searchFileNames, searchFiles, stage, stopSession, unstage } from '../sdk.gen';
+import type { AbandonAttachmentData, AbandonAttachmentResponse, CommitData, CommitResponse, CompleteAttachmentData, CompleteAttachmentResponse, CreateFileData, CreateFileResponse, CreateSessionData, CreateSessionResponse, DeleteFileData, DeleteFileResponse, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsResponse, GetDiffData, GetDiffResponse, GetEnvironmentData, GetEnvironmentResponse, GetSession2Data, GetSession2Response, GetSessionData, GetSessionResponse, GetStatusData, GetStatusResponse, ListFilesData, ListFilesResponse, ListModelsData, ListModelsResponse, ListRulesData, ListRulesResponse, ListSessionsData, ListSessionsResponse, ListSkillsData, ListSkillsResponse, LivezData, MetricsData, PrepareAttachmentData, PrepareAttachmentResponse, PushData, PushResponse, ReadyzData, RenameFileData, RenameFileResponse, SaveFileData, SaveFileResponse, SaveRuleData, SaveRuleResponse, SearchAndReplaceFilesData, SearchAndReplaceFilesResponse, SearchFileNamesData, SearchFileNamesResponse, SearchFilesData, SearchFilesResponse, StageData, StageResponse, StopSessionData, StopSessionResponse, UnstageData, UnstageResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseURL' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -39,6 +39,51 @@ const createQueryKey = <TOptions extends Options>(id: string, options?: TOptions
     }
     return [params];
 };
+
+export const livezQueryKey = (options?: Options<LivezData>) => createQueryKey('livez', options);
+
+export const livezOptions = (options?: Options<LivezData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof livezQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await livez({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: livezQueryKey(options)
+});
+
+export const readyzQueryKey = (options?: Options<ReadyzData>) => createQueryKey('readyz', options);
+
+export const readyzOptions = (options?: Options<ReadyzData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof readyzQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await readyz({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: readyzQueryKey(options)
+});
+
+export const metricsQueryKey = (options?: Options<MetricsData>) => createQueryKey('metrics', options);
+
+export const metricsOptions = (options?: Options<MetricsData>) => queryOptions<unknown, AxiosError<DefaultError>, unknown, ReturnType<typeof metricsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await metrics({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: metricsQueryKey(options)
+});
 
 export const getEnvironmentQueryKey = (options?: Options<GetEnvironmentData>) => createQueryKey('getEnvironment', options);
 

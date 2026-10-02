@@ -1,7 +1,6 @@
 import { FC, useCallback, useMemo, useState } from "react";
 import { TreeInputItem, TreeItem } from "./TreeItem";
 import useListFiles, { useInvalidateAllFileLists } from "./hooks/use-list-files.hook";
-import { useEditorStore } from "@/store/editor";
 import { FilePlus2, FolderPlus, RefreshCcw, SquareMinusIcon, SquarePlusIcon } from "lucide-react";
 import { FsFile, FsFileType } from "@/lib/generated";
 import { useFileTree } from "./providers/FileTreeProvider";

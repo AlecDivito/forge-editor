@@ -497,6 +497,14 @@ export const zAiSessionEventKind = z.union([
         skill_id: z.string()
     }),
     z.object({
+        type: z.literal('compaction'),
+        estimated_tokens_after: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+        estimated_tokens_before: z.int().gte(0).max(4294967295, { error: 'Invalid value: Expected uint32 to be <= 4294967295' }),
+        first_kept_sequence: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' }),
+        summary: z.string(),
+        through_sequence: z.coerce.bigint().gte(BigInt(0)).max(BigInt('18446744073709551615'), { error: 'Invalid value: Expected uint64 to be <= 18446744073709551615' })
+    }),
+    z.object({
         type: z.literal('attachment_prepared'),
         attachment: zAiSessionAttachment
     }),
@@ -556,7 +564,7 @@ export const zAiSessionEventKind = z.union([
     }),
     z.object({
         type: z.literal('failure'),
-        code: zAgentFailureCode.optional().default('unknown'),
+        code: zAgentFailureCode.optional().default(AgentFailureCode.UNKNOWN),
         detail: z.string().nullish(),
         message: z.string()
     })

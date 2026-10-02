@@ -152,6 +152,13 @@ export type AiSessionEventKind = {
     content: string;
     skill_id: string;
 } | {
+    type: 'compaction';
+    estimated_tokens_after: number;
+    estimated_tokens_before: number;
+    first_kept_sequence: number;
+    summary: string;
+    through_sequence: number;
+} | {
     type: 'attachment_prepared';
     attachment: AiSessionAttachment;
 } | {
@@ -722,6 +729,34 @@ export enum ToolReplayClass {
 
 export type WorkspaceQuery = {
     workspace_id: string;
+};
+
+export type LivezData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/livez';
+};
+
+export type ReadyzData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/readyz';
+};
+
+export type MetricsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/metrics';
+};
+
+export type MetricsResponses = {
+    /**
+     * plain text
+     */
+    200: unknown;
 };
 
 export type GetEnvironmentData = {

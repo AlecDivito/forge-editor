@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttachmentData, AbandonAttachmentErrors, AbandonAttachmentResponses, CommitData, CommitErrors, CommitResponses, CompleteAttachmentData, CompleteAttachmentErrors, CompleteAttachmentResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListRulesData, ListRulesResponses, ListSessionsData, ListSessionsResponses, ListSkillsData, ListSkillsResponses, PrepareAttachmentData, PrepareAttachmentErrors, PrepareAttachmentResponses, PushData, PushErrors, PushResponses, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SaveRuleData, SaveRuleErrors, SaveRuleResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
+import type { AbandonAttachmentData, AbandonAttachmentErrors, AbandonAttachmentResponses, CommitData, CommitErrors, CommitResponses, CompleteAttachmentData, CompleteAttachmentErrors, CompleteAttachmentResponses, CreateFileData, CreateFileErrors, CreateFileResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteFileData, DeleteFileErrors, DeleteFileResponses, DownloadAttachmentData, GetConfigurationsData, GetConfigurationsErrors, GetConfigurationsResponses, GetDiffData, GetDiffErrors, GetDiffResponses, GetEnvironmentData, GetEnvironmentResponses, GetSession2Data, GetSession2Errors, GetSession2Responses, GetSessionData, GetSessionErrors, GetSessionResponses, GetStatusData, GetStatusErrors, GetStatusResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListModelsData, ListModelsErrors, ListModelsResponses, ListRulesData, ListRulesResponses, ListSessionsData, ListSessionsResponses, ListSkillsData, ListSkillsResponses, LivezData, MetricsData, MetricsResponses, PrepareAttachmentData, PrepareAttachmentErrors, PrepareAttachmentResponses, PushData, PushErrors, PushResponses, ReadyzData, RenameFileData, RenameFileErrors, RenameFileResponses, SaveFileData, SaveFileErrors, SaveFileResponses, SaveRuleData, SaveRuleErrors, SaveRuleResponses, SearchAndReplaceFilesData, SearchAndReplaceFilesErrors, SearchAndReplaceFilesResponses, SearchFileNamesData, SearchFileNamesErrors, SearchFileNamesResponses, SearchFilesData, SearchFilesErrors, SearchFilesResponses, StageData, StageErrors, StageResponses, StopSessionData, StopSessionErrors, StopSessionResponses, UnstageData, UnstageErrors, UnstageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -17,6 +17,16 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
      */
     meta?: Record<string, unknown>;
 };
+
+export const livez = <ThrowOnError extends boolean = false>(options?: Options<LivezData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/livez', ...options });
+
+export const readyz = <ThrowOnError extends boolean = false>(options?: Options<ReadyzData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/readyz', ...options });
+
+export const metrics = <ThrowOnError extends boolean = false>(options?: Options<MetricsData, ThrowOnError>) => (options?.client ?? client).get<MetricsResponses, unknown, ThrowOnError>({
+    responseType: 'text',
+    url: '/metrics',
+    ...options
+});
 
 export const getEnvironment = <ThrowOnError extends boolean = false>(options?: Options<GetEnvironmentData, ThrowOnError>) => (options?.client ?? client).get<GetEnvironmentResponses, unknown, ThrowOnError>({
     responseType: 'json',

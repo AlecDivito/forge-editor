@@ -7,7 +7,6 @@ import { FC, useEffect, useRef, useState } from "react";
 import { yCollab } from "y-codemirror.next";
 import { useDocumentDiagnosticsSync } from "./hook/use-document-diagnostics.hook";
 import { linterExtension } from "./extensions/lint.extension";
-import { infoPanelExtension } from "./extensions/info-panel.extension";
 import { requestHoverToolTip } from "./extensions/tooltip.extension";
 import { DocumentFileId, DocumentWorkspaceId } from "./extensions/state.extension";
 import { autocompletion } from "@codemirror/autocomplete";
@@ -84,7 +83,6 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
             override: [autoCompletionOverride],
           }),
           linterExtension(),
-          infoPanelExtension(),
         ],
       }),
     });

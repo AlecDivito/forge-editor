@@ -398,6 +398,9 @@ export type ServerMessage =
     }
   | { kind: "AgentSessionStarted"; request_id: string; conversation_id: string }
   | { kind: "AgentSessionEvent"; conversation_id: string; event: AiSessionEvent }
+  | { kind: "AgentSubagentStarted"; parent_conversation_id: string; conversation_id: string; request_id: string; title: string }
+  | { kind: "AgentSubagentEvent"; parent_conversation_id: string; conversation_id: string; event: AiSessionEvent }
+  | { kind: "AgentSubagentState"; parent_conversation_id: string; conversation_id: string; request_id: string; state: string }
   | { kind: "AgentStarted"; request_id: string; conversation_id: string }
   | { kind: "AgentTextDelta"; request_id: string; conversation_id: string; message_id: string; text: string }
   | { kind: "AgentThinkingDelta"; request_id: string; conversation_id: string; reasoning_id: string; text: string }
