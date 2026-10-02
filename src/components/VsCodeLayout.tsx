@@ -2,7 +2,6 @@
 
 import FileViewerController from "@/components/panels/filesystem/filesystem";
 import { Orientation } from "dockview";
-import Chat from "./chat";
 import TerminalRegion from "./panels/terminal/TerminalRegion";
 import CommandPallet from "./panels/commandPallet/CommandPallet";
 
@@ -13,12 +12,13 @@ import { LspNotifications } from "./notifications/LspNotifications";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { selectedWorkspace, useWorkspaceStore } from "@/lib/workspaces";
 import { terminalRegistry } from "./panels/terminal/terminal.registry";
+import AgentHarnessPanel from "./panels/code/components/AgentHarnessPanel/AgentHarnessPanel";
 
 const components = {
   filesystem: FileViewerController,
   code: CodeViewerController,
   terminal: TerminalRegion,
-  chat: Chat,
+  agent: AgentHarnessPanel,
 };
 
 const VSCodeLayout = () => {
@@ -141,13 +141,13 @@ const VSCodeLayout = () => {
       position: { referencePanel: "code", direction: "left" },
     });
 
-    // const chat = event.api.addPanel({
-    //   id: "chat",
-    //   component: "chat",
-    //   params: {},
-    //   position: { referencePanel: "code", direction: "right" },
-    // });
-    // chat.api.setVisible(false);
+    event.api.addPanel({
+      id: "agent",
+      component: "agent",
+      params: {},
+      size: 400,
+      position: { referencePanel: "code", direction: "right" },
+    });
 
     const terminal = event.api.addPanel({
       id: "terminal",

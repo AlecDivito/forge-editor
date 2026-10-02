@@ -1,18 +1,22 @@
+pub mod agent;
 pub mod editor;
 pub mod environment;
 pub mod file;
 pub mod git;
 pub mod lsp;
+pub mod message;
 pub mod pagination;
 pub mod rpc;
 pub mod search;
 pub mod workspace_mutation;
 
+pub use agent::*;
 pub use editor::*;
 pub use environment::*;
 pub use file::*;
 pub use git::*;
 pub use lsp::*;
+pub use message::*;
 pub use pagination::*;
 pub use rpc::*;
 pub use search::*;

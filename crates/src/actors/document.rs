@@ -27,21 +27,12 @@ use crate::{
     actors::LspServerActor,
     models::{ClientId, DocEvent, FileId, LspDiagnostic, PersistencePhase, WorkspaceId},
     state::AppState,
+    util::time::now_ms,
     util::{byte_offset_to_position, diff},
 };
 use yrs::WriteTxn;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn now_ms() -> i64 {
-    // wall-clock, not Instant — Instant is relative to an arbitrary
-    // process-start point and isn't meaningful for idle-time logging
-    // across restarts.
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
 
 pub struct DocumentActor {
     location: RwLock<DocumentLocation>,
@@ -137,7 +128,7 @@ impl DocumentActor {
             editable: AtomicBool::new(true),
             deleted: AtomicBool::new(false),
             subscribers: AtomicUsize::new(0),
-            last_activity: AtomicI64::new(now_ms()),
+            last_activity: AtomicI64::new(now_ms() as i64),
             lsp_opened: AtomicBool::new(false),
             lsp_version: AtomicI64::new(0),
             diagnostics: RwLock::new(Vec::new()),
@@ -256,7 +247,7 @@ impl DocumentActor {
         let (path, _) = self.location().await;
         debug!("Client has subscribed to the document {:?}", path);
         self.subscribers.fetch_add(1, Ordering::AcqRel);
-        self.last_activity.store(now_ms(), Ordering::Relaxed);
+        self.last_activity.store(now_ms() as i64, Ordering::Relaxed);
         if let Some(task) = self.eviction_task.lock().await.take() {
             task.abort();
         }
@@ -283,7 +274,7 @@ impl DocumentActor {
                 break previous - 1;
             }
         };
-        self.last_activity.store(now_ms(), Ordering::Relaxed);
+        self.last_activity.store(now_ms() as i64, Ordering::Relaxed);
         if remaining > 0 {
             return;
         }
@@ -351,7 +342,7 @@ impl DocumentActor {
                 // concurrent save cannot snapshot new content while still
                 // observing the old revision.
                 let generation = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
-                self.last_activity.store(now_ms(), Ordering::Relaxed);
+                self.last_activity.store(now_ms() as i64, Ordering::Relaxed);
                 Some(generation)
             }
         };
@@ -422,7 +413,7 @@ impl DocumentActor {
 
         let (content, target_revision, persisted_revision, location) = {
             let _state_guard = self.state_lock.lock().await;
-            let content = self.content_snapshot().await;
+            let content = self.content().await;
             let target_revision = self.revision.load(Ordering::Acquire);
             let persisted_revision = self.persisted_revision.load(Ordering::Acquire);
             let location = self.location.read().await.clone();
@@ -639,7 +630,7 @@ impl DocumentActor {
         self.doc.read().await.transact().state_vector()
     }
 
-    async fn content_snapshot(&self) -> String {
+    pub async fn content(&self) -> String {
         let doc = self.doc.read().await;
         let txn = doc.transact();
         txn.get_text("content")
@@ -667,7 +658,7 @@ impl DocumentActor {
         if self.lsp_opened.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let text = self.content_snapshot().await;
+        let text = self.content().await;
         *self.last_synced_text.write().await = text.clone();
         let uri = self.lsp_uri().await;
         lsp.notify(
@@ -687,7 +678,7 @@ impl DocumentActor {
     /// Full-document sync. Call this from a debounced flush task, never
     /// on every keystroke — see the "why full sync" note from earlier.
     pub async fn sync_to_lsp(&self, lsp: &LspServerActor) -> anyhow::Result<()> {
-        let new_text = self.content_snapshot().await;
+        let new_text = self.content().await;
         let mut last = self.last_synced_text.write().await;
 
         if *last == new_text {
@@ -1048,7 +1039,7 @@ mod tests {
             .expect("apply deletion");
 
         assert_eq!(actor.generation(), 1);
-        assert_eq!(actor.content_snapshot().await, " text");
+        assert_eq!(actor.content().await, " text");
         assert!(matches!(
             events.recv().await.expect("update event"),
             DocEvent::Update { .. }

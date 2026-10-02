@@ -689,6 +689,78 @@ async fn dispatch(
             Ok(())
         }
 
+        ClientMessage::AgentSessionStart {
+            request_id,
+            conversation_id,
+        } => {
+            let session = state.ai_session(conversation_id.clone());
+            match session.start(document_tx.clone()).await {
+                Ok(_) => {
+                    document_tx
+                        .send(ServerMessage::AgentSessionStarted {
+                            request_id,
+                            conversation_id,
+                        })
+                        .await
+                        .ok();
+                }
+                Err(message) => {
+                    document_tx
+                        .send(ServerMessage::AgentError {
+                            request_id,
+                            conversation_id,
+                            code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable),
+                            message,
+                        })
+                        .await
+                        .ok();
+                }
+            }
+            Ok(())
+        }
+
+        ClientMessage::AgentPrompt {
+            request_id,
+            conversation_id,
+            provider,
+            model_id,
+            prompt,
+        } => {
+            let session = state.ai_session(conversation_id.clone());
+            if session
+                .prompt(
+                    request_id.clone(),
+                    provider,
+                    model_id,
+                    prompt,
+                    document_tx.clone(),
+                )
+                .await
+                .is_err()
+            {
+                document_tx
+                    .send(ServerMessage::AgentError {
+                        request_id,
+                        conversation_id,
+                        code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable),
+                        message: "The AI session is unavailable".into(),
+                    })
+                    .await
+                    .ok();
+            }
+            Ok(())
+        }
+
+        ClientMessage::AgentStop { request_id, conversation_id } => {
+            let session = state.ai_session(conversation_id.clone());
+            if session.stop(request_id.clone(), document_tx.clone()).await.is_err() {
+                document_tx.send(ServerMessage::AgentError {
+                    request_id, conversation_id, code: Some(crate::agent::error::AgentFailureCode::SessionUnavailable), message: "The AI session is unavailable".into(),
+                }).await.ok();
+            }
+            Ok(())
+        }
+
         ClientMessage::LspRequest {
             workspace_id,
             scope,

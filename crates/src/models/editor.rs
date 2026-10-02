@@ -328,6 +328,22 @@ pub enum ClientMessage {
         params: serde_json::Value,
     },
 
+    AgentSessionStart {
+        request_id: String,
+        conversation_id: String,
+    },
+    AgentPrompt {
+        request_id: String,
+        conversation_id: String,
+        provider: String,
+        model_id: String,
+        prompt: String,
+    },
+    AgentStop {
+        request_id: String,
+        conversation_id: String,
+    },
+
     Ping,
 }
 
@@ -460,6 +476,25 @@ impl std::fmt::Display for ClientMessage {
                 f,
                 "LspNotification({workspace_id}, {file_id}, {method}, {params})"
             ),
+
+            ClientMessage::AgentSessionStart {
+                request_id,
+                conversation_id,
+            } => write!(f, "AgentSessionStart({request_id}, {conversation_id})"),
+
+            ClientMessage::AgentPrompt {
+                request_id,
+                conversation_id,
+                provider,
+                model_id,
+                ..
+            } => write!(
+                f,
+                "AgentPrompt({request_id}, {conversation_id}, {provider}, {model_id})"
+            ),
+            ClientMessage::AgentStop { request_id, conversation_id } => {
+                write!(f, "AgentStop({request_id}, {conversation_id})")
+            }
 
             ClientMessage::Ping => write!(f, "Ping"),
         }
@@ -615,6 +650,72 @@ pub enum ServerMessage {
         workspace_id: WorkspaceId,
         file_id: FileId,
         diagnostics: Vec<LspDiagnostic>,
+    },
+
+    AgentSessionStarted {
+        request_id: String,
+        conversation_id: String,
+    },
+    /// A session event that has already been committed to JSONL. Consumers
+    /// reconcile this by event ID and sequence; it is the same structure used
+    /// when restoring a conversation through the HTTP API.
+    AgentSessionEvent {
+        conversation_id: String,
+        event: crate::models::AiSessionEvent,
+    },
+    AgentStarted {
+        request_id: String,
+        conversation_id: String,
+    },
+    AgentTextDelta {
+        request_id: String,
+        conversation_id: String,
+        message_id: String,
+        text: String,
+    },
+    AgentThinkingDelta {
+        request_id: String,
+        conversation_id: String,
+        reasoning_id: String,
+        text: String,
+    },
+    AgentToolStarted {
+        request_id: String,
+        conversation_id: String,
+        tool_call_id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    AgentToolCompleted {
+        request_id: String,
+        conversation_id: String,
+        tool_call_id: String,
+        is_error: bool,
+    },
+    AgentUsage {
+        request_id: String,
+        conversation_id: String,
+        usage: crate::models::AiTokenUsage,
+    },
+    AgentSessionNamed {
+        request_id: String,
+        conversation_id: String,
+        title: String,
+    },
+    AgentCompleted {
+        request_id: String,
+        conversation_id: String,
+    },
+    AgentStopped {
+        request_id: String,
+        conversation_id: String,
+    },
+    AgentError {
+        request_id: String,
+        conversation_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<crate::agent::error::AgentFailureCode>,
+        message: String,
     },
 
     Error {

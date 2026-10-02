@@ -50,3 +50,4 @@ crates/workspace
 crates/target
 .next
 /node_modules/**
+chats

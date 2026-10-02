@@ -1,6 +1,7 @@
+mod agent;
 mod debug;
 mod environment;
-mod file_search;
+pub(crate) mod file_search;
 mod file_system;
 mod git;
 mod ws;
@@ -12,6 +13,7 @@ use rovo::{
 
 use crate::{
     routes::{
+        agent::{get_session, list_models, list_sessions},
         environment::get_environment,
         file_search::{search_and_replace_files, search_file_names, search_files},
         file_system::{create_file, delete_file, rename_file, save_file},
@@ -25,6 +27,9 @@ use file_system::list_files;
 pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
     Router::new()
         .route("/environment", get(get_environment))
+        .route("/agent/models", get(list_models))
+        .route("/agent/sessions", get(list_sessions))
+        .route("/agent/sessions/{session_id}", get(get_session))
         .route("/fs/list", get(list_files))
         // .route("/fs/open", post(open_file))
         // .route("/fs/close", post(close_file))

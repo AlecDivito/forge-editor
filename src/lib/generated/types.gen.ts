@@ -4,6 +4,163 @@ export type ClientOptions = {
     baseURL: 'http://localhost:8080' | (string & {});
 };
 
+export enum AgentFailureCode {
+    INVALID_PROVIDER = 'invalid_provider',
+    MISSING_MODEL_BACKEND = 'missing_model_backend',
+    INVALID_PROMPT = 'invalid_prompt',
+    TRANSCRIPT_LIMIT = 'transcript_limit',
+    MODEL_CLIENT_INITIALIZATION_FAILED = 'model_client_initialization_failed',
+    MODEL_CATALOG_REQUEST_FAILED = 'model_catalog_request_failed',
+    MODEL_CATALOG_REJECTED = 'model_catalog_rejected',
+    MODEL_CATALOG_INVALID_RESPONSE = 'model_catalog_invalid_response',
+    INVALID_MODEL_BACKEND_URL = 'invalid_model_backend_url',
+    MODEL_STREAM_FAILED = 'model_stream_failed',
+    AGENT_EXECUTION_FAILED = 'agent_execution_failed',
+    TOOL_ROUND_LIMIT_EXCEEDED = 'tool_round_limit_exceeded',
+    TOOL_EXECUTION_FAILED = 'tool_execution_failed',
+    TOOL_TIMED_OUT = 'tool_timed_out',
+    TOOL_CANCELLED = 'tool_cancelled',
+    STORAGE_WRITE_FAILED = 'storage_write_failed',
+    TITLE_GENERATION_FAILED = 'title_generation_failed',
+    TITLE_PERSIST_FAILED = 'title_persist_failed',
+    SESSION_UNAVAILABLE = 'session_unavailable',
+    UNKNOWN = 'unknown'
+}
+
+export type AgentModelCatalog = {
+    configured: boolean;
+    models: Array<AgentModelDescriptor>;
+};
+
+export type AgentModelDescriptor = {
+    id: string;
+    label: string;
+    provider: string;
+};
+
+export type AgentSessionLog = {
+    /**
+     * The canonical ordered presentation stream.
+     */
+    events?: Array<AiSessionEvent>;
+    metadata: AiSessionMetadata;
+    operations?: Array<OperationSnapshot>;
+};
+
+export type AgentSessionPath = {
+    /**
+     * Opaque conversation ID used to address the durable session.
+     */
+    session_id: string;
+};
+
+export type AgentSessionSearchQuery = {
+    /**
+     * Case-insensitive text matched against session titles and message content.
+     */
+    query?: string | null;
+};
+
+export type AiSessionEvent = {
+    event_id: string;
+    kind: AiSessionEventKind;
+    occurred_at_ms: number;
+    operation_id?: string | null;
+    operation_sequence?: number | null;
+    sequence: number;
+};
+
+export type AiSessionEventKind = {
+    type: 'session_created';
+    metadata: AiSessionMetadata;
+} | {
+    title: string;
+    type: 'session_named';
+} | {
+    type: 'model_selected';
+    model: AiSessionModel;
+} | {
+    type: 'operation_transition';
+    transition: OperationTransition;
+} | {
+    type: 'message';
+    content: string;
+    message_id?: string | null;
+    role: ChatRole;
+    thinking?: string | null;
+    usage?: AiTokenUsage | null;
+} | {
+    type: 'reasoning';
+    content: string;
+    reasoning_id?: string | null;
+} | {
+    type: 'user_message_queued';
+    content: string;
+    message_id: string;
+} | {
+    type: 'user_message_cancelled';
+    message_id: string;
+    reason: string;
+} | {
+    type: 'model_intent';
+    assistant_message_id: string;
+    attempt: number;
+    model_id: string;
+    reasoning_message_id: string;
+    request_hash: string;
+    turn_id: string;
+} | {
+    type: 'tool_call';
+    name: string;
+    tool_call_id: string;
+} | {
+    type: 'tool_intent';
+    attempt: number;
+    name: string;
+    replay_class: ToolReplayClass;
+    tool_call_id: string;
+} | {
+    type: 'tool_result';
+    content: string;
+    is_error: boolean;
+    tool_call_id: string;
+} | {
+    type: 'failure';
+    code?: AgentFailureCode;
+    detail?: string | null;
+    message: string;
+};
+
+export type AiSessionMetadata = {
+    title: string;
+    created_at_ms: number;
+    id: string;
+    model?: AiSessionModel | null;
+};
+
+export type AiSessionModel = {
+    model_id: string;
+    provider: string;
+};
+
+export type AiSessionSummary = {
+    message_count: number;
+    metadata: AiSessionMetadata;
+};
+
+export type AiTokenUsage = {
+    cached_tokens?: number | null;
+    completion_tokens: number;
+    prompt_tokens: number;
+    reasoning_tokens?: number | null;
+    total_tokens: number;
+};
+
+export enum ChatRole {
+    USER = 'user',
+    ASSISTANT = 'assistant'
+}
+
 export type ConfigurationList = {
     configurations: Array<ConfigurationSummary>;
     diagnostics: Array<DebugDiagnostic>;
@@ -315,6 +472,65 @@ export type MoveWorkspaceQuery = {
     source_workspace_id: string;
 };
 
+export type OperationSnapshot = {
+    accepted_at_ms: number;
+    operation_id: string;
+    operation_sequence: number;
+    request_id: string;
+    state: OperationState;
+    status: OperationStatus;
+    updated_at_ms: number;
+};
+
+export type OperationState = {
+    kind: 'accepted';
+} | {
+    kind: 'queued';
+} | {
+    kind: 'preparing';
+} | {
+    attempt: number;
+    kind: 'model_intent';
+    turn_id: string;
+} | {
+    attempt: number;
+    kind: 'model_in_flight';
+} | {
+    kind: 'tools_planned';
+    tool_call_ids: Array<string>;
+} | {
+    kind: 'tool_in_flight';
+    tool_call_id: string;
+} | {
+    attempt: number;
+    kind: 'tool_intent';
+    replay_class: ToolReplayClass;
+    tool_call_id: string;
+} | {
+    kind: 'completed';
+} | {
+    kind: 'failed';
+} | {
+    kind: 'cancelled';
+    reason: string;
+} | {
+    kind: 'interrupted';
+    reason: string;
+};
+
+export enum OperationStatus {
+    PENDING = 'pending',
+    WAITING = 'waiting',
+    COMPLETE = 'complete'
+}
+
+export type OperationTransition = {
+    occurred_at_ms: number;
+    operation_id: string;
+    request_id: string;
+    state: OperationState;
+};
+
 export type OutputChunk = {
     category: string;
     output: string;
@@ -378,6 +594,12 @@ export enum SessionState {
     FAILED = 'failed'
 }
 
+export enum ToolReplayClass {
+    SAFE = 'safe',
+    NEVER = 'never',
+    RECONCILE = 'reconcile'
+}
+
 export type WorkspaceQuery = {
     workspace_id: string;
 };
@@ -394,6 +616,78 @@ export type GetEnvironmentResponses = {
 };
 
 export type GetEnvironmentResponse = GetEnvironmentResponses[keyof GetEnvironmentResponses];
+
+export type ListModelsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/agent/models';
+};
+
+export type ListModelsErrors = {
+    /**
+     * The configured backend could not be contacted or returned an invalid response
+     */
+    502: unknown;
+};
+
+export type ListModelsResponses = {
+    /**
+     * The available model catalog or an unconfigured catalog
+     */
+    200: AgentModelCatalog;
+};
+
+export type ListModelsResponse = ListModelsResponses[keyof ListModelsResponses];
+
+export type ListSessionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Case-insensitive text matched against session titles and message content.
+         */
+        query?: string | null;
+    };
+    url: '/api/agent/sessions';
+};
+
+export type ListSessionsResponses = {
+    /**
+     * The durable session summaries
+     */
+    200: Array<AiSessionSummary>;
+};
+
+export type ListSessionsResponse = ListSessionsResponses[keyof ListSessionsResponses];
+
+export type GetSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Opaque conversation ID used to address the durable session.
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/agent/sessions/{session_id}';
+};
+
+export type GetSessionErrors = {
+    /**
+     * The requested session does not exist
+     */
+    404: unknown;
+};
+
+export type GetSessionResponses = {
+    /**
+     * The complete durable operation log
+     */
+    200: AgentSessionLog;
+};
+
+export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
 
 export type ListFilesData = {
     body?: never;
@@ -900,7 +1194,7 @@ export type StopSessionResponses = {
 
 export type StopSessionResponse = StopSessionResponses[keyof StopSessionResponses];
 
-export type GetSessionData = {
+export type GetSession2Data = {
     body?: never;
     path: {
         /**
@@ -916,18 +1210,18 @@ export type GetSessionData = {
     url: '/api/workspaces/{workspace_id}/debug/sessions/{session_id}';
 };
 
-export type GetSessionErrors = {
+export type GetSession2Errors = {
     /**
      * Unknown workspace or session
      */
     400: unknown;
 };
 
-export type GetSessionResponses = {
+export type GetSession2Responses = {
     /**
      * Current lifecycle, output, and exit snapshot
      */
     200: SessionSnapshot;
 };
 
-export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
+export type GetSession2Response = GetSession2Responses[keyof GetSession2Responses];

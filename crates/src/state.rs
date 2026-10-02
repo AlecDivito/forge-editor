@@ -13,9 +13,10 @@ use tokio::{
 };
 
 use crate::{
-    actors::{DocumentActor, LspServerActor, TerminalActor},
+    actors::{AiSessionActor, DocumentActor, LspServerActor, TerminalActor},
     config::Config,
     models::{ClientId, FileId, LanguageId, ServerMessage, TerminalId, WorkspaceId},
+    services::ai_session::AiSessionService,
 };
 
 #[derive(Debug, Clone)]
@@ -24,6 +25,8 @@ pub struct AppState {
     workspaces: Arc<HashMap<WorkspaceId, Arc<WorkspaceRuntime>>>,
     pub open_files: Arc<DashMap<(WorkspaceId, FileId), Arc<DocumentActor>>>,
     pub terminals: Arc<DashMap<TerminalId, TerminalRecord>>,
+    pub ai_sessions: Arc<AiSessionService>,
+    ai_session_actors: Arc<DashMap<String, Arc<AiSessionActor>>>,
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
     pub debug: crate::debug::DebugService,
@@ -56,7 +59,7 @@ pub struct WorkspaceRuntime {
 }
 
 impl AppState {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> anyhow::Result<Self> {
         let workspaces = config
             .workspaces
             .iter()
@@ -100,16 +103,38 @@ impl AppState {
                 )
             })
             .collect();
-        Self {
+        let ai_sessions = Arc::new(AiSessionService::new(
+            config.agent_sessions_dir.clone(),
+            config.openai_compatible.clone(),
+        )?);
+        let state = Self {
             config: Arc::new(config),
             workspaces: Arc::new(workspaces),
             open_files: Arc::new(DashMap::new()),
             terminals: Arc::new(DashMap::new()),
+            ai_sessions,
+            ai_session_actors: Arc::new(DashMap::new()),
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
             debug: crate::debug::DebugService::new(),
             next_connection_id: Arc::new(AtomicU64::new(1)),
+        };
+        // The session service has already replayed every JSONL file. Claim
+        // unfinished operations immediately so a browser disconnect (or no
+        // browser at all) never owns execution lifetime.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            for summary in state.ai_sessions.list(None) {
+                let actor = state.ai_session(summary.metadata.id);
+                runtime.spawn(async move {
+                    if actor.recover().await.is_err() {
+                        tracing::error!("could not start durable AI session recovery actor");
+                    }
+                });
+            }
+        } else {
+            tracing::warn!("AI session recovery deferred because no Tokio runtime is active");
         }
+        Ok(state)
     }
 
     pub fn new_client_connection(
@@ -119,6 +144,31 @@ impl AppState {
         ClientConnectionHandle::new(
             self.next_connection_id.fetch_add(1, Ordering::Relaxed),
             document_tx,
+        )
+    }
+
+    pub fn ai_session(&self, session_id: String) -> Arc<AiSessionActor> {
+        self.ai_session_actors
+            .entry(session_id.clone())
+            .or_insert_with(|| {
+                AiSessionActor::spawn(
+                    session_id,
+                    self.config.openai_compatible.clone(),
+                    self.ai_sessions.clone(),
+                    self.agent_tool_context(),
+                )
+            })
+            .clone()
+    }
+
+    fn agent_tool_context(&self) -> crate::agent::tools::ToolContext {
+        crate::agent::tools::ToolContext::new(
+            self.config
+                .workspaces
+                .iter()
+                .map(|workspace| (workspace.id.clone(), workspace.root.clone()))
+                .collect(),
+            self.open_files.clone(),
         )
     }
 }
@@ -244,6 +294,7 @@ mod tests {
         std::fs::create_dir_all(two.join("src")).unwrap();
         let one = one.canonicalize().unwrap();
         let two = two.canonicalize().unwrap();
+        std::fs::create_dir_all(parent.join("sessions")).unwrap();
         let state = AppState::new(Config {
             port: 0,
             environment: EnvironmentConfig {
@@ -263,7 +314,10 @@ mod tests {
                 },
             ],
             default_workspace_id: "one".into(),
-        });
+            openai_compatible: None,
+            agent_sessions_dir: parent.join("sessions"),
+        })
+        .unwrap();
         assert_eq!(
             state
                 .resolve_file_path(&"one".into(), &"/src/main.rs".into())

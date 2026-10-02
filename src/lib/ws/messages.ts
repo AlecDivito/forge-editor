@@ -20,6 +20,7 @@ import {
   WorkspaceSymbolParams,
   Range,
 } from "vscode-languageserver-protocol";
+import type { AiSessionEvent } from "@/lib/generated/types.gen";
 
 export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
 export type FileId = string & { readonly __brand: "FileId" };
@@ -30,6 +31,13 @@ export type TerminalExit = { code?: number; signal?: string };
 export type TerminalErrorCode =
   "invalid_request" | "not_found" | "forbidden" | "limit_exceeded" | "spawn_failed" | "invalid_state";
 export type LanguageId = string & { readonly __brand: "LanguageId" };
+export type AgentTokenUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_tokens?: number;
+  reasoning_tokens?: number;
+};
 
 export type LspScope = { kind: "document"; file_id: FileId } | { kind: "workspace"; language_id?: LanguageId };
 
@@ -215,6 +223,16 @@ export type ClientMessage =
       method: string;
       params: unknown;
     }
+  | { kind: "AgentSessionStart"; request_id: string; conversation_id: string }
+  | {
+      kind: "AgentPrompt";
+      request_id: string;
+      conversation_id: string;
+      provider: string;
+      model_id: string;
+      prompt: string;
+    }
+  | { kind: "AgentStop"; request_id: string; conversation_id: string }
   | {
       kind: "Ping";
     };
@@ -369,6 +387,36 @@ export type ServerMessage =
       file_id: FileId;
       diagnostics: LspDiagnostic[];
     }
+  | { kind: "AgentSessionStarted"; request_id: string; conversation_id: string }
+  | { kind: "AgentSessionEvent"; conversation_id: string; event: AiSessionEvent }
+  | { kind: "AgentStarted"; request_id: string; conversation_id: string }
+  | { kind: "AgentTextDelta"; request_id: string; conversation_id: string; message_id: string; text: string }
+  | { kind: "AgentThinkingDelta"; request_id: string; conversation_id: string; reasoning_id: string; text: string }
+  | {
+      kind: "AgentToolStarted";
+      request_id: string;
+      conversation_id: string;
+      tool_call_id: string;
+      name: string;
+      arguments: unknown;
+    }
+  | {
+      kind: "AgentToolCompleted";
+      request_id: string;
+      conversation_id: string;
+      tool_call_id: string;
+      is_error: boolean;
+    }
+  | {
+      kind: "AgentUsage";
+      request_id: string;
+      conversation_id: string;
+      usage: AgentTokenUsage;
+    }
+  | { kind: "AgentSessionNamed"; request_id: string; conversation_id: string; title: string }
+  | { kind: "AgentCompleted"; request_id: string; conversation_id: string }
+  | { kind: "AgentStopped"; request_id: string; conversation_id: string }
+  | { kind: "AgentError"; request_id: string; conversation_id: string; code?: string; message: string }
   | {
       kind: "Error";
       context?: string;
