@@ -498,8 +498,15 @@ mod tests {
         tokio::fs::create_dir_all(root.join("sessions"))
             .await
             .expect("create session storage");
+        for directory in ["skills", "rules", "prompts", "policies"] {
+            tokio::fs::create_dir_all(root.join("agent-resources").join(directory))
+                .await
+                .expect("create agent resources");
+        }
         (
             AppState::new(Config {
+                bind_address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                cors_allowed_origin: axum::http::HeaderValue::from_static("http://localhost:3000"),
                 port: 0,
                 environment: EnvironmentConfig {
                     id: "test".into(),
@@ -514,9 +521,11 @@ mod tests {
                 openai_compatible: None,
                 s3_attachments: None,
                 agent_sessions_dir: root.join("sessions"),
+                agent_resources_dir: root.join("agent-resources"),
                 agent_attachment_cache_dir: root.join("attachment-cache"),
                 agent_max_attachment_bytes: 20 * 1024 * 1024,
                 agent_attachment_cache_max_bytes: 100 * 1024 * 1024,
+                agent_max_model_rounds: 16,
             })
             .expect("create app state"),
             root,

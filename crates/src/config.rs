@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use axum::http::HeaderValue;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +62,10 @@ impl std::fmt::Debug for OpenAiCompatibleConfig {
             .field("base_url", &self.base_url)
             .field("max_context_tokens", &self.max_context_tokens)
             .field("compaction_reserve_tokens", &self.compaction_reserve_tokens)
-            .field("compaction_keep_recent_tokens", &self.compaction_keep_recent_tokens)
+            .field(
+                "compaction_keep_recent_tokens",
+                &self.compaction_keep_recent_tokens,
+            )
             .field("api_key", &"[redacted]")
             .finish()
     }
@@ -87,6 +91,7 @@ impl OpenAiCompatibleConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind_address: IpAddr,
+    pub cors_allowed_origin: HeaderValue,
     pub port: u16,
     pub environment: EnvironmentConfig,
     pub workspaces: Vec<WorkspaceConfig>,
@@ -118,21 +123,38 @@ impl Config {
             .unwrap_or_else(|| "127.0.0.1".into())
             .parse()
             .context("FORGE_BIND_ADDRESS must be a valid IP address")?;
+        let cors_allowed_origin = get("FORGE_CORS_ALLOWED_ORIGIN")
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "http://localhost:3000".into());
+        let cors_allowed_origin = HeaderValue::from_str(&cors_allowed_origin)
+            .context("FORGE_CORS_ALLOWED_ORIGIN must be a valid HTTP header value")?;
         let port = get("PORT")
             .unwrap_or_else(|| "8080".into())
             .parse()
             .context("PORT must be a valid TCP port")?;
         let max_context_tokens = positive_u32(&get, "FORGE_AGENT_MAX_CONTEXT_TOKENS", 32_768)?;
-        let compaction_reserve_tokens = positive_u32(&get, "FORGE_AGENT_COMPACTION_RESERVE_TOKENS", 6_144)?;
-        let compaction_keep_recent_tokens = positive_u32(&get, "FORGE_AGENT_COMPACTION_KEEP_RECENT_TOKENS", 12_288)?;
-        if compaction_reserve_tokens.saturating_add(compaction_keep_recent_tokens) >= max_context_tokens {
-            bail!("FORGE_AGENT_COMPACTION_RESERVE_TOKENS plus FORGE_AGENT_COMPACTION_KEEP_RECENT_TOKENS must be less than FORGE_AGENT_MAX_CONTEXT_TOKENS");
+        let compaction_reserve_tokens =
+            positive_u32(&get, "FORGE_AGENT_COMPACTION_RESERVE_TOKENS", 6_144)?;
+        let compaction_keep_recent_tokens =
+            positive_u32(&get, "FORGE_AGENT_COMPACTION_KEEP_RECENT_TOKENS", 12_288)?;
+        if compaction_reserve_tokens.saturating_add(compaction_keep_recent_tokens)
+            >= max_context_tokens
+        {
+            bail!(
+                "FORGE_AGENT_COMPACTION_RESERVE_TOKENS plus FORGE_AGENT_COMPACTION_KEEP_RECENT_TOKENS must be less than FORGE_AGENT_MAX_CONTEXT_TOKENS"
+            );
         }
         let openai_compatible = match (
             get("OPENAI_API_BASE_URL").filter(|value| !value.trim().is_empty()),
             get("OPENAI_API_KEY").filter(|value| !value.trim().is_empty()),
         ) {
-            (Some(base_url), Some(api_key)) => Some(OpenAiCompatibleConfig { base_url, max_context_tokens, compaction_reserve_tokens, compaction_keep_recent_tokens, api_key }),
+            (Some(base_url), Some(api_key)) => Some(OpenAiCompatibleConfig {
+                base_url,
+                max_context_tokens,
+                compaction_reserve_tokens,
+                compaction_keep_recent_tokens,
+                api_key,
+            }),
             (Some(_), None) | (None, Some(_)) => {
                 tracing::warn!(
                     "OPENAI_API_BASE_URL and OPENAI_API_KEY must both be set; the model provider is disabled"
@@ -244,6 +266,7 @@ impl Config {
             tracing::warn!("BASE_DIRECTORY is deprecated; configure FORGE_WORKSPACES_JSON instead");
             return Ok(Self {
                 bind_address,
+                cors_allowed_origin,
                 port,
                 environment: EnvironmentConfig {
                     id: "local".into(),
@@ -323,6 +346,7 @@ impl Config {
         };
         Ok(Self {
             bind_address,
+            cors_allowed_origin,
             port,
             environment,
             workspaces,
@@ -339,9 +363,23 @@ impl Config {
     }
 }
 
-fn positive_u32(get: &impl Fn(&str) -> Option<String>, key: &str, default: u32) -> anyhow::Result<u32> {
-    let value = get(key).filter(|value| !value.trim().is_empty()).map(|value| value.parse::<u32>().with_context(|| format!("{key} must be a positive integer"))).transpose()?.unwrap_or(default);
-    if value == 0 { bail!("{key} must be greater than zero"); }
+fn positive_u32(
+    get: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    default: u32,
+) -> anyhow::Result<u32> {
+    let value = get(key)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            value
+                .parse::<u32>()
+                .with_context(|| format!("{key} must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(default);
+    if value == 0 {
+        bail!("{key} must be greater than zero");
+    }
     Ok(value)
 }
 
@@ -437,22 +475,52 @@ mod tests {
     }
 
     #[test]
-    fn parses_bind_address_and_defaults_to_loopback() {
+    fn parses_network_settings_with_safe_defaults() {
         let root = root();
         let base = HashMap::from([
             ("FORGE_WORKSPACES_ROOT", root.to_string_lossy().into_owned()),
-            ("FORGE_WORKSPACES_JSON", r#"[{"id":"one","name":"One","path":"one"}]"#.into()),
+            (
+                "FORGE_WORKSPACES_JSON",
+                r#"[{"id":"one","name":"One","path":"one"}]"#.into(),
+            ),
         ]);
         assert_eq!(
             parse(base.clone()).unwrap().bind_address,
             "127.0.0.1".parse::<IpAddr>().unwrap()
         );
+        assert_eq!(
+            parse(base.clone()).unwrap().cors_allowed_origin,
+            HeaderValue::from_static("http://localhost:3000")
+        );
 
         let mut externally_reachable = base;
         externally_reachable.insert("FORGE_BIND_ADDRESS", "0.0.0.0".into());
+        externally_reachable.insert(
+            "FORGE_CORS_ALLOWED_ORIGIN",
+            "https://forge.example.com".into(),
+        );
         assert_eq!(
-            parse(externally_reachable).unwrap().bind_address,
+            parse(externally_reachable.clone()).unwrap().bind_address,
             "0.0.0.0".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            parse(externally_reachable).unwrap().cors_allowed_origin,
+            HeaderValue::from_static("https://forge.example.com")
+        );
+
+        assert!(
+            parse(HashMap::from([
+                ("FORGE_WORKSPACES_ROOT", root.to_string_lossy().into_owned()),
+                (
+                    "FORGE_WORKSPACES_JSON",
+                    r#"[{"id":"one","name":"One","path":"one"}]"#.into(),
+                ),
+                (
+                    "FORGE_CORS_ALLOWED_ORIGIN",
+                    "https://forge.example.com\ninvalid".into(),
+                ),
+            ]))
+            .is_err()
         );
 
         std::fs::remove_dir_all(root).unwrap();

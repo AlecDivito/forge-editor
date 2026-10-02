@@ -638,6 +638,84 @@ impl DocumentActor {
             .unwrap_or_default()
     }
 
+    /// Atomically replace exact text in the Yrs document and publish the
+    /// resulting incremental update. This is used by server-side writers
+    /// (such as the agent) so open editors receive the same Yjs delta as they
+    /// would from another browser client.
+    pub async fn replace_exact(
+        self: &Arc<Self>,
+        old_text: &str,
+        new_text: &str,
+        replace_all: bool,
+        origin: ClientId,
+    ) -> anyhow::Result<usize> {
+        // TODO(AI): I feel as though we need 2 types of functions, one that
+        // does the validation and another that applies it, but i guess this
+        // does work.
+
+        anyhow::ensure!(!old_text.is_empty(), "old_text must not be empty");
+        anyhow::ensure!(
+            self.editable.load(Ordering::Acquire),
+            "document is read-only"
+        );
+        anyhow::ensure!(!self.deleted.load(Ordering::Acquire), "document is deleted");
+
+        let (replacements, update, generation) = {
+            let _state_guard = self.state_lock.lock().await;
+            let doc = self.doc.read().await;
+            let state_vector = doc.transact().state_vector();
+            let mut txn = doc.transact_mut();
+            let text = txn.get_or_insert_text("content");
+            let content = text.get_string(&txn);
+            let offsets: Vec<usize> = content
+                .match_indices(old_text)
+                .map(|(index, _)| index)
+                .collect();
+
+            anyhow::ensure!(
+                !offsets.is_empty(),
+                "old_text was not found. Read the file again and provide exact existing text."
+            );
+            anyhow::ensure!(
+                replace_all || offsets.len() == 1,
+                "old_text matched {} locations. Provide more surrounding context or set replace_all=true.",
+                offsets.len()
+            );
+
+            let replacements = if replace_all { offsets.len() } else { 1 };
+            if old_text == new_text {
+                (replacements, None, None)
+            } else {
+                let selected = if replace_all {
+                    &offsets[..]
+                } else {
+                    &offsets[..1]
+                };
+                // Edit from the end to preserve byte offsets. Yrs documents
+                // use byte offsets by default, matching str::match_indices.
+                for offset in selected.iter().rev() {
+                    text.remove_range(&mut txn, *offset as u32, old_text.len() as u32);
+                    text.insert(&mut txn, *offset as u32, new_text);
+                }
+                drop(txn);
+                let update = doc.transact().encode_diff_v1(&state_vector);
+                let generation = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
+                self.last_activity.store(now_ms() as i64, Ordering::Relaxed);
+                (replacements, Some(update), Some(generation))
+            }
+        };
+
+        let Some((update, generation)) = update.zip(generation) else {
+            return Ok(replacements);
+        };
+
+        *self.save_error.write().await = None;
+        let _ = self.updates_tx.send(DocEvent::Update { update, origin });
+        self.broadcast_lifecycle().await;
+        self.schedule_autosave(generation).await;
+        Ok(replacements)
+    }
+
     pub async fn set_diagnostics(&self, diagnostics: Vec<LspDiagnostic>) {
         *self.diagnostics.write().await = diagnostics.clone();
         let _ = self.updates_tx.send(DocEvent::Diagnostics { diagnostics });

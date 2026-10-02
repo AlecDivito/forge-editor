@@ -12,9 +12,9 @@ use crate::{
     agent::error::{AgentError, AgentFailureCode},
     error::AppError,
     models::{
-        AgentModelCatalog, AgentModelDescriptor, AgentSessionLog, AiSessionSummary,
-        CompleteAgentAttachment, CompletedAgentAttachment, PrepareAgentAttachment,
-        PreparedAgentAttachment,
+        AgentModelCatalog, AgentModelDescriptor, AgentRule, AgentSessionLog, AgentSkill,
+        AiSessionSummary, CompleteAgentAttachment, CompletedAgentAttachment,
+        PrepareAgentAttachment, PreparedAgentAttachment, SaveAgentRule,
     },
     state::AppState,
 };
@@ -47,6 +47,73 @@ pub struct AgentAttachmentPath {
     pub session_id: String,
     /// Opaque attachment ID created by the prepare endpoint.
     pub attachment_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AgentRulePath {
+    /// Filesystem-safe rule identifier, stored as `rules/<rule_id>.md`.
+    pub rule_id: String,
+}
+
+/// List skill metadata available to the Forge composer. Instruction bodies are
+/// intentionally not returned by this endpoint.
+///
+/// # Responses
+///
+/// 200: Json<Vec<AgentSkill>> - The shared skill catalog
+///
+/// # Metadata
+///
+/// @tag agent
+#[rovo]
+pub async fn list_skills(State(state): State<AppState>) -> impl IntoApiResponse {
+    Json(state.agent_runtime.skills())
+}
+
+/// List the manually managed rules applied to future agent turns.
+///
+/// # Responses
+///
+/// 200: Json<Vec<AgentRule>> - The current shared rule catalog
+///
+/// # Metadata
+///
+/// @tag agent
+#[rovo]
+pub async fn list_rules(State(state): State<AppState>) -> impl IntoApiResponse {
+    Json(state.agent_runtime.rules())
+}
+
+/// Create or replace one manually managed agent rule.
+///
+/// The id becomes `rules/<rule_id>.md` in the configured agent resources
+/// directory. The new rule applies to agent turns started after this request.
+///
+/// # Path Parameters
+/// rule_id: String - Filesystem-safe rule identifier
+///
+/// # Responses
+///
+/// 200: Json<AgentRule> - The saved rule
+/// 400: () - The rule id or content is invalid
+/// 500: () - The rule could not be persisted
+///
+/// # Metadata
+///
+/// @tag agent
+#[rovo]
+pub async fn save_rule(
+    State(state): State<AppState>,
+    Path(AgentRulePath { rule_id }): Path<AgentRulePath>,
+    Json(request): Json<SaveAgentRule>,
+) -> impl IntoApiResponse {
+    match state.agent_runtime.save_rule(&rule_id, &request.content) {
+        Ok(rule) => Json(rule).into_response(),
+        Err(error) => {
+            tracing::error!(rule_id, %error, "could not save agent rule");
+            AppError::String(error.to_string()).into_response()
+        }
+    }
 }
 
 /// List models from the configured OpenAI-compatible backend.
@@ -184,7 +251,12 @@ async fn get_session_impl(
 ) -> Result<impl IntoResponse, AppError> {
     match state.ai_sessions.get(&session_id) {
         Some(session) => Ok(Json(session)),
-        None => Err(AppError::NotFound("The AI session does not exist".into())),
+        None => match state.ai_sessions.unavailable_reason(&session_id) {
+            Some(reason) => Err(AppError::Unavailable(format!(
+                "The AI session is unavailable: {reason}"
+            ))),
+            None => Err(AppError::NotFound("The AI session does not exist".into())),
+        },
     }
 }
 

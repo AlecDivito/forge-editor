@@ -4,8 +4,8 @@
 //! harness is introduced incrementally. New session persistence primitives
 //! belong here so provider and title tasks cannot write session files directly.
 
-pub mod error;
 pub mod context;
+pub mod error;
 pub mod models;
 pub mod operation;
 pub mod resources;

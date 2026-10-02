@@ -6,6 +6,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 use tokio::{
     sync::{Mutex as AsyncMutex, mpsc},
@@ -33,6 +34,9 @@ pub struct AppState {
     pub lsp_servers: Arc<DashMap<(WorkspaceId, LanguageId), Arc<LspServerActor>>>,
     pub clients: Arc<DashMap<ClientId, ClientConnectionHandle>>,
     pub debug: crate::debug::DebugService,
+    /// Health checks must turn false before graceful shutdown stops accepting
+    /// connections, so Kubernetes does not keep routing new work here.
+    accepting_work: Arc<std::sync::atomic::AtomicBool>,
     /// Stable only for this websocket connection. A reconnect may reuse the
     /// same client id, so cleanup must also match this identity.
     next_connection_id: Arc<AtomicU64>,
@@ -129,6 +133,7 @@ impl AppState {
             lsp_servers: Arc::new(DashMap::new()),
             clients: Arc::new(DashMap::new()),
             debug: crate::debug::DebugService::new(),
+            accepting_work: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             next_connection_id: Arc::new(AtomicU64::new(1)),
         };
         // The session service has already replayed every JSONL file. Claim
@@ -157,6 +162,64 @@ impl AppState {
             self.next_connection_id.fetch_add(1, Ordering::Relaxed),
             document_tx,
         )
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.accepting_work.load(Ordering::Acquire)
+    }
+
+    /// Persist cancellation of work that was active when the pod received a
+    /// termination signal.  The session actors own the JSONL writers, so wait
+    /// for their terminal transition rather than exiting with an ambiguous
+    /// in-flight operation that Kubernetes could mistake for success.
+    pub async fn begin_shutdown(&self, deadline: Duration) {
+        self.accepting_work.store(false, Ordering::Release);
+
+        let session_ids = self
+            .ai_sessions
+            .list(None)
+            .into_iter()
+            .map(|summary| summary.metadata.id)
+            .collect::<Vec<_>>();
+        for session_id in &session_ids {
+            let Some(session) = self.ai_sessions.get(session_id) else {
+                continue;
+            };
+            for operation in session
+                .operations
+                .iter()
+                .filter(|operation| !operation.state.is_terminal())
+            {
+                let (recipient, receiver) = mpsc::channel(1);
+                drop(receiver);
+                if let Some(actor) = self.ai_session_actors.get(session_id) {
+                    let _ = actor.stop(operation.request_id.clone(), recipient).await;
+                }
+            }
+        }
+
+        let settled = async {
+            loop {
+                let all_terminal = session_ids.iter().all(|session_id| {
+                    self.ai_sessions.get(session_id).is_none_or(|session| {
+                        session
+                            .operations
+                            .iter()
+                            .all(|operation| operation.state.is_terminal())
+                    })
+                });
+                if all_terminal {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
+        if tokio::time::timeout(deadline, settled).await.is_err() {
+            tracing::error!(
+                ?deadline,
+                "Forge shutdown deadline elapsed with active agent work; durable recovery will mark it interrupted on next start"
+            );
+        }
     }
 
     pub fn ai_session(&self, session_id: String) -> Arc<AiSessionActor> {
@@ -333,6 +396,7 @@ mod tests {
         }
         let state = AppState::new(Config {
             bind_address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            cors_allowed_origin: axum::http::HeaderValue::from_static("http://localhost:3000"),
             port: 0,
             environment: EnvironmentConfig {
                 id: "test".into(),

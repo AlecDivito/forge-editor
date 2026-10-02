@@ -5,6 +5,7 @@ pub(crate) mod file_search;
 mod file_system;
 mod git;
 mod ws;
+mod liveness;
 
 use rovo::{
     IntoNestRouter, Router,
@@ -26,6 +27,8 @@ use crate::{
 };
 
 use file_system::list_files;
+
+pub use liveness::{livez, readyz, metrics};
 
 pub fn fs_router(state: AppState) -> impl IntoNestRouter<AppState> {
     Router::new()

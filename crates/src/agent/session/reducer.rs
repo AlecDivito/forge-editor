@@ -94,7 +94,9 @@ impl AgentProjection {
         }
         let mut calls = HashMap::<String, Vec<OpenAiToolCall>>::new();
         for event in &log.events {
-            if compaction.is_some_and(|(first_kept_sequence, _)| event.sequence < first_kept_sequence) {
+            if compaction
+                .is_some_and(|(first_kept_sequence, _)| event.sequence < first_kept_sequence)
+            {
                 continue;
             }
             match &event.kind {
@@ -315,17 +317,50 @@ mod tests {
     #[test]
     fn restores_only_checkpoint_and_retained_tail_after_compaction() {
         let mut log = AgentSessionLog {
-            metadata: AiSessionMetadata { id: "session".into(), title: "Test".into(), created_at_ms: 1, model: None },
-            operations: vec![OperationSnapshot { operation_id: "op".into(), request_id: "op".into(), operation_sequence: 1, status: OperationStatus::Complete, state: OperationState::Completed, accepted_at_ms: 1, updated_at_ms: 1 }],
-            events: vec![message(1, "op", "discarded history"), message(2, "op", "retained prompt")],
+            metadata: AiSessionMetadata {
+                id: "session".into(),
+                title: "Test".into(),
+                created_at_ms: 1,
+                model: None,
+            },
+            operations: vec![OperationSnapshot {
+                operation_id: "op".into(),
+                request_id: "op".into(),
+                operation_sequence: 1,
+                status: OperationStatus::Complete,
+                state: OperationState::Completed,
+                accepted_at_ms: 1,
+                updated_at_ms: 1,
+            }],
+            events: vec![
+                message(1, "op", "discarded history"),
+                message(2, "op", "retained prompt"),
+            ],
         };
         log.events.push(AiSessionEvent {
-            event_id: "compact".into(), sequence: 3, operation_id: Some("op".into()), operation_sequence: Some(1), occurred_at_ms: 3,
-            kind: AiSessionEventKind::Compaction { summary: "The earlier goal".into(), through_sequence: 1, first_kept_sequence: 2, estimated_tokens_before: 100, estimated_tokens_after: 20 },
+            event_id: "compact".into(),
+            sequence: 3,
+            operation_id: Some("op".into()),
+            operation_sequence: Some(1),
+            occurred_at_ms: 3,
+            kind: AiSessionEventKind::Compaction {
+                summary: "The earlier goal".into(),
+                through_sequence: 1,
+                first_kept_sequence: 2,
+                estimated_tokens_before: 100,
+                estimated_tokens_after: 20,
+            },
         });
         let context = AgentProjection::from_log(&log).model_context(&log, "op");
         assert_eq!(context.len(), 2);
-        assert!(context[0].content.as_ref().unwrap().to_string().contains("The earlier goal"));
+        assert!(
+            context[0]
+                .content
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("The earlier goal")
+        );
         assert_eq!(context[1].content.as_ref().unwrap(), "retained prompt");
     }
 }

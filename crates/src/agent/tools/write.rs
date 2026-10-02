@@ -128,7 +128,6 @@ impl AgentTool for WriteTool {
     }
 }
 
-
 fn failure(message: String) -> ToolResult {
     ToolResult {
         content: json!({ "error": message }).to_string(),
