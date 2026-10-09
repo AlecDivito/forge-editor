@@ -1,7 +1,6 @@
 import useDocument from "@/hooks/use-document.hook";
 import { useDocumentLifecycle } from "@/hooks/use-document-lifecycle.hook";
 import { Compartment, EditorState, EditorView, hoverTooltip } from "@uiw/react-codemirror";
-import { basicSetup } from "codemirror";
 import { IDockviewPanelProps } from "dockview";
 import { FC, useEffect, useRef, useState } from "react";
 import { yCollab } from "y-codemirror.next";
@@ -17,6 +16,9 @@ import { registerEditorInstance } from "../../state/editor-instance.registry";
 import { useDocumentAwareness } from "./hook/use-document-awareness.hook";
 import { DocumentParticipants } from "./components/DocumentParticipants";
 import { languageForFile } from "./extensions/language.extension";
+import { editorExtensions } from "./extensions/editor.extension";
+import { breakpointExtension } from "./extensions/breakpoint.extension";
+import { lineNumberExtension } from "./extensions/line-number.extension";
 
 const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
   const { id: panelId, workspace, fileId } = props.params;
@@ -49,8 +51,10 @@ const CodeView: FC<IDockviewPanelProps<CodePanelDescriptor>> = (props) => {
       state: EditorState.create({
         doc: ytext.toString(),
         extensions: [
-          basicSetup,
+          editorExtensions,
           identityCompartment.current.of([DocumentWorkspaceId.of(workspace), DocumentFileId.of(fileId)]),
+          breakpointExtension,
+          lineNumberExtension,
           yCollab(ytext, document.awareness),
           readOnlyCompartment.current.of([
             EditorState.readOnly.of(lifecycle.phase === "deleted"),
